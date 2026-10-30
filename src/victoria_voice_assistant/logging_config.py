@@ -20,7 +20,7 @@ class JsonFormatter(logging.Formatter):
         error = getattr(record, "error", None)
         if error is not None:
             item["error"] = error
-        for key in ("config_revision", "config_dir", "database_path"):
+        for key in ("config_revision", "config_dir", "database_path", "model", "ttft_ms", "total_ms"):
             value = getattr(record, key, None)
             if value is not None:
                 item[key] = value

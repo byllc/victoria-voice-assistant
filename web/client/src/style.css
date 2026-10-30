@@ -1,0 +1,91 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+main#app {
+  width: min(44rem, 100%);
+  padding: 1rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+section[hidden] {
+  display: none;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  flex: 1;
+}
+
+.status {
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+#login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 20rem;
+}
+
+#log {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 50vh;
+  padding: 0.5rem 0;
+}
+
+#log p {
+  margin: 0.4rem 0;
+  white-space: pre-wrap;
+}
+
+#composer {
+  display: flex;
+  gap: 0.5rem;
+}
+
+#composer input {
+  flex: 1;
+}
+
+input {
+  font: inherit;
+  padding: 0.5rem;
+}
+
+button {
+  font: inherit;
+  padding: 0.5rem 0.9rem;
+}
+
+.error {
+  color: #b00020;
+  margin: 0;
+  min-height: 1.2em;
+}

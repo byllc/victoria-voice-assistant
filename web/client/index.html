@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Victoria</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <section id="login" hidden>
+        <h1>Victoria</h1>
+        <form id="login-form">
+          <label for="password">Household password</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+          <button type="submit">Sign in</button>
+          <p id="login-error" class="error" role="alert"></p>
+        </form>
+      </section>
+      <section id="chat" hidden>
+        <header>
+          <h1>Victoria</h1>
+          <span id="status" class="status">connecting…</span>
+          <button id="logout" type="button">Sign out</button>
+        </header>
+        <div id="log" aria-live="polite"></div>
+        <form id="composer">
+          <input id="message" type="text" placeholder="Ask Victoria…" autocomplete="off" required />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

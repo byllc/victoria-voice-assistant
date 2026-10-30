@@ -9,11 +9,13 @@ description = "Private, local-first household voice assistant"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115,<1",
+    "pipecat-ai[openai,websocket]==1.15.0",
     "pydantic>=2.11,<3",
     "python-dotenv>=1,<2",
     "PyYAML>=6,<7",
     "uvicorn>=0.34,<1",
     "watchfiles>=1,<2",
+    "websockets>=15,<18",
 ]
 
 [project.optional-dependencies]
