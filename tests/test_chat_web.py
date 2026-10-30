@@ -170,12 +170,12 @@ def test_session_signer_rejects_tampered_and_expired_tokens() -> None:
 
 def test_web_login_session_and_logout() -> None:
     client = TestClient(create_web_app(password="household", static_dir=None))
-    assert client.get("/api/session").json() == {"authenticated": False}
+    assert client.get("/api/session").json()["authenticated"] is False
     assert client.post("/api/login", json={"password": "wrong"}).status_code == 401
     assert client.post("/api/login", json={"password": "household"}).json() == {"authenticated": True}
-    assert client.get("/api/session").json() == {"authenticated": True}
+    assert client.get("/api/session").json()["authenticated"] is True
     client.post("/api/logout")
-    assert client.get("/api/session").json() == {"authenticated": False}
+    assert client.get("/api/session").json()["authenticated"] is False
 
 
 def test_web_websocket_requires_login() -> None:
@@ -201,9 +201,15 @@ def test_web_reports_unreachable_service_when_authenticated() -> None:
     assert exc.value.code == 1011
 
 
-def test_web_requires_password() -> None:
-    with pytest.raises(ValueError):
-        create_web_app(password="", static_dir=None)
+def test_web_without_password_runs_open_and_flags_insecure() -> None:
+    client = TestClient(create_web_app(password="", static_dir=None))
+    assert client.get("/api/session").json() == {"authenticated": True, "insecure": True}
+    assert client.post("/api/login", json={"password": "x"}).status_code == 400
+
+
+def test_web_with_password_is_not_insecure() -> None:
+    client = TestClient(create_web_app(password="secret", static_dir=None))
+    assert client.get("/api/session").json() == {"authenticated": False, "insecure": False}
 
 
 def test_assistant_loopback_guard(example_config_dir: Path, tmp_path: Path) -> None:

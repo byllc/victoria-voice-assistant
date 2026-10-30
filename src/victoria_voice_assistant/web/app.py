@@ -27,28 +27,35 @@ class LoginRequest(BaseModel):
 
 def create_web_app(
     *,
-    password: str,
+    password: str = "",
     service_url: str = DEFAULT_SERVICE_URL,
     static_dir: Path | None = DEFAULT_STATIC_DIR,
 ) -> FastAPI:
-    if not password:
-        raise ValueError(
-            "ASSISTANT_WEB_PASSWORD must be set in the process environment "
-            "(not in config files or on the command line)"
-        )
-    signer = SessionSigner(password)
+    # Without a password the app runs open (insecure) and the client shows a warning.
+    insecure = not password
+    signer = SessionSigner(password) if password else None
     app = FastAPI(title="Victoria Voice Assistant Web")
     app.state.signer = signer
+    if insecure:
+        logger.warning(
+            "ASSISTANT_WEB_PASSWORD is not set; web interface is open without login",
+            extra={"event": "web_insecure_mode"},
+        )
 
     def authenticated(token: str | None) -> bool:
-        return signer.verify(token)
+        return insecure or signer.verify(token)
 
     @app.get("/api/session")
     async def session(request: Request) -> dict[str, bool]:
-        return {"authenticated": authenticated(request.cookies.get(COOKIE_NAME))}
+        return {
+            "authenticated": authenticated(request.cookies.get(COOKIE_NAME)),
+            "insecure": insecure,
+        }
 
     @app.post("/api/login")
     async def login(body: LoginRequest, response: Response) -> dict[str, bool]:
+        if signer is None:
+            raise HTTPException(status_code=400, detail="no password configured")
         if not signer.check_password(body.password):
             logger.warning("Web login rejected", extra={"event": "web_login_rejected"})
             raise HTTPException(status_code=401, detail="invalid password")

@@ -13,6 +13,7 @@ const messageInput = required<HTMLInputElement>("message");
 const log = required<HTMLElement>("log");
 const statusLabel = required<HTMLElement>("status");
 const logoutButton = required<HTMLButtonElement>("logout");
+const insecureBanner = required<HTMLElement>("insecure-banner");
 
 let socket: WebSocket | null = null;
 let pendingReply: HTMLElement | null = null;
@@ -95,7 +96,9 @@ function handleServerMessage(message: ServerMessage): void {
 
 async function checkSession(): Promise<void> {
   const response = await fetch("/api/session", { credentials: "same-origin" });
-  const body = (await response.json()) as { authenticated: boolean };
+  const body = (await response.json()) as { authenticated: boolean; insecure?: boolean };
+  insecureBanner.hidden = !body.insecure;
+  logoutButton.hidden = Boolean(body.insecure);
   if (body.authenticated) showChat();
   else showLogin();
 }
