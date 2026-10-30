@@ -9,6 +9,11 @@ import pytest
 EXAMPLES = Path(__file__).resolve().parents[1] / "config" / "examples"
 
 
+@pytest.fixture(autouse=True)
+def disable_model_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASSISTANT_PIN_MODELS", "0")
+
+
 @pytest.fixture
 def example_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     config_dir = tmp_path / "config"

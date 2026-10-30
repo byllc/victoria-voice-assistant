@@ -7,8 +7,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 0 | Tracker, instructions, repo | approved | 2026-10-25 | 2026-10-25 | Bill / 2026-10-25 |
 | 1 | Defer early benchmarking | approved | 2026-10-25 | 2026-10-29 | Bill / 2026-10-29 |
 | 2 | Skeleton and config | approved | 2026-10-29 | 2026-10-29 | Bill / 2026-10-29 |
-| 3 | Web interface and text chat | in progress | 2026-10-29 | | |
-| 4 | Tool registry, timers, weather | not started | | | |
+| 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
+| 4 | Tool registry, timers, weather | in progress | 2026-10-30 | | |
 | 5 | Voice in the browser | not started | | | |
 | 6 | Local web search | not started | | | |
 | 7 | Agents and model pools | not started | | | |
@@ -62,6 +62,27 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - `plutil -lint` passed for LaunchAgent template. Demo: `uv run assistant config init`, set `LMS_API_KEY` in `config/.env`, then follow Stage 2 Local setup commands in `docs/implementation_plan.md`.
 - Bill's review notes:
 
+## Stage 3: Web interface and text chat
+- Status: approved
+- Done criteria:
+  - [x] Typed messages get streamed replies from the configured fast model (live, M2 dev box, temp config).
+  - [~] Stopping LM Studio's primary model triggers the fallback model. Simulated with a dead primary server URL; the real LM Studio model was not unloaded.
+  - [x] Killing the web process doesn't affect the assistant service. Not yet verified: restart of each process under launchd.
+  - [~] The assistant service accepts connections only from localhost. Unit-tested (`LoopbackOnlyMiddleware`); not tested live from a non-loopback address.
+  - [x] Time to first token is logged per request (`llm_first_token`, `ttft_ms`; `llm_response_complete`, `total_ms`).
+  - [x] Unit tests pass.
+- Evidence:
+  - `uv run pytest -q`: 28 passed, 1 skipped (the live LM Studio test, gated by `ASSISTANT_LIVE_TESTS=1`).
+  - `npm run build` in `web/client` passes (Vite 8, TypeScript 7).
+  - Web login: bad password → 401; correct password → `authenticated: true`. `/ws` through the web process on `:8766` streamed `Hello there!` then `done`.
+  - Failover: primary `fast` pointed at a dead URL. The `llm_failover` event fires at about 1.5 s. The `LLMRunFrame` retry on the fallback (`llama-3.2-3b-instruct`) streamed `Hello, it's nice to meet you!`. First token about 0.33 s after the switch. The client shows one reply bubble, because the failed attempt emits no tokens.
+  - TTFT log sample: `llm_first_token` `model=fast-small` `ttft_ms=901.0`; `llm_response_complete` `total_ms=1218.7`.
+  - Process independence: the assistant service stayed up (`/health` 200) after the web process was stopped.
+  - Pinning: `lms ps --json` skips already-loaded models (logs "Model already pinned"). Verified on the M2.
+  - Demo: `ASSISTANT_WEB_PASSWORD=<pw> uv run assistant web --port 8766` and `uv run assistant serve`, then open `http://127.0.0.1:8766`, sign in, and type a message. Failover demo: stop the primary model in LM Studio and send a message.
+  - Findings (see decisions log): gemma-4-12b reasoning delay and empty replies at `max_tokens: 200`; the Pipecat output transport needs an `OutputTransportMessageFrame` to deliver text to the client.
+- Bill's review notes:
+
 ## Decisions log
 | Date | Stage | Proposal or decision | Bill's answer |
 |---|---|---|---|
@@ -70,3 +91,12 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-25 | 0 | Dev happens on an M2 Mac (32 GB RAM, macOS 26.7), not the target Mac mini; local LM Studio is running with 10 models. Ground rules updated (plan §2, AGENTS.md, copilot-instructions): every Python environment is a uv-managed virtualenv (`.venv`, interpreter pinned to 3.12); never install into system Python. Memory/latency measurements on the M2 are for design validation only. | Accepted by Bill (requested) |
 | 2026-10-29 | 1 | Bill requested removal of early spike/benchmark work and use of `google/gemma-4-12b` as the current local test model. Full-system benchmarking is deferred to Stage 11. Known risk to revisit: Smart Turn may end a turn during a hesitation and may not recognize some short commands; validate with the integrated voice pipeline before final tuning. | |
 | 2026-10-29 | 1 | Approved by Bill. | Bill / 2026-10-29 |
+| 2026-10-30 | 3 | Finding: gemma-4-12b streams reasoning tokens before content; with `max_tokens: 200` replies were empty and first content took ~28 s at `max_tokens: 1500`. LM Studio ignores `reasoning_effort: low` for this model (297 reasoning chunks, no content) but honors `none`: first token 0.6-0.8 s, full reply. Model `params` Pipecat has no setting for now go to the request body, so `reasoning_effort: none` in `models.yaml` works (added to `config/examples/models.yaml`). Bill's local `config/models.yaml` still needs that line. | |
+| 2026-10-30 | 3 | Finding: Pipecat's websocket output transport forwards only audio, image, and `OutputTransportMessageFrame`. Text frames never reach the serializer. Fix: `ChatProtocolProcessor` emits `OutputTransportMessageFrame` before `transport.output()`. | |
+| 2026-10-30 | 3 | Failover: `LLMSwitcher` is sticky per WebSocket connection and does not retry the failed request. On `llm_failover`, the session queues `LLMRunFrame` so the same context reruns on the fallback. Proposal: keep. | |
+| 2026-10-30 | 3 | `timeout_s` in `models.yaml` maps to Pipecat `retry_timeout_secs`, which is a stall timeout (no data for N seconds), not a total request timeout. Proposal: keep and document. | |
+| 2026-10-30 | 3 | Household login: shared password from the `ASSISTANT_WEB_PASSWORD` process environment only (never `config/.env`, config files, or the command line; Bill's instruction). If unset, the web process still starts in open (insecure) mode: no login, a `web_insecure_mode` warning is logged, and the client shows a red banner "Insecure: please add an administrative password" (Bill's instruction). With a password: HMAC-signed session cookie, 30-day TTL, HttpOnly, SameSite=strict. No Secure flag until HTTPS in Stage 5. Web binds 127.0.0.1. Open: under launchd the plist has no secret, so the web agent needs the variable injected another way (e.g. `launchctl setenv`); not yet decided. | |
+| 2026-10-30 | 3 | LM Studio has two `google/gemma-4-12b` instances loaded (`:2` is a duplicate created by loading an already-loaded model). Proposal: unload the duplicate. I have not unloaded it. | |
+| 2026-10-30 | 3 | Stage 3 started the web process and the assistant service as separate processes. Pending: launchd install and restart for the web plist (`assistant launchd install-web`) is not yet verified live. | |
+| 2026-10-30 | 3 | Approved by Bill (carried-over items: real LM Studio failover test, live non-loopback test, launchd restart of the web plist, web password under launchd). | Bill / 2026-10-30 |
+| 2026-10-30 | 4/5 | Bill asked for browser voice chat to test the voice pipeline. Voice is Stage 5. Decision: finish Stage 4 first, then Stage 5. | Bill / 2026-10-30 |

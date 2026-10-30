@@ -14,7 +14,7 @@ from victoria_voice_assistant.config.loader import (
     default_config_dir,
     load_config,
 )
-from victoria_voice_assistant.launchd import install_launch_agent
+from victoria_voice_assistant.launchd import install_launch_agent, install_web_launch_agent
 from victoria_voice_assistant.logging_config import configure_logging
 
 
@@ -37,11 +37,18 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=int(os.environ.get("ASSISTANT_PORT", "8765")))
 
+    web = commands.add_parser("web", help="run the household web chat (login + static client)")
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=int(os.environ.get("ASSISTANT_WEB_PORT", "8766")))
+
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
-    install = launchd_subcommands.add_parser("install", help="write LaunchAgent plist")
+    install = launchd_subcommands.add_parser("install", help="write assistant LaunchAgent plist")
     install.add_argument("--output", type=Path)
     install.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+    install_web = launchd_subcommands.add_parser("install-web", help="write web LaunchAgent plist")
+    install_web.add_argument("--output", type=Path)
+    install_web.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
     return parser
 
 
@@ -86,9 +93,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "web":
+        uvicorn.run(
+            "victoria_voice_assistant.web.app:create_default_web_app",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            log_config=None,
+        )
+        return 0
+
     if args.command == "launchd" and args.launchd_command == "install":
         destination = install_launch_agent(args.output, load=args.load)
         print(f"LaunchAgent plist written: {destination}")
+        return 0
+
+    if args.command == "launchd" and args.launchd_command == "install-web":
+        destination = install_web_launch_agent(args.output, load=args.load)
+        print(f"Web LaunchAgent plist written: {destination}")
         return 0
 
     logging.getLogger(__name__).error("Unsupported command", extra={"event": "invalid_command"})
