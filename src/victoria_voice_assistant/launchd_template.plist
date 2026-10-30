@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.victoria.voice-assistant</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>@PYTHON_EXECUTABLE@</string>
+        <string>-m</string>
+        <string>victoria_voice_assistant</string>
+        <string>serve</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>@PROJECT_DIR@</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ASSISTANT_CONFIG_DIR</key>
+        <string>@CONFIG_DIR@</string>
+        <key>ASSISTANT_DATA_DIR</key>
+        <string>@DATA_DIR@</string>
+        <key>ASSISTANT_LOG_DIR</key>
+        <string>@LOG_DIR@</string>
+        <key>ASSISTANT_PORT</key>
+        <string>@PORT@</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>@LOG_DIR@/assistant.log</string>
+    <key>StandardErrorPath</key>
+    <string>@LOG_DIR@/assistant-error.log</string>
+</dict>
+</plist>
