@@ -7,8 +7,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 0 | Tracker, instructions, repo | approved | 2026-10-25 | 2026-10-25 | Bill / 2026-10-25 |
 | 1 | Defer early benchmarking | approved | 2026-10-25 | 2026-10-29 | Bill / 2026-10-29 |
 | 2 | Skeleton and config | approved | 2026-10-29 | 2026-10-29 | Bill / 2026-10-29 |
-| 3 | Web interface and text chat | ready for review | 2026-10-29 | 2026-10-30 | |
-| 4 | Tool registry, timers, weather | not started | | | |
+| 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
+| 4 | Tool registry, timers, weather | in progress | 2026-10-30 | | |
 | 5 | Voice in the browser | not started | | | |
 | 6 | Local web search | not started | | | |
 | 7 | Agents and model pools | not started | | | |
@@ -63,7 +63,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes:
 
 ## Stage 3: Web interface and text chat
-- Status: ready for review
+- Status: approved
 - Done criteria:
   - [x] Typed messages get streamed replies from the configured fast model (live, M2 dev box, temp config).
   - [~] Stopping LM Studio's primary model triggers the fallback model. Simulated with a dead primary server URL; the real LM Studio model was not unloaded.
@@ -98,3 +98,5 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-30 | 3 | Household login: shared password from the `ASSISTANT_WEB_PASSWORD` process environment only (never `config/.env`, config files, or the command line; Bill's instruction). If unset, the web process still starts in open (insecure) mode: no login, a `web_insecure_mode` warning is logged, and the client shows a red banner "Insecure: please add an administrative password" (Bill's instruction). With a password: HMAC-signed session cookie, 30-day TTL, HttpOnly, SameSite=strict. No Secure flag until HTTPS in Stage 5. Web binds 127.0.0.1. Open: under launchd the plist has no secret, so the web agent needs the variable injected another way (e.g. `launchctl setenv`); not yet decided. | |
 | 2026-10-30 | 3 | LM Studio has two `google/gemma-4-12b` instances loaded (`:2` is a duplicate created by loading an already-loaded model). Proposal: unload the duplicate. I have not unloaded it. | |
 | 2026-10-30 | 3 | Stage 3 started the web process and the assistant service as separate processes. Pending: launchd install and restart for the web plist (`assistant launchd install-web`) is not yet verified live. | |
+| 2026-10-30 | 3 | Approved by Bill (carried-over items: real LM Studio failover test, live non-loopback test, launchd restart of the web plist, web password under launchd). | Bill / 2026-10-30 |
+| 2026-10-30 | 4/5 | Bill asked for browser voice chat to test the voice pipeline. Voice is Stage 5. Decision: finish Stage 4 first, then Stage 5. | Bill / 2026-10-30 |
