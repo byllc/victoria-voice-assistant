@@ -1,0 +1,10 @@
+default: helper
+agents:
+  - name: helper
+    aliases: [helpr]
+    kind: model
+    model: fast
+    system: You answer by voice for our household. Be brief and concrete.
+    tools: []
+    share_context: minimal
+    mode: wait

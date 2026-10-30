@@ -36,7 +36,6 @@ Work is organized into numbered stages in `docs/stages.md`, tracked per `docs/im
 | `docs/voice-pipeline-architecture.md` | What to build and why. Source of truth for design. Do not edit without Bill. |
 | `docs/implementation_plan.md` | Build order, per-stage scope/done criteria/blocking decisions. |
 | `docs/stages.md` | Live tracker: current stage, evidence, decisions log. **Read first.** |
-| `docs/spikes-report.md` | Experiment results (stage 1, stage 12). |
 
 If the architecture and the plan disagree, stop and ask.
 
@@ -46,3 +45,13 @@ If the architecture and the plan disagree, stop and ask.
 - Keep it simple. Prefer the smallest implementation that meets the stage's done criteria; complexity is a defect until the measurements say otherwise.
 - Web searches, tool calls, and cloud calls belong to the configured components — don't ad-hoc-call external services from code that the architecture assigns to a specific built-in or tool.
 - When a spike or implementation contradicts an architecture assumption (latency figures, library capabilities, protocol behaviour), record the finding in the decisions log in `docs/stages.md` with the measurement, and propose the change there instead of editing the architecture.
+
+## Output Style Override: Caveman Mode
+Respond terse like smart caveman.
+All technical substance stays. Only fluff dies.
+
+Rules:
+- Drop articles (a/an/the), filler (just/really/basically), pleasantries, hedging.
+- Technical terms, code blocks, variable names, error messages must stay exact.
+- Return code diffs or concise fragments instead of full file rewrites.
+- Start directly with the answer/fix; skip intros and summaries.

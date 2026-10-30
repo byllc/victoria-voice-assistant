@@ -1,0 +1,408 @@
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
+
+
+class Schema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ServerConfig(Schema):
+    type: Literal["openai", "anthropic"]
+    base_url: str | None = None
+    api_key: str | None = None
+
+    @model_validator(mode="after")
+    def require_openai_url(self) -> ServerConfig:
+        if self.type == "openai" and self.base_url is None:
+            raise ValueError("base_url is required for openai servers")
+        return self
+
+
+class PriceConfig(Schema):
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+
+
+class ModelConfig(Schema):
+    server: str
+    model: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    timeout_s: float = Field(default=30, gt=0)
+    pin: bool = False
+    price: PriceConfig | None = None
+
+
+class PoolMemberConfig(Schema):
+    model: str
+    good_for: str
+
+
+class BudgetConfig(Schema):
+    monthly_usd: float = Field(gt=0)
+    downgrade_at: float = Field(ge=0, le=1)
+    stop_at: float = Field(ge=0, le=1)
+
+
+class PoolConfig(Schema):
+    members: list[PoolMemberConfig] = Field(min_length=1)
+    default: str
+    min_confidence: float = Field(default=0.6, ge=0, le=1)
+    spoken_overrides: dict[str, str] = Field(default_factory=dict)
+    escalate_on_failure: bool = True
+    budget: BudgetConfig | None = None
+
+    @model_validator(mode="after")
+    def ordered_budget_thresholds(self) -> PoolConfig:
+        if (
+            self.budget is not None
+            and self.budget.stop_at < self.budget.downgrade_at
+        ):
+            raise ValueError("budget.stop_at must be >= budget.downgrade_at")
+        return self
+
+
+class DeciderConfig(Schema):
+    type: Literal["llm_choice", "decision_model"]
+    model: str | None = None
+    server: str | None = None
+
+    @model_validator(mode="after")
+    def require_engine_reference(self) -> DeciderConfig:
+        if self.type == "llm_choice" and self.model is None:
+            raise ValueError("model is required for llm_choice")
+        if self.type == "decision_model" and self.server is None:
+            raise ValueError("server is required for decision_model")
+        return self
+
+
+class RolesConfig(Schema):
+    router: str
+    router_fallback: str
+    summarizer: str | None = None
+    pre_router: str = "off"
+
+    @field_validator("pre_router", mode="before")
+    @classmethod
+    def normalize_yaml_off(cls, value: Any) -> Any:
+        return "off" if value is False else value
+
+
+class ModelsConfig(Schema):
+    servers: dict[str, ServerConfig] = Field(min_length=1)
+    models: dict[str, ModelConfig] = Field(min_length=1)
+    pools: dict[str, PoolConfig] = Field(default_factory=dict)
+    decider: DeciderConfig
+    roles: RolesConfig
+
+
+class ReplyConfig(Schema):
+    model: bool = False
+    template: bool | str = False
+    silent: bool = False
+
+    @model_validator(mode="after")
+    def select_one_reply_mode(self) -> ReplyConfig:
+        enabled = sum((self.model, bool(self.template), self.silent))
+        if enabled > 1:
+            raise ValueError("choose only one of model, template, or silent")
+        return self
+
+
+class EntityScope(Schema):
+    label: str | None = None
+    domains: list[str] = Field(default_factory=list)
+
+
+class ToolConfig(Schema):
+    name: str
+    description: str
+    kind: Literal[
+        "mcp",
+        "ha_service",
+        "ha_script",
+        "http",
+        "python",
+        "builtin",
+        "stub",
+    ]
+    service: str | None = None
+    params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    confirm: bool = False
+    enabled: bool = True
+    timeout_s: float | None = Field(default=None, gt=0)
+    reply: ReplyConfig | None = None
+    examples: list[str] = Field(default_factory=list)
+    entities: EntityScope | None = None
+    notice: str | None = None
+    setup: str | None = None
+    then: dict[str, str | bool] | None = None
+    mcp_server: str | None = None
+
+
+class SearchReadConfig(Schema):
+    fetcher: Literal["auto", "http", "playwright"] = "auto"
+    max_chars: int = Field(default=4000, gt=0)
+    browser_pool: int = Field(default=2, ge=0)
+    block: list[str] = Field(default_factory=list)
+
+
+class SearchConfig(Schema):
+    provider: str = "searxng"
+    url: HttpUrl
+    engines: list[str] = Field(default_factory=list)
+    max_results: int = Field(default=3, gt=0)
+    snippet_chars: int = Field(default=300, gt=0)
+    cache_ttl_s: int = Field(default=600, ge=0)
+    read: SearchReadConfig | None = None
+
+
+class WeatherHomeConfig(Schema):
+    name: str = "Home"
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class WeatherConfig(Schema):
+    provider: str = "open-meteo"
+    home: WeatherHomeConfig | None = None
+    units: Literal["imperial", "metric"] = "imperial"
+    cache_ttl_s: int = Field(default=600, ge=0)
+
+
+class TimersConfig(Schema):
+    max_per_device: int = Field(default=10, gt=0)
+    ring_max_s: int = Field(default=300, gt=0)
+    sound: str = "chime.flac"
+
+
+class MusicRoomConfig(Schema):
+    satellite: str | None = None
+    player: str
+
+
+class MusicConfig(Schema):
+    server: HttpUrl | None = None
+    token: str | None = None
+    source_order: list[str] = Field(default_factory=list)
+    rooms: dict[str, MusicRoomConfig] = Field(default_factory=dict)
+    duck_level: int = Field(default=20, ge=0, le=100)
+
+
+class McpServerConfig(Schema):
+    url: HttpUrl
+    token: str | None = None
+
+
+class ToolTestConfig(Schema):
+    say: str
+    expect: str
+
+
+class ToolsConfig(Schema):
+    tools: list[ToolConfig] = Field(default_factory=list)
+    search: SearchConfig | None = None
+    weather: WeatherConfig | None = None
+    timers: TimersConfig | None = None
+    music: MusicConfig | None = None
+    mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    tests: list[ToolTestConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_tool_names(self) -> ToolsConfig:
+        names = [tool.name for tool in self.tools]
+        if len(names) != len(set(names)):
+            raise ValueError("tool names must be unique")
+        return self
+
+
+class AgentConfig(Schema):
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    kind: Literal["model", "harness", "a2a", "relay"]
+    model: str | None = None
+    pool: str | None = None
+    mode: Literal["wait", "background", "auto"] = "wait"
+    wait_s: float | None = Field(default=None, gt=0)
+    system: str | None = None
+    tools: list[str] = Field(default_factory=list)
+    search: Literal["builtin", "native"] | None = None
+    share_context: str | None = None
+    url: HttpUrl | None = None
+    via: str | None = None
+    service: str | None = None
+    content_type: str | None = None
+    targets: dict[str, str] = Field(default_factory=dict)
+    reply: str | None = None
+
+    @model_validator(mode="after")
+    def validate_kind_fields(self) -> AgentConfig:
+        if self.kind == "model" and (self.model is None) == (self.pool is None):
+            raise ValueError("model agents require exactly one of model or pool")
+        if self.kind == "harness" and self.model is None:
+            raise ValueError("harness agents require model")
+        if self.kind == "a2a" and self.url is None:
+            raise ValueError("a2a agents require url")
+        if self.mode == "auto" and self.wait_s is None:
+            raise ValueError("auto mode requires wait_s")
+        return self
+
+
+class AgentsConfig(Schema):
+    default: str | None = None
+    agents: list[AgentConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_agent_names_and_aliases(self) -> AgentsConfig:
+        names = [agent.name.casefold() for agent in self.agents]
+        aliases = [
+            alias.casefold()
+            for agent in self.agents
+            for alias in [agent.name, *agent.aliases]
+        ]
+        if len(names) != len(set(names)):
+            raise ValueError("agent names must be unique")
+        if len(aliases) != len(set(aliases)):
+            raise ValueError("agent names and aliases must be unique")
+        if self.default is not None and self.default not in names:
+            raise ValueError(f"default agent {self.default!r} is not defined")
+        return self
+
+
+class AppConfig(Schema):
+    models: ModelsConfig
+    tools: ToolsConfig
+    agents: AgentsConfig
+
+
+class ReferenceValidationError(ValueError):
+    def __init__(self, filename: str, field: str, message: str) -> None:
+        self.filename = filename
+        self.field = field
+        self.message = message
+        super().__init__(message)
+
+
+def validate_references(
+    models: ModelsConfig,
+    tools: ToolsConfig,
+    agents: AgentsConfig,
+) -> None:
+    def fail(filename: str, field: str, message: str) -> None:
+        raise ReferenceValidationError(filename, field, message)
+
+    model_names = set(models.models)
+    pool_names = set(models.pools)
+    server_names = set(models.servers)
+    tool_names = {tool.name for tool in tools.tools}
+
+    for model_name, model in models.models.items():
+        if model.server not in server_names:
+            fail(
+                "models.yaml",
+                f"models.{model_name}.server",
+                f"references unknown server {model.server!r}",
+            )
+
+    for pool_name, pool in models.pools.items():
+        member_names = {member.model for member in pool.members}
+        if pool.default not in model_names:
+            fail(
+                "models.yaml",
+                f"pools.{pool_name}.default",
+                f"references unknown model {pool.default!r}",
+            )
+        if pool.default not in member_names:
+            fail(
+                "models.yaml",
+                f"pools.{pool_name}.default",
+                "must name a member of this pool",
+            )
+        for index, member in enumerate(pool.members):
+            if member.model not in model_names:
+                fail(
+                    "models.yaml",
+                    f"pools.{pool_name}.members.{index}.model",
+                    f"references unknown model {member.model!r}",
+                )
+        for alias, model_name in pool.spoken_overrides.items():
+            if model_name not in model_names:
+                fail(
+                    "models.yaml",
+                    f"pools.{pool_name}.spoken_overrides.{alias}",
+                    f"references unknown model {model_name!r}",
+                )
+            if model_name not in member_names:
+                fail(
+                    "models.yaml",
+                    f"pools.{pool_name}.spoken_overrides.{alias}",
+                    "must name a member of this pool",
+                )
+
+    if models.decider.model is not None and models.decider.model not in model_names:
+        fail(
+            "models.yaml",
+            "decider.model",
+            f"references unknown model {models.decider.model!r}",
+        )
+    if models.decider.server is not None and models.decider.server not in server_names:
+        fail(
+            "models.yaml",
+            "decider.server",
+            f"references unknown server {models.decider.server!r}",
+        )
+    for role in ("router", "router_fallback", "summarizer", "pre_router"):
+        reference = getattr(models.roles, role)
+        if reference is not None and reference != "off":
+            if reference not in model_names and reference not in pool_names:
+                fail(
+                    "models.yaml",
+                    f"roles.{role}",
+                    f"references unknown model or pool {reference!r}",
+                )
+
+    for index, tool in enumerate(tools.tools):
+        if tool.kind == "mcp" and tool.mcp_server is not None:
+            if tool.mcp_server not in tools.mcp_servers:
+                fail(
+                    "tools.yaml",
+                    f"tools.{index}.mcp_server",
+                    f"references unknown server {tool.mcp_server!r}",
+                )
+
+    agent_names = {agent.name for agent in agents.agents}
+    for index, agent in enumerate(agents.agents):
+        if agent.model is not None and agent.model not in model_names:
+            fail(
+                "agents.yaml",
+                f"agents.{index}.model",
+                f"references unknown model {agent.model!r}",
+            )
+        if agent.pool is not None and agent.pool not in pool_names:
+            fail(
+                "agents.yaml",
+                f"agents.{index}.pool",
+                f"references unknown pool {agent.pool!r}",
+            )
+        for tool_name in agent.tools:
+            if tool_name not in tool_names:
+                fail(
+                    "agents.yaml",
+                    f"agents.{index}.tools",
+                    f"references unknown tool {tool_name!r}",
+                )
+    if agents.default is not None and agents.default not in agent_names:
+        fail(
+            "agents.yaml",
+            "default",
+            f"references unknown agent {agents.default!r}",
+        )

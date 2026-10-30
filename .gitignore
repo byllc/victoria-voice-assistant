@@ -1,0 +1,18 @@
+# --- Secrets (ground rule: secrets come only from config/.env, never committed) ---
+config/.env
+.env
+config/models.yaml
+config/tools.yaml
+config/agents.yaml
+
+# --- Python virtualenvs (uv-managed; never committed) ---
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# --- Local editor state (machine-specific) ---
+.vscode/

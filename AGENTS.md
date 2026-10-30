@@ -22,7 +22,7 @@ Statuses: `not started` → `in progress` → `ready for review` → `approved` 
 ## Ground rules
 
 - **Target:** Mac mini, M4 Pro, 64 GB, macOS 26. **Development happens on an M2 Mac** (32 GB, local test LLMs in LM Studio); M2 measurements validate design, they are not the target's numbers.
-- **Python 3.12+, always in a uv-managed virtualenv.** Every Python environment (services, spikes, one-off scripts) is a `.venv` created by uv from a `pyproject.toml`, interpreter pinned to 3.12, all dependencies in the lock file. Never install into the system Python; run everything with `uv run`.
+- **Python 3.12+, always in a uv-managed virtualenv.** Every Python environment (services, one-off scripts) is a `.venv` created by uv from a `pyproject.toml`, interpreter pinned to 3.12, all dependencies in the lock file. Never install into the system Python; run everything with `uv run`.
 - **Pipecat built-ins first.** Use Pipecat's own features wherever one exists (architecture §11). Replace a built-in only with measured evidence, recorded in the decisions log.
 - **Secrets** come from environment variables (`config/.env`, git-ignored), never from config files committed to the repo or from code.
 - **All configuration lives in `config/`**, never in the repository root:
@@ -46,6 +46,5 @@ Statuses: `not started` → `in progress` → `ready for review` → `approved` 
 - `docs/voice-pipeline-architecture.md` — what to build and why (source of truth for design).
 - `docs/implementation_plan.md` — order, done criteria, and the gate rules in full.
 - `docs/stages.md` — live tracker: current stage, evidence, decisions log.
-- `docs/spikes-report.md` — experiment results (created in stage 1).
 
 When the two documents disagree, stop and ask.

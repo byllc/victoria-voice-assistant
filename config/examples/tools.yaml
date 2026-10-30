@@ -1,0 +1,54 @@
+tools:
+  - name: home_control
+    description: Control or check home devices.
+    kind: stub
+    params:
+      action:
+        type: string
+        description: turn_on, turn_off, set, or query
+      target:
+        type: string
+        description: device, room, or area
+    notice: Home control isn't set up yet.
+    setup: Configure a Home Assistant MCP server before enabling this tool.
+    examples:
+      - turn off the kitchen lights
+
+search:
+  provider: searxng
+  url: http://127.0.0.1:8888
+  engines: [duckduckgo, brave, wikipedia]
+  max_results: 3
+  snippet_chars: 300
+  cache_ttl_s: 600
+  read:
+    fetcher: auto
+    max_chars: 4000
+    browser_pool: 2
+    block: [image, font, media, stylesheet]
+
+weather:
+  provider: open-meteo
+  home:
+    name: Home
+    lat: 0
+    lon: 0
+  units: imperial
+  cache_ttl_s: 600
+
+timers:
+  max_per_device: 10
+  ring_max_s: 300
+  sound: chime.flac
+
+music:
+  server: http://127.0.0.1:8095
+  source_order: [plex, spotify]
+  rooms: {}
+  duck_level: 20
+
+mcp_servers: {}
+
+tests:
+  - say: set a timer
+    expect: clarify

@@ -55,7 +55,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | # | Stage | Status | Started | Ready for review | Approved by / date |
 |---|---|---|---|---|---|
 | 0 | Tracker, instructions, repo | not started | | | |
-| 1 | Pipeline risk experiments | not started | | | |
+| 1 | Defer early benchmarking | not started | | | |
 | 2 | Skeleton and config | not started | | | |
 | 3 | Web interface and text chat | not started | | | |
 | 4 | Tool registry, timers, weather | not started | | | |
@@ -99,20 +99,18 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 
 **Blocking decisions:** none.
 
-### Stage 1: Pipeline risk experiments
+### Stage 1: Defer early benchmarking
 
-**Goal:** answer the questions the rest of the build depends on, with throwaway code, before committing to a design.
+**Goal:** avoid isolated spike work before the full pipeline exists; validate the integrated system at the end.
 
-**Scope (each a small script under `spikes/`, results in `docs/spikes-report.md`):**
-1. **Fast-model tool calling:** in LM Studio, test two or three candidate models on about 30 household phrases with a draft tool set. Record tool-choice accuracy, argument accuracy, and time to first token. Confirm streamed tool calls work.
-2. **Speech concurrency:** run `WhisperSTTServiceMLX` and `KokoroTTSService` in one asyncio process with two simultaneous requests. Measure event-loop lag and whether MLX needs a per-model lock.
-3. **Turn detection:** Silero VAD plus Smart Turn on short commands ("stop", "skip", "pause") and on long, hesitant ones. Measure end-of-turn delay.
+**Scope:** remove the early spike scripts, reports, and per-run results. Use `google/gemma-4-12b` as the current local test model; do not compare candidate models before end-to-end validation. Carry the known Smart Turn interruption risk forward for validation with the integrated voice pipeline.
 
-**Out of scope:** satellites (their experiments open Stage 12); production code. Spike code is not reused without being rewritten in a later stage.
+**Out of scope:** standalone model, speech-concurrency, and turn-detection benchmarks.
 
 **Done criteria:**
-- [ ] `docs/spikes-report.md` answers each question with measurements and a recommendation.
-- [ ] Any needed architecture changes are proposed in the decisions log.
+- [x] Early spike code, reports, and results are removed.
+- [x] The known Smart Turn risk is recorded for later end-to-end validation.
+- [x] End-to-end pipeline benchmarking is assigned to Stage 11.
 
 **Blocking decisions:** none.
 
@@ -120,7 +118,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 
 **Goal:** a runnable, supervised service that loads and validates its configuration.
 
-**Scope:** Python package layout; the `config/` folder from §2 with example files; Pydantic schemas for `config/models.yaml`, `config/tools.yaml`, and `config/agents.yaml` matching the architecture (including stubs, pools, decider, built-in service blocks); `${ENV}` secret substitution; validation errors that name the file and field; reload on save that keeps the previous config if the new one is invalid; structured logging; SQLite store with migrations; health endpoint; `launchd` plists for the assistant service; a CLI with `config check`.
+**Scope:** Python package layout; the `config/` folder from §2 with example files; Pydantic schemas for `config/models.yaml`, `config/tools.yaml`, and `config/agents.yaml` matching the architecture (including stubs, pools, decider, built-in service blocks); `${ENV}` secret substitution; validation errors that name the file and field; reload on save that keeps the previous config if the new one is invalid; structured logging; SQLite store with migrations; health endpoint; `launchd` plists for the assistant service; a CLI with `config init` and `config check`.
 
 **Out of scope:** models, audio, web UI.
 
@@ -130,6 +128,20 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - [ ] Editing a config file reloads it; an invalid edit is rejected and logged.
 - [ ] The service starts under `launchd` and restarts when killed.
 - [ ] Unit tests pass.
+
+**Local setup:**
+
+```sh
+uv sync --extra dev
+uv run assistant config init
+cp -n config/examples/.env.example config/.env
+# Set LMS_API_KEY in config/.env, then:
+uv run assistant config check
+uv run assistant launchd install --load
+```
+
+The LaunchAgent listens on `127.0.0.1:8765`; unload it with
+`launchctl bootout gui/$(id -u)/com.victoria.voice-assistant`.
 
 **Blocking decisions:** none.
 
@@ -148,7 +160,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - [ ] The assistant service accepts connections only from localhost.
 - [ ] Time to first token is logged per request.
 
-**Blocking decisions:** fast-model choice (from Stage 1).
+**Blocking decisions:** none. Use `google/gemma-4-12b` as the current local test model; assess integrated performance at Stage 11.
 
 ### Stage 4: Tool registry, timers, weather
 
@@ -264,6 +276,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 **Done criteria:**
 - [ ] Killing any one service recovers automatically without losing timers, tasks, or notifications.
 - [ ] One week of daily use with issues logged and fixed or accepted by Bill.
+- [ ] An end-to-end benchmark of representative voice and text interactions reports overall success and per-stage latency.
 - [ ] Runbook reviewed by Bill.
 
 **Blocking decisions:** none.
@@ -274,7 +287,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 
 **Scope:**
 
-*First, experiments (results in `docs/spikes-report.md`, reviewed by Bill before adapter work begins):*
+*Before adapter work, perform targeted satellite compatibility checks and record findings in this stage's evidence:*
 1. **Satellite takeover:** connect to one Satellite1 with `aioesphomeapi` while Home Assistant is also connected. Can our client receive voice-assistant audio? What happens to Home Assistant? Can we drive LEDs, play a reply URL, and play an unprompted announcement?
 2. **Follow-up listening and "stop":** can we reopen the mic after a reply without the wake word? Does the Satellite1 firmware expose a "stop" wake word for timers?
 
@@ -283,7 +296,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 **Out of scope:** the custom satellite protocol and firmware (architecture Appendix A).
 
 **Done criteria:**
-- [ ] Experiment results reviewed by Bill, and the adapter approach agreed, before adapter code is written.
+- [ ] Compatibility findings reviewed by Bill, and the adapter approach agreed, before adapter code is written.
 - [ ] One satellite handles wake word → command → reply for timers, weather, search, agents, home control, and music.
 - [ ] Pending notifications light the satellite.
 - [ ] Clarifying questions reopen the mic without the wake word (or the documented fallback works).
@@ -291,7 +304,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - [ ] Home Assistant's own behaviour with the device is documented and acceptable to Bill.
 - [ ] After Bill's go-ahead, all satellites are moved over.
 
-**Blocking decisions:** outcome of this stage's experiments.
+**Blocking decisions:** outcome of this stage's compatibility checks.
 
 ## 5. Later (not scheduled)
 

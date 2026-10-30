@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "victoria-voice-assistant"
+version = "0.1.0"
+description = "Private, local-first household voice assistant"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic>=2.11,<3",
+    "python-dotenv>=1,<2",
+    "PyYAML>=6,<7",
+    "uvicorn>=0.34,<1",
+    "watchfiles>=1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=8,<9",
+]
+
+[project.scripts]
+assistant = "victoria_voice_assistant.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+victoria_voice_assistant = ["py.typed", "launchd_template.plist", "storage/migrations/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
