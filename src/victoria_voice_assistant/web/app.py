@@ -5,14 +5,12 @@ import logging
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
-from victoria_voice_assistant.config.loader import default_config_dir
 from victoria_voice_assistant.logging_config import configure_logging
 from victoria_voice_assistant.web.auth import COOKIE_NAME, SESSION_TTL_S, SessionSigner
 
@@ -34,7 +32,10 @@ def create_web_app(
     static_dir: Path | None = DEFAULT_STATIC_DIR,
 ) -> FastAPI:
     if not password:
-        raise ValueError("ASSISTANT_WEB_PASSWORD must be set")
+        raise ValueError(
+            "ASSISTANT_WEB_PASSWORD must be set in the process environment "
+            "(not in config files or on the command line)"
+        )
     signer = SessionSigner(password)
     app = FastAPI(title="Victoria Voice Assistant Web")
     app.state.signer = signer
@@ -115,9 +116,8 @@ async def _relay_messages(websocket: WebSocket, upstream) -> None:
 
 
 def create_default_web_app() -> FastAPI:
-    """Factory for uvicorn: reads secrets from config/.env, never from the plist."""
+    """Factory for uvicorn: the password comes only from the process environment."""
     configure_logging()
-    load_dotenv(default_config_dir() / ".env", override=False)
     return create_web_app(
         password=os.environ.get("ASSISTANT_WEB_PASSWORD", ""),
         service_url=os.environ.get("ASSISTANT_SERVICE_URL", DEFAULT_SERVICE_URL),
