@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from openai import APIConnectionError
@@ -43,7 +44,17 @@ def build_llm(role: str, models: ModelsConfig) -> ChatOpenAILLMService:
     server = models.servers[model_config.server]
     if server.type != "openai":
         raise ValueError(f"model {role!r}: only openai-type servers are supported in chat")
-    settings_values: dict[str, Any] = {"model": model_config.model, **model_config.params}
+    # Params Pipecat has no setting for (e.g. reasoning_effort) go to the request body as-is.
+    known = {field.name for field in dataclasses.fields(OpenAILLMService.Settings)}
+    settings_values: dict[str, Any] = {"model": model_config.model}
+    extra: dict[str, Any] = {}
+    for key, value in model_config.params.items():
+        if key in known:
+            settings_values[key] = value
+        else:
+            extra[key] = value
+    if extra:
+        settings_values["extra"] = extra
     return ChatOpenAILLMService(
         name=role,
         settings=OpenAILLMService.Settings(**settings_values),

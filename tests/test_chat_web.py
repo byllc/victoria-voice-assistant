@@ -21,7 +21,7 @@ from pipecat.frames.frames import (
 from starlette.websockets import WebSocketDisconnect
 
 from victoria_voice_assistant.app import create_app
-from victoria_voice_assistant.chat.llm import build_router
+from victoria_voice_assistant.chat.llm import build_llm, build_router
 from victoria_voice_assistant.chat.pinning import pin_models
 from victoria_voice_assistant.chat.serializer import ChatJsonSerializer
 from victoria_voice_assistant.chat.timing import RequestTimer
@@ -119,6 +119,13 @@ def test_router_has_primary_and_fallback_from_config(example_config_dir: Path) -
     router = build_router(models)
     assert len(router.llms) == 2  # type: ignore[attr-defined]
 
+
+def test_unknown_model_params_are_sent_as_request_extras(example_config_dir: Path) -> None:
+    models = load_config(example_config_dir).models
+    models.models["fast"].params["reasoning_effort"] = "none"
+    service = build_llm("fast", models)
+    assert service._settings.extra == {"reasoning_effort": "none"}
+    assert service._settings.temperature == models.models["fast"].params["temperature"]
 
 def test_pin_models_loads_each_pinned_model_once(example_config_dir: Path, tmp_path: Path) -> None:
     lms, calls = _fake_lms(tmp_path)

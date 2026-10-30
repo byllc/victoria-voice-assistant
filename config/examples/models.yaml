@@ -11,6 +11,7 @@ models:
     params:
       temperature: 0.2
       max_tokens: 200
+      reasoning_effort: none  # gemma-4 ignores low; none disables reasoning (first token ~0.6 s)
     timeout_s: 30
     pin: true
   fast-small:
@@ -19,6 +20,7 @@ models:
     params:
       temperature: 0.2
       max_tokens: 200
+      reasoning_effort: none  # gemma-4 ignores low; none disables reasoning (first token ~0.6 s)
     timeout_s: 30
     pin: true
 
