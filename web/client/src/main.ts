@@ -89,6 +89,8 @@ function connect(): void {
   ws.onclose = (event) => {
     if (socket !== ws) return;
     socket = null;
+    // Never keep beeping for a timer this page can no longer hear about.
+    stopRinging();
     setStatus(event.code === 1008 ? "signed out" : "disconnected");
     if (event.code === 1008) showLogin("Please sign in again.");
   };
@@ -118,6 +120,8 @@ function handleServerMessage(message: ServerMessage): void {
     const now = Date.now();
     timers = message.timers.map((t) => ({ name: t.name, endsAt: now + t.remaining_s * 1000, state: t.state }));
     renderTimers();
+    // The server is the source of truth: nothing ringing there means stop here too.
+    if (!timers.some((t) => t.state === "ringing")) stopRinging();
   } else if (message.type === "timer_ring") {
     startRinging(message.names, message.text);
   } else if (message.type === "timer_ring_stop") {
