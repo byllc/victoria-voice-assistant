@@ -49,7 +49,7 @@ from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
 from victoria_voice_assistant.agents.tasks import TaskEvent
 from victoria_voice_assistant.tools.timers import TimerEvent
-from victoria_voice_assistant.voice.models import SpeechModels
+from victoria_voice_assistant.voice.models import SpeechModels, whisper_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ async def run_voice_session(
     pipeline = Pipeline(
         [
             transport.input(),
-            speech.stt(),
+            speech.stt(whisper_prompt(config.agents)),
             pair.user(),
             preprocessor,
             TimingStartProcessor(timer),

@@ -219,3 +219,48 @@ def test_short_clip_ends_turn_without_smart_turn() -> None:
     assert run_turn(1.2) == (False, 1)  # a sentence: Smart Turn decides
     assert run_turn(0.4, short_clip_s=0) == (False, 1)  # turned off
     assert run_turn(1.2, 0.4) == (False, 2)  # "set a timer for ... ten": a later short stretch still asks Smart Turn
+
+
+def test_whisper_prompt_names_the_agents_not_their_aliases() -> None:
+    from victoria_voice_assistant.config.schema import AgentsConfig
+    from victoria_voice_assistant.voice.models import whisper_prompt
+
+    agents = AgentsConfig.model_validate(
+        {"agents": [{"name": "hermes", "aliases": ["herms"], "kind": "harness", "model": "x"},
+                    {"name": "claude", "aliases": ["clod", "cloud"], "kind": "model", "model": "x"}]}
+    )
+    assert whisper_prompt(agents) == "Victoria. Ask Hermes, ask Claude."
+    assert whisper_prompt(AgentsConfig()) is None
+
+
+def test_whisper_gets_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    import mlx_whisper
+    import numpy as np
+    from pipecat.frames.frames import TranscriptionFrame
+    from pipecat.services.whisper.stt import WhisperSTTServiceMLX
+    from pipecat.transcriptions.language import Language
+
+    from victoria_voice_assistant.voice.models import LockedWhisperSTT
+
+    seen: dict = {}
+
+    def fake_transcribe(audio, **kwargs):
+        seen.update(kwargs, samples=len(audio))
+        return {"segments": [{"text": " Ask Hermes to plan dinners.", "no_speech_prob": 0.01, "compression_ratio": 1.2}]}
+
+    monkeypatch.setattr(mlx_whisper, "transcribe", fake_transcribe)
+
+    async def scenario(prompt):
+        stt = LockedWhisperSTT(
+            asyncio.Lock(),
+            prompt=prompt,
+            settings=WhisperSTTServiceMLX.Settings(model="whisper-test", language=Language.EN),
+        )
+        return [frame async for frame in stt.run_stt(np.zeros(1600, dtype=np.int16).tobytes())]
+
+    frames = asyncio.run(scenario("Victoria. Ask Hermes."))
+    assert seen["initial_prompt"] == "Victoria. Ask Hermes." and seen["path_or_hf_repo"] == "whisper-test"
+    assert [f.text.strip() for f in frames if isinstance(f, TranscriptionFrame)] == ["Ask Hermes to plan dinners."]
+    seen.clear()
+    asyncio.run(scenario(None))  # no agents: Pipecat's own run_stt, no prompt
+    assert "initial_prompt" not in seen and seen["samples"] == 1600
