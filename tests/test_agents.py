@@ -32,6 +32,7 @@ AGENTS = AgentsConfig.model_validate(
             {"name": "slowpoke", "kind": "model", "model": "fast", "mode": "auto", "wait_s": 0.05},
             {"name": "butler", "kind": "model", "model": "fast", "mode": "background"},
             {"name": "hermes", "kind": "harness", "model": "fast"},
+            {"name": "alexa", "kind": "relay"},
         ],
     }
 )
@@ -183,11 +184,11 @@ def test_failures_timeouts_and_cancels_are_recorded(example_config_dir: Path, mo
 def test_unknown_and_unsupported_agents_are_spoken(example_config_dir: Path) -> None:
     async def scenario():
         agent_runner, _ = _runner(_config(example_config_dir))
-        return await agent_runner.ask("zed", "x", "web"), await agent_runner.ask("hermes", "x", "web")
+        return await agent_runner.ask("zed", "x", "web"), await agent_runner.ask("alexa", "x", "web")
 
-    unknown, harness = run(scenario())
+    unknown, relay = run(scenario())
     assert unknown.speak == "I don't know an agent called zed."
-    assert harness.speak == "Hermes isn't set up yet."
+    assert relay.speak == "Alexa isn't set up yet."
 
 
 def test_tasks_left_running_by_a_restart_are_marked_failed(tmp_path: Path) -> None:

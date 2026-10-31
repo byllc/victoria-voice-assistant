@@ -88,8 +88,9 @@ class AgentRunner:
         agent = self.find(name)
         if agent is None:
             return ToolOutcome(result={"error": f"no agent called {name!r}"}, speak=f"I don't know an agent called {name}.")
-        if agent.kind != "model" or (agent.model is None and agent.pool is None):
-            # Harness, A2A and relay agents arrive later in Stage 7 and beyond.
+        supported = (agent.kind == "model" and (agent.model or agent.pool)) or (agent.kind == "harness" and agent.model)
+        if not supported:
+            # A2A and relay agents come in later stages.
             logger.info("Agent kind not supported yet", extra={"event": "agent_unsupported", "agent": agent.name, "kind": agent.kind})
             return ToolOutcome(result={"error": "agent not set up yet"}, speak=f"{label(agent.name)} isn't set up yet.")
         missing = self._missing_key(agent)
@@ -121,7 +122,8 @@ class AgentRunner:
         for name in names:
             server_name = models.models[name].server
             server = models.servers[server_name]
-            if server.type == "anthropic" and not server.api_key:
+            # Cloud models and agent harnesses (Hermes checks its bearer token) need a key; LM Studio doesn't.
+            if (server.type == "anthropic" or agent.kind == "harness") and not server.api_key:
                 return server_name
         return None
 
@@ -160,7 +162,8 @@ class AgentRunner:
         except Exception as exc:  # noqa: BLE001 - any agent failure is reported, never raised into the session
             logger.warning("Agent failed", extra={"event": "agent_failed", "agent": agent.name, "reason": str(exc)})
             self.tasks.update(task, state="failed", error=str(exc) or type(exc).__name__)
-            self.tasks.say(task, f"{name} couldn't finish that.")
+            unreachable = "connection" in str(exc).lower()
+            self.tasks.say(task, f"I can't reach {name} right now." if unreachable else f"{name} couldn't finish that.")
             return
         finally:
             if notice is not None:
@@ -213,12 +216,14 @@ class AgentRunner:
     async def _attempt(
         self, agent: AgentConfig, task: Task, model: str, reason: str, choice: PoolChoice | None = None
     ) -> AgentReply:
-        registry = build_registry(self.config.tools, self.config.agents, self.services, log_stubs=False)
-        tools = [
-            entry
-            for name in agent.tools
-            if name not in BUILTIN_TOOLS and (entry := registry.get(name)) is not None and entry.status == "ready"
-        ]
+        tools = []
+        if agent.kind == "model":  # a harness (Hermes) runs its own tools; it gets the request only
+            registry = build_registry(self.config.tools, self.config.agents, self.services, log_stubs=False)
+            tools = [
+                entry
+                for name in agent.tools
+                if name not in BUILTIN_TOOLS and (entry := registry.get(name)) is not None and entry.status == "ready"
+            ]
         self.tasks.update(task, model=model)
         reply = await self._call_model(agent, task, model, tools)
         cost = cost_usd(self.config.models.models[model], reply.input_tokens, reply.output_tokens)

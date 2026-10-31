@@ -9,6 +9,13 @@ agents:
     share_context: minimal
     mode: wait
 
+  - name: hermes
+    aliases: [herms]
+    kind: harness               # runs its own tools (files and a shell, inside its container)
+    model: hermes               # from models.yaml
+    mode: auto                  # wait up to wait_s, then background
+    wait_s: 8
+
   - name: claude
     aliases: [clod, cloud]      # common mis-transcriptions
     kind: model
