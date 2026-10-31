@@ -8,3 +8,22 @@ agents:
     tools: []
     share_context: minimal
     mode: wait
+
+  - name: hermes
+    aliases: [herms]
+    kind: harness               # runs its own tools (files and a shell, inside its container)
+    model: hermes               # from models.yaml
+    mode: auto                  # wait up to wait_s, then background
+    wait_s: 8
+
+  # Optional cloud agent: a stub ("Claude isn't set up yet.") until ANTHROPIC_API_KEY is set. docs/claude-setup.md
+  - name: claude
+    aliases: [clod, cloud]      # common mis-transcriptions
+    kind: model
+    pool: claude                # the decider picks Haiku, Sonnet or Opus per request
+    system: You answer by voice for our household. Be brief and concrete. No lists or formatting.
+    tools: [weather, web_search, web_read]
+    search: builtin
+    share_context: minimal
+    mode: auto
+    wait_s: 8

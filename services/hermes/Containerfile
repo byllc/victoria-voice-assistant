@@ -1,0 +1,37 @@
+# Hermes Agent (Nous Research) in an Apple container (architecture §3: agent isolation).
+# Hermes's files and shell reach only this container and the one work folder mounted at /work.
+FROM docker.io/library/python:3.12-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl ca-certificates libatomic1 xz-utils procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 hermes \
+    && mkdir /work && chown hermes:hermes /work
+
+USER hermes
+ENV HOME=/home/hermes
+ENV PATH=/home/hermes/.local/bin:/home/hermes/.hermes/bin:$PATH
+
+# v0.22.5 (2026-10-23). The installer fetches this commit and a pinned, checksummed uv.
+ARG HERMES_COMMIT=bf0203a794a07aac3ff764972ab9087baa4e4f4e
+RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
+    | bash -s -- --commit "$HERMES_COMMIT" --non-interactive --skip-browser --skip-computer-use
+
+# Non-secret settings. The model is LM Studio on the Mac, reached at the container network's gateway;
+# context_length is explicit because Hermes reads the first loaded instance of a model, and the
+# assistant's own gemma instances are 8K. Only files and a shell, both inside this container.
+RUN hermes config set model.provider lmstudio \
+    && hermes config set model.base_url http://192.168.64.1:1234/v1 \
+    && hermes config set model.default gemma-hermes \
+    && hermes config set model.context_length 65536 \
+    && hermes config set terminal.backend local \
+    && hermes config set terminal.cwd /work \
+    && hermes config set platform_toolsets.api_server "[terminal, file]"
+
+# Secrets and the listener come from the environment at `container run` (see run.sh):
+# API_SERVER_KEY, LM_API_KEY. 0.0.0.0 inside the container; run.sh publishes it on the Mac's 127.0.0.1 only.
+ENV API_SERVER_ENABLED=true API_SERVER_HOST=0.0.0.0 API_SERVER_PORT=8642
+
+WORKDIR /work
+EXPOSE 8642
+CMD ["hermes", "gateway"]

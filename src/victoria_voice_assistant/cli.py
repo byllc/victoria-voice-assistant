@@ -22,6 +22,7 @@ from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.web.tls import TlsError, describe, find_tls_files, log_cert, validate
 from victoria_voice_assistant.launchd import (
+    install_decider_launch_agent,
     install_launch_agent,
     install_searxng_launch_agent,
     install_web_launch_agent,
@@ -106,6 +107,16 @@ def _build_parser() -> argparse.ArgumentParser:
     install_searxng = launchd_subcommands.add_parser("install-searxng", help="write SearXNG LaunchAgent plist")
     install_searxng.add_argument("--output", type=Path)
     install_searxng.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+
+    install_decider = launchd_subcommands.add_parser("install-decider", help="write decider (mlx-lm) LaunchAgent plist")
+    install_decider.add_argument("--output", type=Path)
+    install_decider.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+
+    decider = commands.add_parser("decider", help="the local decision model (mlx-lm)")
+    decider_subcommands = decider.add_subparsers(dest="decider_command", required=True)
+    decider_subcommands.add_parser("install", help="build the pinned mlx-lm environment")
+    decider_run = decider_subcommands.add_parser("run", help="serve the decision model from models.yaml")
+    decider_run.add_argument("--config-dir", help="configuration directory (default: config/)")
 
     searxng = commands.add_parser("searxng", help="the local SearXNG search engine")
     searxng_subcommands = searxng.add_subparsers(dest="searxng_command", required=True)
@@ -234,6 +245,24 @@ def main(argv: list[str] | None = None) -> int:
         except FileNotFoundError as exc:
             print(str(exc), file=sys.stderr)
             return 1
+        return 0
+
+    if args.command == "decider":
+        from victoria_voice_assistant.decider import mlxlm
+
+        if args.decider_command == "install":
+            print(f"mlx-lm ready in {mlxlm.install()}")
+            return 0
+        try:
+            mlxlm.run(load_config(_config_dir(args.config_dir)).models)
+        except (ConfigError, FileNotFoundError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "launchd" and args.launchd_command == "install-decider":
+        destination = install_decider_launch_agent(args.output, load=args.load)
+        print(f"Decider LaunchAgent plist written: {destination}")
         return 0
 
     if args.command == "launchd" and args.launchd_command == "install-searxng":

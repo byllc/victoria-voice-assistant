@@ -1,0 +1,14 @@
+# Python environment for the local decision model, served by mlx-lm's OpenAI-compatible
+# server (see services/mlx-lm/README.md). Kept apart from the assistant's own environment
+# so mlx-lm can be upgraded on its own schedule.
+[project]
+name = "victoria-mlx-lm-runtime"
+version = "0.1.0"
+description = "mlx-lm server for the assistant's decider"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mlx-lm==0.32.2",
+]
+
+[tool.uv]
+package = false

@@ -120,6 +120,25 @@ wheels = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "docstring-parser" },
+    { name = "httpx2" },
+    { name = "jiter" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/66/4ec271f7607460005276bb09b0d1c749a9ed0cead35a488a8676f15ed6d5/anthropic-1.17.0.tar.gz", hash = "sha256:dcf77a74dde89a9fd12405fca798b012725a107f7c9488454234a74e275c2163", size = 1756371, upload-time = "2026-10-20T22:13:35.117Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/9d/b4d4e46ec05bf19bcfd46c1417337e7cf42b9ecb95c3c63f295e2e9fee4b/anthropic-1.17.0-py3-none-any.whl", hash = "sha256:ccb98b85e1a14f81cf1e2ba348393f341f342bad9e07e014f96c9b69f853aaa7", size = 2094718, upload-time = "2026-10-20T22:13:32.585Z" },
+]
+
+[[package]]
 name = "anyio"
 version = "4.15.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1427,6 +1446,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 kokoro = [
     { name = "kokoro-onnx" },
     { name = "requests" },
@@ -2068,7 +2090,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "lxml" },
-    { name = "pipecat-ai", extra = ["kokoro", "mlx-whisper", "openai", "webrtc", "websocket", "whisper"] },
+    { name = "pipecat-ai", extra = ["anthropic", "kokoro", "mlx-whisper", "openai", "webrtc", "websocket", "whisper"] },
     { name = "playwright" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -2089,7 +2111,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "lxml", specifier = ">=6,<7" },
-    { name = "pipecat-ai", extras = ["kokoro", "mlx-whisper", "openai", "webrtc", "websocket", "whisper"], specifier = "==1.15.0" },
+    { name = "pipecat-ai", extras = ["anthropic", "kokoro", "mlx-whisper", "openai", "webrtc", "websocket", "whisper"], specifier = "==1.15.0" },
     { name = "playwright", specifier = ">=1.50,<2" },
     { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },

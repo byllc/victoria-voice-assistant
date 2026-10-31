@@ -5,7 +5,13 @@ import logging
 from typing import Any
 
 from fastapi import WebSocket
-from pipecat.frames.frames import LLMRunFrame, LLMSetToolsFrame, OutputTransportMessageUrgentFrame
+from pipecat.frames.frames import (
+    LLMMessagesAppendFrame,
+    LLMRunFrame,
+    LLMSetToolsFrame,
+    OutputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -21,6 +27,7 @@ from victoria_voice_assistant.chat.tools import SessionState, ToolRuntime
 from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker
 from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.tools.registry import Services, build_registry
+from victoria_voice_assistant.agents.tasks import TaskEvent
 from victoria_voice_assistant.tools.timers import TimerEvent
 
 logger = logging.getLogger(__name__)
@@ -100,7 +107,7 @@ async def run_chat_session(
         tools=runtime.tools_schema(),
     )
     pair = LLMContextAggregatorPair(context)
-    preprocessor = TurnPreprocessor(state, runtime, services.timers)
+    preprocessor = TurnPreprocessor(state, runtime, services.timers, agents=services.agents)
     runtime.on_settled = preprocessor.release_next
     pipeline = Pipeline(
         [
@@ -117,7 +124,14 @@ async def run_chat_session(
         ]
     )
     # RTVI messages would reach the chat client through the urgent transport-message path.
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=False), enable_rtvi=False)
+    # No idle timeout: Pipecat counts only voice activity frames, which text chat never produces,
+    # so its default would close every chat 5 minutes after it opened. The websocket ends the session.
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(allow_interruptions=False),
+        enable_rtvi=False,
+        idle_timeout_secs=None,
+    )
     session.task = task
 
     async def on_timer_event(event: TimerEvent) -> None:
@@ -129,6 +143,20 @@ async def run_chat_session(
             await session.send({"type": "timer_ring", "names": event.names or [], "text": event.text})
         elif event.kind == "ring_stopped":
             await session.send({"type": "timer_ring_stop", "names": event.names or []})
+
+    async def on_task_event(event: TaskEvent) -> None:
+        # An agent's result, delay notice or error, for this device: shown as an assistant reply
+        # and added to the conversation so follow-up questions can refer to it.
+        if event.kind != "say" or event.task.device != state.device or not event.text:
+            return
+        text = event.full or event.text  # chat shows the whole reply; voice speaks the short one
+        await task.queue_frames(
+            [
+                LLMMessagesAppendFrame(messages=[{"role": "assistant", "content": text}], run_llm=False),
+                OutputTransportMessageFrame(message={"type": "token", "text": text}),
+                OutputTransportMessageFrame(message={"type": "done"}),
+            ]
+        )
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client) -> None:
@@ -142,11 +170,15 @@ async def run_chat_session(
         await task.cancel(reason="client disconnected")
 
     services.timers.add_listener(on_timer_event)
+    if services.agents is not None:
+        services.agents.tasks.add_listener(on_task_event)
     if hub is not None:
         hub.sessions.add(session)
     try:
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
         services.timers.remove_listener(on_timer_event)
+        if services.agents is not None:
+            services.agents.tasks.remove_listener(on_task_event)
         if hub is not None:
             hub.sessions.discard(session)

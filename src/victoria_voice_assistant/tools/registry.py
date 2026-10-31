@@ -17,6 +17,7 @@ from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 
 if TYPE_CHECKING:
+    from victoria_voice_assistant.agents.runner import AgentRunner
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ DEFAULT_HTTP_TIMEOUT_S = 5.0
 HTTP_RESULT_CHARS = 2000
 # Kinds that exist in the architecture but are built in later stages.
 LATER_KINDS = {"mcp": "MCP tools", "ha_service": "Home Assistant service calls", "ha_script": "Home Assistant scripts"}
-BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent")
+BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent", "tasks")
 
 Status = Literal["ready", "stub", "auto_stub", "disabled"]
 ReplyMode = Literal["model", "template", "silent"]
@@ -51,6 +52,7 @@ class Services:
     http: httpx.AsyncClient | None = None
     search: SearchService | None = None
     reader: PageReader | None = None
+    agents: AgentRunner | None = None
 
 
 @dataclass
@@ -158,7 +160,7 @@ def _agent_label(name: str) -> str:
     return _title(name)
 
 
-def builtin_entries(agents: AgentsConfig) -> list[ToolEntry]:
+def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> list[ToolEntry]:
     names = [agent.name for agent in agents.agents]
     default = agents.default
     agent_param: dict[str, Any] = {"type": "string", "description": "agent name"}
@@ -174,8 +176,10 @@ def builtin_entries(agents: AgentsConfig) -> list[ToolEntry]:
             pending=PendingQuestion(kind="clarify", question=question, options=options),
         )
 
-    async def ask_agent(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+    async def ask_agent(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         agent = str(arguments.get("agent") or default or "")
+        if services is not None and services.agents is not None:
+            return await services.agents.ask(agent, str(arguments.get("task") or ""), ctx.device)
         logger.info(
             "Agent requested before agents exist",
             extra={"event": "agent_requested", "agent": agent, "arguments": arguments},
@@ -203,7 +207,14 @@ def builtin_entries(agents: AgentsConfig) -> list[ToolEntry]:
             ),
         )
 
-    return [
+    async def tasks(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+        from victoria_voice_assistant.agents.tasks_tool import tasks_tool
+
+        if services is None or services.agents is None:
+            return ToolOutcome(result={"error": "agents are not set up yet"}, speak="Agents aren't set up yet.")
+        return await tasks_tool(services.agents.tasks, arguments)
+
+    entries = [
         ToolEntry(
             name="clarify",
             description=(
@@ -243,6 +254,27 @@ def builtin_entries(agents: AgentsConfig) -> list[ToolEntry]:
             speaks_directly=True,
         ),
     ]
+    if names:
+        entries.append(
+            ToolEntry(
+                name="tasks",
+                description=(
+                    "The agents' tasks: list what's running, check whether one is done, or cancel one "
+                    "(for example 'what's helper working on', 'is the meal plan done', 'cancel the research task')."
+                ),
+                kind="builtin",
+                status="ready",
+                handler=tasks,
+                properties={
+                    "action": {"type": "string", "enum": ["list", "status", "cancel"]},
+                    "agent": agent_param,
+                    "about": {"type": "string", "description": "words from the task, for example 'meal plan'"},
+                },
+                required=["action"],
+                speaks_directly=True,
+            )
+        )
+    return entries
 
 
 # Configured tools ---------------------------------------------------------------
@@ -420,7 +452,7 @@ def build_registry(
     log_stubs: bool = False,
 ) -> ToolRegistry:
     """Build the tools for one session. ``log_stubs`` warns about automatic stubs (startup and reload)."""
-    builtins = builtin_entries(agents)
+    builtins = builtin_entries(agents, services)
     entries: list[ToolEntry] = []
     for tool in tools.tools:
         if tool.name in BUILTIN_TOOLS:

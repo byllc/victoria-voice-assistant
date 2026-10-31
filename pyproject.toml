@@ -10,7 +10,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
-    "pipecat-ai[kokoro,mlx-whisper,openai,webrtc,websocket,whisper]==1.15.0",
+    "pipecat-ai[anthropic,kokoro,mlx-whisper,openai,webrtc,websocket,whisper]==1.15.0",
     "pydantic>=2.11,<3",
     "playwright>=1.50,<2",
     "python-dotenv>=1,<2",

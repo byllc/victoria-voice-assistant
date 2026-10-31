@@ -18,6 +18,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime
+from victoria_voice_assistant.agents.runner import AgentRunner, match_agent_address
 from victoria_voice_assistant.tools.timers import TimerService
 
 logger = logging.getLogger(__name__)
@@ -65,11 +66,19 @@ class TurnPreprocessor(FrameProcessor):
     never answers it from a context that lacks the previous tool results.
     """
 
-    def __init__(self, state: SessionState, runtime: ToolRuntime, timers: TimerService, **kwargs) -> None:
+    def __init__(
+        self,
+        state: SessionState,
+        runtime: ToolRuntime,
+        timers: TimerService,
+        agents: AgentRunner | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.runtime = runtime
         self.timers = timers
+        self.agents = agents
         self._waiting: deque[LLMMessagesAppendFrame] = deque()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
@@ -114,13 +123,14 @@ class TurnPreprocessor(FrameProcessor):
             return True
         pending = self.state.take_pending()
         if pending is None:
-            return False
+            return await self._agent_address(text, started)
         if pending.kind == "clarify":
             self.state.answering_clarify = True
-            return False
+            return await self._agent_address(text, started)
         answer = match_yes_no(text)
         if answer is None:
-            return False  # not a yes/no: the model handles it as a new request
+            # not a yes/no: a new request, for an agent by name or for the model
+            return await self._agent_address(text, started)
         if answer == "no":
             await self._reply(text, "Okay.", "pending_no", started)
             return True
@@ -132,6 +142,19 @@ class TurnPreprocessor(FrameProcessor):
                 outcome, direct = await self.runtime.run(entry, dict(arguments))
                 reply = direct or outcome.speak or reply
         await self._reply(text, reply, "pending_yes", started)
+        return True
+
+    async def _agent_address(self, text: str, started: float) -> bool:
+        """ "Ask Helper to ..." goes straight to that agent, with no model call (architecture §5 step 4)."""
+        entry = self.runtime.registry.get("ask_agent")
+        if self.agents is None or entry is None:
+            return False
+        match = match_agent_address(text, self.agents.config.agents.agents)
+        if match is None:
+            return False
+        agent, request = match
+        outcome, direct = await self.runtime.run(entry, {"agent": agent.name, "task": request})
+        await self._reply(text, direct or outcome.speak or "Okay.", "agent_address", started)
         return True
 
     async def _deliver(self, user_text: str, reply: str) -> None:

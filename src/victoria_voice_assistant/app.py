@@ -27,6 +27,9 @@ from victoria_voice_assistant.storage.db import default_database_path, migrate
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
+from victoria_voice_assistant.agents.runner import AgentRunner
+from victoria_voice_assistant.agents.spend import SpendLog
+from victoria_voice_assistant.agents.tasks import TaskService
 from victoria_voice_assistant.search.service import PageReader, SearchService
 from victoria_voice_assistant.voice.monitor import monitor_loop_lag
 
@@ -101,6 +104,9 @@ def create_app(
             reader=reader,
         )
         await services.timers.start()
+        tasks = TaskService(database)
+        tasks.start()
+        services.agents = AgentRunner(manager.current, services, tasks, SpendLog(database))
         hub = ChatHub()
         app.state.services = services
         app.state.chat_hub = hub
@@ -110,6 +116,7 @@ def create_app(
             services.weather.update_settings(config.tools.weather)
             services.search.update_settings(config.tools.search)
             services.reader.update_settings(config.tools.search.read if config.tools.search else None)
+            services.agents.update_config(config)
             _log_tool_status(config, services)
             hub.reload(config, services)
 
