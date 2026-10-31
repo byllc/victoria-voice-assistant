@@ -5,6 +5,7 @@ config/models.yaml
 config/tools.yaml
 config/agents.yaml
 config/tls/
+config/searxng/
 
 # --- Python virtualenvs (uv-managed; never committed) ---
 .venv/

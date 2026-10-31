@@ -119,12 +119,17 @@ class ToolRuntime:
 
     async def run(self, entry: ToolEntry, arguments: dict[str, Any]) -> tuple[ToolOutcome, str | None]:
         """Run a tool with the session's guards. Returns the outcome and the text to speak directly, if any."""
+        # A guard's reply is always spoken directly: handing it back to the model would
+        # start another round, which is what the guard is there to stop.
+        guarded = False
         if self.state.llm_calls > MAX_TOOL_ROUNDS:
             logger.warning("Tool loop guard tripped", extra={"event": "tool_loop_guard", "tool": entry.name})
             outcome = await self._offer_default(f"request needed more than {MAX_TOOL_ROUNDS} tool rounds")
+            guarded = True
         elif entry.name == "clarify" and (self.state.clarified or self.state.answering_clarify):
             # At most one clarifying question per request; then offer the default agent.
             outcome = await self._offer_default(str(arguments.get("question") or ""))
+            guarded = True
         else:
             outcome = await entry.handler(arguments, self._context())
 
@@ -134,7 +139,7 @@ class ToolRuntime:
                 self.state.clarified = True
 
         direct: str | None = None
-        must_speak = entry.speaks_directly or outcome.pending is not None or outcome.error
+        must_speak = guarded or entry.speaks_directly or outcome.pending is not None or outcome.error
         if outcome.speak and must_speak:
             direct = outcome.speak
         elif entry.reply == "template":

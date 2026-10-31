@@ -12,8 +12,10 @@ from victoria_voice_assistant.storage.db import default_database_path
 
 LABEL = "com.victoria.voice-assistant"
 WEB_LABEL = "com.victoria.voice-assistant-web"
+SEARXNG_LABEL = "com.victoria.searxng"
 TEMPLATE = Path(__file__).with_name("launchd_template.plist")
 WEB_TEMPLATE = Path(__file__).with_name("launchd_web_template.plist")
+SEARXNG_TEMPLATE = Path(__file__).with_name("launchd_searxng_template.plist")
 
 
 def _render(template_path: Path, substitutions: dict[str, str]) -> dict[str, object]:
@@ -59,6 +61,25 @@ def render_web_launch_agent(
             "@CONFIG_DIR@": escape(str(config_dir)),
             "@LOG_DIR@": escape(str(log_dir)),
             "@WEB_PORT@": str(web_port),
+        },
+    )
+
+
+def render_searxng_launch_agent(
+    python_executable: Path,
+    project_dir: Path,
+    config_dir: Path,
+    log_dir: Path,
+    searxng_dir: Path,
+) -> dict[str, object]:
+    return _render(
+        SEARXNG_TEMPLATE,
+        {
+            "@PYTHON_EXECUTABLE@": escape(str(python_executable)),
+            "@PROJECT_DIR@": escape(str(project_dir)),
+            "@CONFIG_DIR@": escape(str(config_dir)),
+            "@LOG_DIR@": escape(str(log_dir)),
+            "@SEARXNG_DIR@": escape(str(searxng_dir)),
         },
     )
 
@@ -113,4 +134,14 @@ def install_web_launch_agent(output: Path | None = None, load: bool = False) -> 
     destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{WEB_LABEL}.plist")
     log_dir.mkdir(parents=True, exist_ok=True)
     document = render_web_launch_agent(Path(sys.executable), project_dir, config_dir, log_dir, web_port)
+    return _write_plist(document, destination, load)
+
+
+def install_searxng_launch_agent(output: Path | None = None, load: bool = False) -> Path:
+    from victoria_voice_assistant.search.searxng import source_dir
+
+    project_dir, config_dir, log_dir = _shared_paths()
+    destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{SEARXNG_LABEL}.plist")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    document = render_searxng_launch_agent(Path(sys.executable), project_dir, config_dir, log_dir, source_dir())
     return _write_plist(document, destination, load)

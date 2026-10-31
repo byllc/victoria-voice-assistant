@@ -244,7 +244,7 @@ def test_registry_builds_schemas_and_builtins() -> None:
     ("tool", "reason"),
     [
         ({"kind": "python", "service": "nowhere.module:missing"}, "handler `nowhere.module:missing` not found"),
-        ({"kind": "builtin", "service": "search"}, "built-in service `search` isn't available yet"),
+        ({"kind": "builtin", "service": "music"}, "built-in service `music` isn't available yet"),
         ({"kind": "mcp", "mcp_server": None}, "MCP tools (kind `mcp`) aren't supported yet"),
         ({"kind": "http"}, "http tool has no `http:` section with a url"),
         ({"kind": "python", "params": {"x": {"type": "banana"}}}, "invalid params: param 'x' has unknown type 'banana'"),
@@ -707,3 +707,18 @@ def test_request_is_busy_until_model_and_tools_finish() -> None:
     assert not state.idle()
     state.tools_busy = 0
     assert state.idle()
+
+
+def test_loop_guard_stops_even_without_agents() -> None:
+    """With no agents to offer, the guard still answers directly instead of running the model again."""
+
+    async def scenario():
+        config = ToolsConfig.model_validate(
+            {"tools": [{"name": "clock", "description": "time", "kind": "python", "service": "victoria_voice_assistant.tools.local:current_date"}]}
+        )
+        registry = build_registry(config, AgentsConfig(), _services())
+        runtime = ToolRuntime(registry, SessionState(llm_calls=MAX_TOOL_ROUNDS + 1), notify=_ignore)
+        return await runtime.run(registry.get("clock"), {})  # type: ignore[arg-type]
+
+    _, direct = run(scenario())
+    assert direct == "Sorry, I can't do that."

@@ -210,6 +210,8 @@ class SearchConfig(Schema):
     max_results: int = Field(default=3, gt=0)
     snippet_chars: int = Field(default=300, gt=0)
     cache_ttl_s: int = Field(default=600, ge=0)
+    # When SearXNG is down or all its engines fail, search this site in the warm headless browser.
+    browser_fallback: Literal["bing"] | None = None
     read: SearchReadConfig | None = None
 
 

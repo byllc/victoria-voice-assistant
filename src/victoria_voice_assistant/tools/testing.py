@@ -17,6 +17,7 @@ from victoria_voice_assistant.config.schema import AppConfig, ToolTestGiven
 from victoria_voice_assistant.tools.registry import Services, ToolContext, ToolRegistry, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
+from victoria_voice_assistant.search.service import PageReader, SearchService
 
 # Built-in services whose handlers are safe to run in the sandbox, so service-level outcomes
 # (a timer asking "which timer?") count. Others (weather, http) are not called.
@@ -103,6 +104,8 @@ async def _sandbox(config: AppConfig, given: ToolTestGiven | None) -> tuple[Tool
     services = Services(
         timers=TimerService(config.tools.timers, database_path=None),
         weather=WeatherService(config.tools.weather),
+        search=SearchService(config.tools.search),
+        reader=PageReader(config.tools.search.read if config.tools.search else None),
     )
     for name in given.timers if given else []:
         await services.timers.start_seconds("test", name, 600)

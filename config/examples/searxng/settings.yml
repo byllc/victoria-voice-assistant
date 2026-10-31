@@ -1,0 +1,24 @@
+# SearXNG settings for the assistant's local search (architecture §8, "Built-in web search").
+# Only what differs from SearXNG's defaults; everything else comes from its own settings.yml.
+use_default_settings:
+  engines:
+    keep_only: [duckduckgo, brave, wikipedia]   # fewer, faster engines; match search.engines in tools.yaml
+
+general:
+  instance_name: Victoria search
+
+server:
+  bind_address: "127.0.0.1"       # localhost only; the assistant service is the only client
+  port: 8888
+  secret_key: "set-at-start"      # replaced by SEARXNG_SECRET, which `assistant searxng run` provides
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  formats: [html, json]           # the assistant uses the JSON API
+
+outgoing:
+  request_timeout: 2.0            # SearXNG waits for its slowest engine; keep this short for voice
+  max_request_timeout: 3.0

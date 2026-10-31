@@ -24,6 +24,9 @@ Two processes of ours, plus LM Studio for the language models:
                                    ┌────────────▼─────────────┐
                                    │  LM Studio (:1234)       │  local models
                                    └──────────────────────────┘
+                                   ┌──────────────────────────┐
+                                   │  SearXNG (:8888, local)  │  web search, no accounts
+                                   └──────────────────────────┘
 ```
 
 - **Assistant service** (`assistant serve`): the core, built on [Pipecat](https://github.com/pipecat-ai/pipecat). It accepts connections only from localhost.
@@ -34,6 +37,7 @@ Two processes of ours, plus LM Studio for the language models:
   - Household login, and the example web client: text chat, voice (hands-free or push-to-talk), timers with live countdowns.
   - It relays chat to the assistant service and passes on the setup of a voice call; the audio itself goes straight to the assistant service.
 - **LM Studio** serves the local models through an OpenAI-compatible API. The `router` model answers everyday requests and calls tools; if it fails, the `router_fallback` model takes over.
+- **SearXNG** is a self-hosted metasearch engine, run natively on `127.0.0.1:8888`. `web_search` gets a few short snippets from it, and `web_read` reads one result page (plain HTTP first, a warm headless Chromium for pages that need JavaScript). Web text is passed to the model marked as untrusted.
 
 ### What happens when you speak
 
@@ -48,7 +52,7 @@ Two processes of ours, plus LM Studio for the language models:
 
 Tools are declared in `config/tools.yaml` and reloaded when the file changes:
 
-- **Kinds:** `builtin` (timers, weather), `python` (a function in this project), `http` (a REST call), and `stub` (planned but not built).
+- **Kinds:** `builtin` (timers, weather, web search), `python` (a function in this project), `http` (a REST call), and `stub` (planned but not built).
 - **Stubs:** a stub speaks a short notice and sends its setup steps to the chat. A tool whose definition is broken or whose code can't be found becomes an automatic stub instead of breaking the file.
 - **Built-in tools:** `clarify` (ask one question), `offer_agent` and `ask_agent` are always present.
 
@@ -62,7 +66,7 @@ Work proceeds in numbered stages, each approved before the next starts. The live
 | 3 | Web interface and text chat | approved |
 | 4 | Tool registry, timers, weather | approved |
 | 5 | Voice in the browser | approved |
-| 6 | Local web search (SearXNG) | in progress |
+| 6 | Local web search (SearXNG) | in progress: search works; review pending |
 | 7–12 | Agents and model pools, notifications and task dashboard, home control, music, hardening, satellites | not started |
 
 ## Requirements
@@ -87,11 +91,16 @@ uv run assistant config check
 
 # 3. Web client
 (cd web/client && npm install && npm run build)
+
+# 4. Web search: SearXNG (pinned commit, in ~/Services/searxng) and the headless browser
+uv run assistant searxng install
+uv run playwright install --only-shell chromium
 ```
 
-Then, in two terminals:
+Then, in three terminals:
 
 ```sh
+uv run assistant searxng run  # SearXNG on 127.0.0.1:8888
 uv run assistant serve        # assistant service on 127.0.0.1:8765
 uv run assistant web          # web interface on 127.0.0.1:8766
 ```
@@ -100,7 +109,7 @@ Open <http://localhost:8766>. Type to chat, or click **Start voice** and allow t
 
 The first `assistant serve` downloads the speech models: Whisper large-v3-turbo (about 1.6 GB) and Kokoro (about 330 MB). `curl http://127.0.0.1:8765/health` shows `"speech": "ready"` once voice can be used.
 
-Things to try: "set a pasta timer for ten minutes", "what timers do I have", "cancel the timer", "what's the weather tomorrow", "what time is it", "turn off the kitchen lights" (a stub: it sends its setup steps to the chat).
+Things to try: "set a pasta timer for ten minutes", "what timers do I have", "cancel the timer", "what's the weather tomorrow", "what time is it", "what's the latest news about the Artemis mission", "turn off the kitchen lights" (a stub: it sends its setup steps to the chat).
 
 ### Login
 
@@ -121,6 +130,7 @@ Browsers allow the microphone only on HTTPS pages (or `localhost`). Put a certif
 ```sh
 uv run assistant launchd install --load        # assistant service
 uv run assistant launchd install-web --load    # web interface
+uv run assistant launchd install-searxng --load  # SearXNG
 ```
 
 Both restart automatically if they exit. Logs go to `~/Library/Logs/Victoria Voice Assistant/`. To restart after a code or certificate change:
@@ -128,6 +138,7 @@ Both restart automatically if they exit. Logs go to `~/Library/Logs/Victoria Voi
 ```sh
 launchctl kickstart -k gui/$(id -u)/com.victoria.voice-assistant
 launchctl kickstart -k gui/$(id -u)/com.victoria.voice-assistant-web
+launchctl kickstart -k gui/$(id -u)/com.victoria.searxng
 ```
 
 ## Configuration
@@ -138,6 +149,7 @@ Everything lives in `config/` (or the directory in `ASSISTANT_CONFIG_DIR`); the 
 |---|---|
 | `models.yaml` | LM Studio and other servers, models and their parameters, roles (`router`, `router_fallback`), and `speech:` (Whisper model, Kokoro voice, VAD and turn-detection settings) |
 | `tools.yaml` | Tools, built-in service settings (weather, timers, search), and the phrases `tools test` checks |
+| `searxng/settings.yml` | SearXNG's settings: localhost only, JSON output, which engines, a short timeout |
 | `agents.yaml` | Agents and their aliases (used from Stage 7) |
 | `.env` | Secrets such as `LMS_API_KEY`. Git-ignored. |
 | `tls/` | The HTTPS certificate and key. Git-ignored. |
@@ -157,7 +169,8 @@ With gemma models, keep `reasoning_effort: none` in each model's `params`. Witho
 | `assistant tools test` | Send each example phrase to the router model and report what it did |
 | `assistant tls status` | Check the HTTPS certificate: key match, names, expiry |
 | `assistant voice bench` | Speak 20 commands over WebRTC and report latency by stage (for the target machine) |
-| `assistant launchd install` / `install-web` | Write (and with `--load`, start) the LaunchAgents |
+| `assistant searxng install` / `run` | Check out the pinned SearXNG and build its environment / run it |
+| `assistant launchd install` / `install-web` / `install-searxng` | Write (and with `--load`, start) the LaunchAgents |
 
 Run them with `uv run`, for example `uv run assistant tools status`.
 
