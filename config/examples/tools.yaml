@@ -167,6 +167,14 @@ timers:
   ring_max_s: 300
   sound: chime.flac
 
+notifications:                    # architecture §10.3
+  quiet_hours: { start: "00:00", end: "08:00" }   # no sound: screen and badge only (timers still ring)
+  default_style: ask_first        # ask_first | speak_summary | chime_only (agents can override with `notify`)
+  mention_pending_after_reply: true
+  question_timeout_min: 30
+  expire_after_h: 24
+  web_push: false
+
 music:
   server: http://127.0.0.1:8095
   source_order: [plex, spotify]
@@ -184,6 +192,9 @@ tests:
   - { say: "book me a flight to Denver", expect: offer_agent }
   - { say: "what is helper working on", expect: "tool:tasks" }
   - { say: "is the meal plan done yet", expect: "tool:tasks" }
+  - { say: "any notifications", expect: "tool:notifications" }
+  - { say: "what did hermes say", expect: "tool:notifications" }
+  - { say: "do not disturb until 8 a.m.", expect: "tool:notifications" }
   - { say: "cancel the research task", expect: "tool:tasks" }
   - { say: "how many ounces are in a cup", expect: answer }
   - { say: "what's the score of the Celtics game", expect: "tool:web_search" }

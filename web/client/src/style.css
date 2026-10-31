@@ -189,3 +189,56 @@ button {
 #log p.heard span::before {
   content: "🎙 ";
 }
+
+.badge {
+  display: inline-block;
+  min-width: 1.2em;
+  padding: 0 0.35em;
+  border-radius: 1em;
+  background: #c2410c;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.badge[hidden] {
+  display: none;
+}
+
+.inbox {
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.inbox[hidden] {
+  display: none;
+}
+
+.inbox-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.inbox ul {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.inbox details p,
+.notification details p {
+  white-space: pre-wrap;
+  margin: 0.4rem 0 0;
+}
+
+.inbox summary,
+.notification summary {
+  cursor: pointer;
+}

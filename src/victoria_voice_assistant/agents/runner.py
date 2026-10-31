@@ -162,22 +162,58 @@ class AgentRunner:
             raise
         except TimeoutError:
             self.tasks.update(task, state="timed_out", error=f"no result after {AGENT_TIMEOUT_S:.0f} s")
-            self.tasks.say(task, f"{name} took too long, so I stopped it.")
+            self._report(agent, task, "error", f"{name} took too long, so I stopped it.", delayed=True)
             return
         except Exception as exc:  # noqa: BLE001 - any agent failure is reported, never raised into the session
             logger.warning("Agent failed", extra={"event": "agent_failed", "agent": agent.name, "reason": str(exc)})
             self.tasks.update(task, state="failed", error=str(exc) or type(exc).__name__)
             unreachable = "connection" in str(exc).lower()
-            self.tasks.say(task, f"I can't reach {name} right now." if unreachable else f"{name} couldn't finish that.")
+            text = f"I can't reach {name} right now." if unreachable else f"{name} couldn't finish that."
+            self._report(agent, task, "error", text, delayed=self._delayed(agent, loop.time() - started))
             return
         finally:
             if notice is not None:
                 notice.cancel()
-        delayed = agent.mode == "background" or (agent.mode == "auto" and loop.time() - started >= (agent.wait_s or 0))
+        delayed = self._delayed(agent, loop.time() - started)
         self.tasks.update(task, state="finished", result=reply.text)
         spoken = await spoken_version(reply.text, self._summarizer())
-        prefix = f"{name} has finished. " if delayed else ""
-        self.tasks.say(task, prefix + spoken, full=prefix + reply.text if spoken != reply.text else None)
+        if delayed:
+            self._report(agent, task, "result", f"{name} has finished.", delayed=True, summary=spoken, full=reply.text)
+        else:
+            self.tasks.say(task, spoken, full=reply.text if spoken != reply.text else None)
+
+    @staticmethod
+    def _delayed(agent: AgentConfig, elapsed_s: float) -> bool:
+        """Whether the requester has stopped waiting: background mode, or auto mode past wait_s."""
+        return agent.mode == "background" or (agent.mode == "auto" and elapsed_s >= (agent.wait_s or 0))
+
+    def _report(
+        self,
+        agent: AgentConfig,
+        task: Task,
+        kind: str,
+        headline: str,
+        delayed: bool,
+        summary: str = "",
+        full: str | None = None,
+    ) -> None:
+        """A result or error. Said straight away while the requester waits; afterwards it's a notification
+        (architecture §10.1 step 3: never just spoken into an empty room and lost)."""
+        notifications = self.services.notifications
+        if not delayed or notifications is None:
+            text = f"{headline} {summary}".strip()
+            self.tasks.say(task, text, full=f"{headline} {full}".strip() if full and full != summary else None)
+            return
+        notifications.post(
+            source=agent.name,
+            kind=kind,  # type: ignore[arg-type]
+            headline=headline,
+            summary=summary,
+            full=full,
+            target=task.device,
+            style=agent.notify,
+            task_id=task.id,
+        )
 
     def _summarizer(self) -> Any:
         role = self.config.models.roles.summarizer

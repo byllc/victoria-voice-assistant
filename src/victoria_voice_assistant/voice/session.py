@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import time
 from typing import Any
 
 from pipecat.audio.turn.base_turn_analyzer import EndOfTurnState
@@ -12,15 +13,20 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     Frame,
     InputAudioRawFrame,
     LLMContextFrame,
     LLMRunFrame,
     TTSSpeakFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
 from pipecat.metrics.metrics import TurnMetricsData
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.observers.user_bot_latency_observer import LatencyBreakdown, UserBotLatencyObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -48,6 +54,7 @@ from victoria_voice_assistant.config.schema import AppConfig, SpeechConfig
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
 from victoria_voice_assistant.agents.tasks import TaskEvent
+from victoria_voice_assistant.notifications.service import Announcement, Notification
 from victoria_voice_assistant.tools.timers import TimerEvent
 from victoria_voice_assistant.voice.models import SpeechModels, whisper_prompt
 
@@ -55,6 +62,77 @@ logger = logging.getLogger(__name__)
 
 # A session whose browser never completes the WebRTC connection is ended after this long.
 CONNECT_TIMEOUT_S = 30.0
+# The room counts as mid-conversation for this long after anyone last spoke.
+CONVERSATION_GRACE_S = 3.0
+# After the user stops speaking, a reply is expected within this long.
+REPLY_WAIT_S = 15.0
+
+
+class RoomActivity(BaseObserver):
+    """Whether someone is mid-conversation in this voice session, for notification delivery (architecture §10.3).
+
+    Pipecat's TurnTrackingObserver counts the first turn as starting with the pipeline and
+    ending only after the bot first speaks, so a fresh session would look busy until then.
+    This tracks the same speaking frames, plus a grace period after anyone stops.
+    """
+
+    def __init__(self, clock=time.monotonic, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._clock = clock
+        self.user_speaking = False
+        self.bot_speaking = False
+        self.awaiting_reply_since: float | None = None
+        self.last_activity = float("-inf")
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        frame = data.frame
+        if isinstance(frame, UserStartedSpeakingFrame):
+            self.user_speaking = True
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            self.user_speaking = False
+            self.awaiting_reply_since = self._clock()
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            self.bot_speaking = True
+            self.awaiting_reply_since = None
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self.bot_speaking = False
+        else:
+            return
+        self.last_activity = self._clock()
+
+    def busy(self) -> bool:
+        now = self._clock()
+        if self.user_speaking or self.bot_speaking or now - self.last_activity < CONVERSATION_GRACE_S:
+            return True
+        return self.awaiting_reply_since is not None and now - self.awaiting_reply_since < REPLY_WAIT_S
+
+
+class VoiceOutlet:
+    """The notification service's view of a voice session: a speaker. Screens get the badge from chat."""
+
+    speaks = True
+
+    def __init__(self, state: SessionState, activity: RoomActivity, context: LLMContext, task: PipelineTask) -> None:
+        self.state = state
+        self.activity = activity
+        self.context = context
+        self.task = task
+        self.device = state.device
+
+    def busy(self) -> bool:
+        return self.activity.busy()
+
+    def requests(self) -> int:
+        return self.state.requests
+
+    async def announce(self, announcement: Announcement) -> None:
+        if announcement.question is not None:
+            self.state.set_pending(announcement.question)  # "yes" reads them out
+        self.context.add_message({"role": "assistant", "content": announcement.text})
+        await self.task.queue_frame(TTSSpeakFrame(announcement.text, append_to_context=False))
+
+    async def show(self, unread: list[Notification]) -> None:
+        return None
 
 
 class VoiceTurnPreprocessor(TurnPreprocessor):
@@ -241,7 +319,9 @@ async def run_voice_session(
         tools=runtime.tools_schema(),
     )
     pair = LLMContextAggregatorPair(context, user_params=user_params(config.models.speech))
-    preprocessor = VoiceTurnPreprocessor(state, runtime, services.timers, agents=services.agents, context=context)
+    preprocessor = VoiceTurnPreprocessor(
+        state, runtime, services.timers, agents=services.agents, notifications=services.notifications, context=context
+    )
     pipeline = Pipeline(
         [
             transport.input(),
@@ -257,8 +337,9 @@ async def run_voice_session(
         ]
     )
     latency = UserBotLatencyObserver()
+    activity = RoomActivity()
     # RTVI stays on here: the browser's Pipecat client uses it for transcripts and state.
-    task = PipelineTask(pipeline, params=PipelineParams(enable_metrics=True), observers=[latency])
+    task = PipelineTask(pipeline, params=PipelineParams(enable_metrics=True), observers=[latency, activity])
     session.task = task
 
     async def send(message: dict[str, Any]) -> None:
@@ -301,15 +382,20 @@ async def run_voice_session(
             await task.cancel(reason="never connected")
 
     watchdog = asyncio.create_task(end_if_never_connected())
+    outlet = VoiceOutlet(state, activity, context, task)
     services.timers.add_listener(on_timer_event)
     if services.agents is not None:
         services.agents.tasks.add_listener(on_task_event)
+    if services.notifications is not None:
+        services.notifications.attach(outlet)
     if hub is not None:
         hub.sessions.add(session)
     try:
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
         watchdog.cancel()
+        if services.notifications is not None:
+            services.notifications.detach(outlet)
         services.timers.remove_listener(on_timer_event)
         if services.agents is not None:
             services.agents.tasks.remove_listener(on_task_event)

@@ -16,6 +16,7 @@ from victoria_voice_assistant.config.loader import (
     load_config,
 )
 from victoria_voice_assistant.config.schema import AppConfig
+from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.registry import Services, ToolRegistry, build_registry
 from victoria_voice_assistant.tools.testing import format_report, format_status, run_tool_tests
 from victoria_voice_assistant.tools.timers import TimerService
@@ -38,6 +39,7 @@ def _registry(config: AppConfig) -> ToolRegistry:
         weather=WeatherService(config.tools.weather),
         search=SearchService(config.tools.search),
         reader=PageReader(config.tools.search.read if config.tools.search else None),
+        notifications=NotificationService(config.tools.notifications),
     )
     return build_registry(config.tools, config.agents, services)
 

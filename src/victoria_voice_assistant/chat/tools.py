@@ -45,8 +45,10 @@ class SessionState:
     tools_busy: int = 0
     awaiting_llm: bool = False
     busy_since: float | None = None
+    requests: int = 0
 
     def begin_request(self) -> None:
+        self.requests += 1
         self.llm_calls = 0
         self.clarified = False
         self.answering_clarify = False

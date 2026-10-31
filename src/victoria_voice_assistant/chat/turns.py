@@ -19,6 +19,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime
 from victoria_voice_assistant.agents.runner import AgentRunner, match_agent_address
+from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.timers import TimerService
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class TurnPreprocessor(FrameProcessor):
         runtime: ToolRuntime,
         timers: TimerService,
         agents: AgentRunner | None = None,
+        notifications: NotificationService | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -79,13 +81,20 @@ class TurnPreprocessor(FrameProcessor):
         self.runtime = runtime
         self.timers = timers
         self.agents = agents
+        self.notifications = notifications
         self._waiting: deque[LLMMessagesAppendFrame] = deque()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, InputTransportMessageFrame):
-            if isinstance(frame.message, dict) and frame.message.get("type") == "timer_stop":
+            message = frame.message if isinstance(frame.message, dict) else {}
+            if message.get("type") == "timer_stop":
                 await self.timers.stop_ringing(self.state.device)
+            elif message.get("type") == "notification_ack" and self.notifications is not None:
+                # Opened or dismissed on the screen.
+                unread = self.notifications.unread(self.state.device)
+                wanted = message.get("ids")
+                self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
             return
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMMessagesAppendFrame) and frame.run_llm:
             text = _user_text(frame)

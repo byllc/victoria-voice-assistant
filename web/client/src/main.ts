@@ -2,6 +2,17 @@ import { Voice } from "./voice";
 
 type TimerInfo = { id: string; name: string; remaining_s: number; state: "running" | "ringing" };
 
+type NotificationInfo = {
+  id: string;
+  source: string;
+  kind: "result" | "question" | "error" | "notice";
+  headline: string;
+  full: string;
+  priority: "urgent" | "normal" | "low";
+  state: "pending" | "delivered";
+  created_at: number;
+};
+
 type ServerMessage =
   | { type: "token"; text: string }
   | { type: "done" }
@@ -9,7 +20,9 @@ type ServerMessage =
   | { type: "notice"; title: string; text: string }
   | { type: "timers"; timers: TimerInfo[] }
   | { type: "timer_ring"; names: string[]; text: string | null }
-  | { type: "timer_ring_stop"; names: string[] };
+  | { type: "timer_ring_stop"; names: string[] }
+  | { type: "notifications"; items: NotificationInfo[] }
+  | { type: "announce"; text: string; sound: boolean; spoken: boolean; items: NotificationInfo[] };
 
 const loginSection = required<HTMLElement>("login");
 const chatSection = required<HTMLElement>("chat");
@@ -31,6 +44,12 @@ const voiceMode = required<HTMLSelectElement>("voice-mode");
 const talkButton = required<HTMLButtonElement>("talk");
 const voiceState = required<HTMLElement>("voice-state");
 const botAudio = required<HTMLAudioElement>("bot-audio");
+const inboxToggle = required<HTMLButtonElement>("inbox-toggle");
+const badge = required<HTMLElement>("badge");
+const inbox = required<HTMLElement>("inbox");
+const inboxList = required<HTMLUListElement>("inbox-list");
+const inboxEmpty = required<HTMLElement>("inbox-empty");
+const inboxClear = required<HTMLButtonElement>("inbox-clear");
 
 let socket: WebSocket | null = null;
 let pendingReply: HTMLElement | null = null;
@@ -122,6 +141,13 @@ function handleServerMessage(message: ServerMessage): void {
     renderTimers();
     // The server is the source of truth: nothing ringing there means stop here too.
     if (!timers.some((t) => t.state === "ringing")) stopRinging();
+  } else if (message.type === "notifications") {
+    renderInbox(message.items);
+  } else if (message.type === "announce") {
+    if (message.sound) beep();
+    // A speaker in the room says it, and the voice transcript shows it; otherwise show it here.
+    if (!message.spoken) appendMessage("victoria", message.text);
+    for (const item of message.items) appendNotification(item);
   } else if (message.type === "timer_ring") {
     startRinging(message.names, message.text);
   } else if (message.type === "timer_ring_stop") {
@@ -139,6 +165,50 @@ function appendNotice(title: string, text: string): void {
   entry.append(heading, body);
   log.append(entry);
   log.scrollTop = log.scrollHeight;
+}
+
+function acknowledge(ids: string[] | "all"): void {
+  socket?.send(JSON.stringify({ type: "notification_ack", ids }));
+}
+
+// The full text, collapsed; opening it marks the notification read (architecture §4.1 "Open").
+function notificationDetails(item: NotificationInfo): HTMLDetailsElement {
+  const details = document.createElement("details");
+  const summary = document.createElement("summary");
+  summary.textContent = item.headline;
+  const body = document.createElement("p");
+  body.textContent = item.full;
+  details.append(summary, body);
+  details.addEventListener("toggle", () => {
+    if (details.open) acknowledge([item.id]);
+  });
+  return details;
+}
+
+function appendNotification(item: NotificationInfo): void {
+  const entry = document.createElement("div");
+  entry.className = "notice notification";
+  entry.append(notificationDetails(item));
+  log.append(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderInbox(items: NotificationInfo[]): void {
+  badge.hidden = items.length === 0;
+  badge.textContent = String(items.length);
+  inboxEmpty.hidden = items.length > 0;
+  inboxClear.hidden = items.length === 0;
+  inboxList.replaceChildren(
+    ...items.map((item) => {
+      const entry = document.createElement("li");
+      const when = new Date(item.created_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const meta = document.createElement("span");
+      meta.className = "status";
+      meta.textContent = `${item.source} · ${when}`;
+      entry.append(meta, notificationDetails(item));
+      return entry;
+    }),
+  );
 }
 
 function formatRemaining(ms: number): string {
@@ -312,6 +382,12 @@ ringingStop.addEventListener("click", () => {
 });
 
 window.setInterval(renderTimers, 1000);
+
+inboxToggle.addEventListener("click", () => {
+  inbox.hidden = !inbox.hidden;
+  inboxToggle.setAttribute("aria-expanded", String(!inbox.hidden));
+});
+inboxClear.addEventListener("click", () => acknowledge("all"));
 
 logoutButton.addEventListener("click", async () => {
   if (voice.connected) await voice.stop();

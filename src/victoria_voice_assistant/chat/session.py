@@ -28,6 +28,7 @@ from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker
 from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.agents.tasks import TaskEvent
+from victoria_voice_assistant.notifications.service import Announcement, Notification
 from victoria_voice_assistant.tools.timers import TimerEvent
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,59 @@ class ChatSession:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         logger.info("Chat tools reloaded", extra={"event": "tools_reloaded", "count": len(self.runtime.registry.active)})
+
+
+def notification_view(item: Notification) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "source": item.source,
+        "kind": item.kind,
+        "headline": item.headline,
+        "full": item.full,
+        "priority": item.priority,
+        "state": item.state,
+        "created_at": item.created_at,
+    }
+
+
+class ChatOutlet:
+    """The notification service's view of a chat connection: a screen, with no speaker."""
+
+    speaks = False
+
+    def __init__(self, state: SessionState, session: ChatSession) -> None:
+        self.state = state
+        self.session = session
+        self.device = state.device
+
+    def busy(self) -> bool:
+        return not self.state.idle()
+
+    def requests(self) -> int:
+        return self.state.requests
+
+    async def announce(self, announcement: Announcement) -> None:
+        task = self.session.task
+        if task is None:
+            return
+        # In the conversation too, so "what was that about?" has something to refer to.
+        await task.queue_frames(
+            [
+                LLMMessagesAppendFrame(messages=[{"role": "assistant", "content": announcement.text}], run_llm=False),
+                OutputTransportMessageUrgentFrame(
+                    message={
+                        "type": "announce",
+                        "text": announcement.text,
+                        "sound": announcement.sound,
+                        "spoken": announcement.spoken,
+                        "items": [notification_view(item) for item in announcement.full],
+                    }
+                ),
+            ]
+        )
+
+    async def show(self, unread: list[Notification]) -> None:
+        await self.session.send({"type": "notifications", "items": [notification_view(item) for item in unread]})
 
 
 async def run_chat_session(
@@ -107,7 +161,9 @@ async def run_chat_session(
         tools=runtime.tools_schema(),
     )
     pair = LLMContextAggregatorPair(context)
-    preprocessor = TurnPreprocessor(state, runtime, services.timers, agents=services.agents)
+    preprocessor = TurnPreprocessor(
+        state, runtime, services.timers, agents=services.agents, notifications=services.notifications
+    )
     runtime.on_settled = preprocessor.release_next
     pipeline = Pipeline(
         [
@@ -169,14 +225,19 @@ async def run_chat_session(
     async def on_client_disconnected(_transport, _client) -> None:
         await task.cancel(reason="client disconnected")
 
+    outlet = ChatOutlet(state, session)
     services.timers.add_listener(on_timer_event)
     if services.agents is not None:
         services.agents.tasks.add_listener(on_task_event)
+    if services.notifications is not None:
+        services.notifications.attach(outlet)
     if hub is not None:
         hub.sessions.add(session)
     try:
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
+        if services.notifications is not None:
+            services.notifications.detach(outlet)
         services.timers.remove_listener(on_timer_event)
         if services.agents is not None:
             services.agents.tasks.remove_listener(on_task_event)

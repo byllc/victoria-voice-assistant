@@ -15,6 +15,7 @@ agents:
     model: hermes               # from models.yaml
     mode: auto                  # wait up to wait_s, then background
     wait_s: 8
+    notify: ask_first           # a result that comes after wait_s: announced, then "Want to hear it?"
 
   # Optional cloud agent: a stub ("Claude isn't set up yet.") until ANTHROPIC_API_KEY is set. docs/claude-setup.md
   - name: claude
