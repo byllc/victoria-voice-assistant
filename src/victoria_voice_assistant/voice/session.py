@@ -277,7 +277,9 @@ async def run_voice_session(
 
     async def on_task_event(event: TaskEvent) -> None:
         if event.kind == "say" and event.task.device == state.device and event.text:
-            await task.queue_frame(TTSSpeakFrame(event.text, append_to_context=True))
+            # Speak the short version; keep the whole reply in the conversation for follow-ups.
+            context.add_message({"role": "assistant", "content": event.full or event.text})
+            await task.queue_frame(TTSSpeakFrame(event.text, append_to_context=False))
 
     connected = asyncio.Event()
 

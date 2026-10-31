@@ -27,7 +27,7 @@ DEFAULT_HTTP_TIMEOUT_S = 5.0
 HTTP_RESULT_CHARS = 2000
 # Kinds that exist in the architecture but are built in later stages.
 LATER_KINDS = {"mcp": "MCP tools", "ha_service": "Home Assistant service calls", "ha_script": "Home Assistant scripts"}
-BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent")
+BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent", "tasks")
 
 Status = Literal["ready", "stub", "auto_stub", "disabled"]
 ReplyMode = Literal["model", "template", "silent"]
@@ -207,7 +207,14 @@ def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> l
             ),
         )
 
-    return [
+    async def tasks(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+        from victoria_voice_assistant.agents.tasks_tool import tasks_tool
+
+        if services is None or services.agents is None:
+            return ToolOutcome(result={"error": "agents are not set up yet"}, speak="Agents aren't set up yet.")
+        return await tasks_tool(services.agents.tasks, arguments)
+
+    entries = [
         ToolEntry(
             name="clarify",
             description=(
@@ -247,6 +254,27 @@ def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> l
             speaks_directly=True,
         ),
     ]
+    if names:
+        entries.append(
+            ToolEntry(
+                name="tasks",
+                description=(
+                    "The agents' tasks: list what's running, check whether one is done, or cancel one "
+                    "(for example 'what's helper working on', 'is the meal plan done', 'cancel the research task')."
+                ),
+                kind="builtin",
+                status="ready",
+                handler=tasks,
+                properties={
+                    "action": {"type": "string", "enum": ["list", "status", "cancel"]},
+                    "agent": agent_param,
+                    "about": {"type": "string", "description": "words from the task, for example 'meal plan'"},
+                },
+                required=["action"],
+                speaks_directly=True,
+            )
+        )
+    return entries
 
 
 # Configured tools ---------------------------------------------------------------

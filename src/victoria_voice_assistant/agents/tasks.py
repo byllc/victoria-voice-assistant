@@ -44,11 +44,15 @@ class Task:
 
 @dataclass
 class TaskEvent:
-    """`changed` for any state change; `say` carries text for the task's device (a result, a delay, an error)."""
+    """`changed` for any state change; `say` carries text for the task's device (a result, a delay, an error).
+
+    `text` is what's spoken; `full` is the complete reply for screens and the conversation, when it differs.
+    """
 
     kind: Literal["changed", "say"]
     task: Task
     text: str | None = None
+    full: str | None = None
 
 
 TaskListener = Callable[[TaskEvent], Awaitable[None]]
@@ -127,8 +131,8 @@ class TaskService:
             )
         self._emit(TaskEvent("changed", task))
 
-    def say(self, task: Task, text: str) -> None:
-        self._emit(TaskEvent("say", task, text))
+    def say(self, task: Task, text: str, full: str | None = None) -> None:
+        self._emit(TaskEvent("say", task, text, full))
 
     def cancel(self, task_id: str) -> bool:
         """Stop a running task. False if it isn't running."""

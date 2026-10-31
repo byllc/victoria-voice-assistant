@@ -231,7 +231,7 @@ def test_registry_builds_schemas_and_builtins() -> None:
         ]
     )
     names = [entry.name for entry in registry.active]
-    assert names == ["timer", "clarify", "ask_agent", "offer_agent"]
+    assert names == ["timer", "clarify", "ask_agent", "offer_agent", "tasks"]
     timer = registry.get("timer")
     assert timer is not None and timer.status == "ready" and timer.reply == "template"
     schema = timer.openai_tool()["function"]
@@ -665,7 +665,7 @@ def test_tools_status_lists_stubs_and_reasons(example_config_dir: Path, capsys: 
 
 def test_status_output_counts() -> None:
     registry = _registry([{"name": "x", "description": "x", "kind": "stub"}])
-    assert format_status(registry).endswith("4 tools active, 1 stubs (0 automatic)")
+    assert format_status(registry).endswith("5 tools active, 1 stubs (0 automatic)")
 
 
 @pytest.mark.skipif(

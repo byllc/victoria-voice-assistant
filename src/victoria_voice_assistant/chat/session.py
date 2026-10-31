@@ -124,7 +124,14 @@ async def run_chat_session(
         ]
     )
     # RTVI messages would reach the chat client through the urgent transport-message path.
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=False), enable_rtvi=False)
+    # No idle timeout: Pipecat counts only voice activity frames, which text chat never produces,
+    # so its default would close every chat 5 minutes after it opened. The websocket ends the session.
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(allow_interruptions=False),
+        enable_rtvi=False,
+        idle_timeout_secs=None,
+    )
     session.task = task
 
     async def on_timer_event(event: TimerEvent) -> None:
@@ -142,10 +149,11 @@ async def run_chat_session(
         # and added to the conversation so follow-up questions can refer to it.
         if event.kind != "say" or event.task.device != state.device or not event.text:
             return
+        text = event.full or event.text  # chat shows the whole reply; voice speaks the short one
         await task.queue_frames(
             [
-                LLMMessagesAppendFrame(messages=[{"role": "assistant", "content": event.text}], run_llm=False),
-                OutputTransportMessageFrame(message={"type": "token", "text": event.text}),
+                LLMMessagesAppendFrame(messages=[{"role": "assistant", "content": text}], run_llm=False),
+                OutputTransportMessageFrame(message={"type": "token", "text": text}),
                 OutputTransportMessageFrame(message={"type": "done"}),
             ]
         )

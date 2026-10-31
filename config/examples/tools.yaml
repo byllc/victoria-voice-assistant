@@ -182,5 +182,8 @@ tests:
   - { say: "turn off the kitchen lights", expect: "tool:home_control" }  # passes while still a stub
   - { say: "ask helper what to make with leeks", expect: "agent:helper" }
   - { say: "book me a flight to Denver", expect: offer_agent }
+  - { say: "what is helper working on", expect: "tool:tasks" }
+  - { say: "is the meal plan done yet", expect: "tool:tasks" }
+  - { say: "cancel the research task", expect: "tool:tasks" }
   - { say: "how many ounces are in a cup", expect: answer }
   - { say: "what's the score of the Celtics game", expect: "tool:web_search" }

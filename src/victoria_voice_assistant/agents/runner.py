@@ -15,6 +15,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from victoria_voice_assistant.agents.model_agent import AgentError, run_model_agent
+from victoria_voice_assistant.agents.speech import spoken_version
 from victoria_voice_assistant.agents.tasks import Task, TaskService
 from victoria_voice_assistant.chat.llm import build_llm
 from victoria_voice_assistant.config.schema import AgentConfig, AppConfig
@@ -116,7 +117,18 @@ class AgentRunner:
             input_tokens=reply.input_tokens,
             output_tokens=reply.output_tokens,
         )
-        self.tasks.say(task, f"{name} has finished. {reply.text}" if delayed else reply.text)
+        spoken = await spoken_version(reply.text, self._summarizer())
+        prefix = f"{name} has finished. " if delayed else ""
+        self.tasks.say(task, prefix + spoken, full=prefix + reply.text if spoken != reply.text else None)
+
+    def _summarizer(self) -> Any:
+        role = self.config.models.roles.summarizer
+        if not role or role not in self.config.models.models:
+            return None
+        try:
+            return build_llm(role, self.config.models)
+        except ValueError:
+            return None
 
     async def _model_agent(self, agent: AgentConfig, task: Task) -> Any:
         assert agent.model is not None

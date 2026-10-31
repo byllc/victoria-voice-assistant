@@ -115,6 +115,7 @@ async def run_model_agent(
         pipeline,
         params=PipelineParams(allow_interruptions=False, enable_metrics=True, enable_usage_metrics=True),
         enable_rtvi=False,
+        idle_timeout_secs=None,  # the runner's own time limit applies, not Pipecat's voice-idle check
     )
 
     @task.event_handler("on_pipeline_error")

@@ -255,3 +255,123 @@ def test_live_model_agent_runs_its_own_tool_loop(example_config_dir: Path, live_
         )
     )
     assert calls and "3" in reply.text and reply.input_tokens > 0
+
+
+LEEKS_MARKDOWN = """Here are some quick ways to use leeks:
+
+**Soups & Stews:**
+*   **Potato Leek Soup:** Sauté leeks with garlic, add broth and potatoes, then blend.
+*   **Pasta Sauce:** Sauté leeks with garlic and olive oil, then toss with [pasta](https://example.com/pasta).
+
+### Quick Tip
+1. Always wash leeks thoroughly, as dirt hides between the layers
+---
+"""
+
+
+def test_plain_text_removes_markdown_for_speech() -> None:
+    from victoria_voice_assistant.agents.speech import plain_text
+
+    assert plain_text(LEEKS_MARKDOWN) == (
+        "Here are some quick ways to use leeks: Soups & Stews: Potato Leek Soup: Sauté leeks with garlic, "
+        "add broth and potatoes, then blend. Pasta Sauce: Sauté leeks with garlic and olive oil, then toss with pasta. "
+        "Quick Tip. Always wash leeks thoroughly, as dirt hides between the layers."
+    )
+    assert plain_text("snake_case_name and 2*3*4") == "snake_case_name and 2*3*4."
+
+
+def test_long_replies_are_shortened_by_the_summarizer_or_cut() -> None:
+    from victoria_voice_assistant.agents.speech import spoken_version
+
+    class FakeSummarizer:
+        def __init__(self, reply: str | None = None, fail: bool = False) -> None:
+            self.reply, self.fail, self.seen = reply, fail, None
+
+        async def run_inference(self, context, system_instruction=None, max_tokens=None):
+            if self.fail:
+                raise RuntimeError("down")
+            self.seen = context.get_messages()[0]["content"]
+            return self.reply
+
+    async def scenario():
+        good = FakeSummarizer("Make **potato leek soup** or a leek pasta sauce.")
+        short = await spoken_version("Just a *short* answer.", good)
+        summarized = await spoken_version(LEEKS_MARKDOWN, good)
+        cut = await spoken_version(LEEKS_MARKDOWN, FakeSummarizer(fail=True))
+        return short, summarized, cut, good.seen
+
+    short, summarized, cut, seen = run(scenario())
+    assert short == "Just a short answer."  # short replies skip the summarizer
+    assert summarized == "Make potato leek soup or a leek pasta sauce."
+    assert "**" not in (seen or "")  # the summarizer gets plain text
+    assert cut == (
+        "Here are some quick ways to use leeks: Soups & Stews: Potato Leek Soup: Sauté leeks with garlic, "
+        "add broth and potatoes, then blend. Pasta Sauce: Sauté leeks with garlic and olive oil, then toss with pasta."
+    )
+
+
+def test_result_event_carries_short_speech_and_full_text(example_config_dir: Path) -> None:
+    async def long_reply(agent, task) -> AgentReply:
+        return AgentReply(LEEKS_MARKDOWN)
+
+    async def scenario():
+        agent_runner, events = _runner(_config(example_config_dir), reply=long_reply)
+        agent_runner._summarizer = lambda: None  # type: ignore[method-assign]
+        await agent_runner.ask("helper", "leeks", "web")
+        await _settle(agent_runner)
+        return [e for e in events if e.kind == "say"]
+
+    (event,) = run(scenario())
+    assert event.full == LEEKS_MARKDOWN and len(event.text or "") <= 280 and "**" not in (event.text or "")
+
+
+def _task_service() -> TaskService:
+    tasks = TaskService(None)
+    tasks.create("helper", "web", "plan dinners for the week", "background")
+    tasks.create("hermes", "web", "research flights to Denver", "background")
+    done = tasks.create("helper", "web", "what to make with leeks", "wait")
+    tasks.update(done, state="finished", result="**Potato leek soup.** It's quick. Wash them well.")
+    return tasks
+
+
+def test_tasks_tool_lists_and_reports_status() -> None:
+    from victoria_voice_assistant.agents.tasks_tool import tasks_tool
+
+    async def scenario():
+        tasks = _task_service()
+        return (
+            await tasks_tool(tasks, {"action": "list"}),
+            await tasks_tool(tasks, {"action": "list", "agent": "Hermes"}),
+            await tasks_tool(TaskService(None), {"action": "list"}),
+            await tasks_tool(tasks, {"action": "status", "about": "the leeks"}),
+            await tasks_tool(tasks, {"action": "status", "about": "meal plan dinners"}),
+            await tasks_tool(tasks, {"action": "status", "about": "taxes"}),
+        )
+
+    listed, hermes, empty, leeks, dinners, unknown = run(scenario())
+    assert listed.speak == "Helper is working on plan dinners for the week. Hermes is working on research flights to Denver."
+    assert hermes.speak == "Hermes is working on research flights to Denver."
+    assert empty.speak == "Nothing is working on anything right now."
+    assert leeks.speak == "Yes, Helper finished. Potato leek soup. It's quick."
+    assert dinners.speak == "Helper is still working on plan dinners for the week."
+    assert unknown.speak == "I don't see a task like that."
+
+
+def test_tasks_tool_cancels_one_or_asks_which() -> None:
+    from victoria_voice_assistant.agents.tasks_tool import tasks_tool
+
+    async def scenario():
+        tasks = _task_service()
+        ambiguous = await tasks_tool(tasks, {"action": "cancel"})
+        by_words = await tasks_tool(tasks, {"action": "cancel", "about": "the flights research"})
+        by_agent = await tasks_tool(tasks, {"action": "cancel", "agent": "helper"})
+        nothing = await tasks_tool(tasks, {"action": "cancel"})
+        return ambiguous, by_words, by_agent, nothing, tasks
+
+    ambiguous, by_words, by_agent, nothing, tasks = run(scenario())
+    assert ambiguous.speak == "Which one: Hermes on research flights to Denver or Helper on plan dinners for the week?"
+    assert ambiguous.pending is not None and ambiguous.pending.kind == "clarify"
+    assert by_words.speak == "Cancelled Hermes's task."
+    assert by_agent.speak == "Cancelled Helper's task."
+    assert nothing.speak == "Nothing is running."
+    assert sorted(t.state for t in tasks.recent()) == ["cancelled", "cancelled", "finished"]
