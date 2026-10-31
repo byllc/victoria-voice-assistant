@@ -10,8 +10,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
 | 4 | Tool registry, timers, weather | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
 | 5 | Voice in the browser | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
-| 6 | Local web search | ready for review | 2026-10-30 | 2026-10-30 | |
-| 7 | Agents and model pools | not started | | | |
+| 6 | Local web search | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
+| 7 | Agents and model pools | in progress | 2026-10-30 | | |
 | 8 | Notifications and task dashboard | not started | | | |
 | 9 | Home control | not started | | | |
 | 10 | Music | not started | | | |
@@ -124,7 +124,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-10-30. Carried over: the phone round trip once Bill's certificate is installed; the 20-command latency report, short-command timing and the two-session stutter check, run on the target at the end.
 
 ## Stage 6: Local web search
-- Status: ready for review
+- Status: approved
 - Done criteria:
   - [x] Snippet answers and page-read answers both work by voice and text. Text: checked in chat. Voice: checked with recorded speech over WebRTC (see evidence). Needs Bill: speaking into a real browser.
   - [ ] Measured times for each, compared with the architecture's estimates. The `web_search` and `web_read` log events carry `duration_ms`, cache hits and which fetcher was used. Per Bill, the comparison runs on the target at the end.
@@ -142,6 +142,17 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - SearXNG under launchd (with Bill's permission): `assistant launchd install-searxng --load` started granian on `127.0.0.1:8888` (`runs = 1`, PID 99885), and `/healthz` answered within about 2 s. After `kill 99885`, launchd restarted it (`runs = 2`, PID 99940, `last exit code = 0`), `/healthz` answered again about 3 s later, and it was still listening on 127.0.0.1 only. No search was sent during the check. The temporary job was then unloaded and its plist removed, as in Stage 2. To keep it running: `uv run assistant launchd install-searxng --load`.
   - Demo for Bill: `uv run assistant searxng run` (or the LaunchAgent), `uv run assistant serve`, `uv run assistant web`, then open http://localhost:8766 and ask by text or voice: "what's the latest news about the Artemis mission", "what are the opening hours of the Museum of Fine Arts in Boston", "who won the last World Series". Then stop SearXNG and ask again: the answer should come through the Bing fallback (`web_search kind=browser` in the log). With `browser_fallback` removed from `config/tools.yaml`, a stopped SearXNG gives "I couldn't search right now."
   - `assistant tools test` (example config, gemma-4-12b): 23/24. All four search phrases route to `web_search`; the one miss is a blank reply to "set a timer" (decisions log).
+- Bill's review notes: Approved by Bill / 2026-10-30. Carried over: the search timing comparison, run on the target at the end.
+
+## Stage 7: Agents and model pools
+- Status: in progress
+- Done criteria:
+  - [ ] "Ask Hermes …" and "Ask Claude …" work by voice and text; offering an agent works when no tool fits.
+  - [ ] The decider's choice, confidence, tokens, and cost are logged; "Ask Claude Opus …" overrides it.
+  - [ ] Budget limits downgrade and then stop paid calls as configured.
+  - [ ] Tasks can be listed and cancelled by voice.
+  - [ ] Hermes cannot read the assistant's config, keys, or personal files.
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -187,3 +198,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-30 | 6 | Architecture addition: a headless-browser search fallback when SearXNG fails. SearXNG stays the main path. Setting: `search.browser_fallback` in `tools.yaml` (only `bing` for now; unset means off). It uses the existing warm Playwright pool and makes one page load per search, with no retries, no stealth measures and no CAPTCHA solving. The architecture document is not edited (not asked). | Bill / 2026-10-30: "lets have chromium option as a fallback when searxng fails" |
 | 2026-10-30 | 6 | Bug found and fixed (from Stage 4): with no agents configured, the tool-loop guard's reply ("Sorry, I can't do that.") went back to the model, which kept searching (10+ rounds on one question). Guard replies are now always spoken directly and end the request. | |
 | 2026-10-30 | 6 | Finding: lines in the system prompt about web_search and untrusted content made gemma-4-12b stop calling `music` for "skip this", so they were dropped. The tool descriptions route search questions fine, and the untrusted note travels with each result. With two more tools, gemma also returns a blank reply to "set a timer" about half the time (passed in Stage 4). Proposal for Stage 11 (hardening): when the model returns neither text nor a tool call, say "Sorry, could you say that again?" instead of staying silent; and re-check this when the real fast model is chosen. | |
+| 2026-10-30 | 6 | Approved by Bill. Carried over: the search timing comparison runs on the target at the end. | Bill / 2026-10-30 |
