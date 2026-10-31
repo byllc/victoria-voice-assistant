@@ -9,8 +9,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2 | Skeleton and config | approved | 2026-10-29 | 2026-10-29 | Bill / 2026-10-29 |
 | 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
 | 4 | Tool registry, timers, weather | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
-| 5 | Voice in the browser | in progress | 2026-10-30 | | |
-| 6 | Local web search | not started | | | |
+| 5 | Voice in the browser | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
+| 6 | Local web search | in progress | 2026-10-30 | | |
 | 7 | Agents and model pools | not started | | | |
 | 8 | Notifications and task dashboard | not started | | | |
 | 9 | Home control | not started | | | |
@@ -107,7 +107,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-10-30.
 
 ## Stage 5: Voice in the browser
-- Status: in progress
+- Status: approved
 - Done criteria:
   - [ ] Voice round trip works from a phone and a computer on the LAN. Built. Needs Bill: speaking into a real browser (the browser pane blocks the mic), and a phone once his certificate is in `config/tls/`.
   - [ ] Latency report for 20 spoken commands, broken down by stage, compared with the 1.5 s target. The harness is built (`assistant voice bench --log <service log>`). Run it on the target at the end; M2 numbers don't count (Bill, 2026-10-30).
@@ -121,6 +121,15 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Safeguards: Whisper and Kokoro load once at startup, in parallel, on threads, and `/api/offer` returns 503 until they're ready (`/health` shows `speech`). Process memory (`rss_mb`) is logged each minute with the loop-lag summary. Each has a lock shared by all sessions, with waits over 50 ms logged (`model_lock_wait`). An event-loop monitor logs stalls over 20 ms (`loop_stall`). A bad offer gets 400, and a session that never connects is ended after 30 s.
   - HTTPS: see the decision below and `docs/https.md`.
   - Demo for Bill: `uv run assistant serve`, `uv run assistant web`, open `http://localhost:8766` on this Mac. Click "Start voice" (allow the microphone) and say "set a pasta timer for ten minutes", "what's the weather tomorrow", "turn off the kitchen lights". Then try Push to talk (hold the button or the space bar). For a phone: install the certificate (`docs/https.md`), then open `https://<name>:8766`.
+- Bill's review notes: Approved by Bill / 2026-10-30. Carried over: the phone round trip once Bill's certificate is installed; the 20-command latency report, short-command timing and the two-session stutter check, run on the target at the end.
+
+## Stage 6: Local web search
+- Status: in progress
+- Done criteria:
+  - [ ] Snippet answers and page-read answers both work by voice and text.
+  - [ ] Measured times for each, compared with the architecture's estimates.
+  - [ ] SearXNG being down gives "I couldn't search right now", not a guess.
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -157,3 +166,5 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-30 | 5 | Bill: no benchmark runs on the M2. Latency harnesses are built in their stage but run at the end, on the target. | Bill / 2026-10-30 |
 | 2026-10-30 | 5 | Short clips: Smart Turn judged the one-word "Pause." unfinished and held the turn about 1.2 s. Per architecture §4.2, speech shorter than `turn.short_clip_s` (default 0.5 s; 0 turns it off) now ends at its first pause without Smart Turn. It counts only a turn's first stretch of speech. Finding: the VAD frames' wall-clock timestamps can't measure speech length, because audio is processed in bursts; the length is counted from audio samples instead. At 0.7 s "What time is it?" (680 ms) also counted as short, hence 0.5 s. | |
 | 2026-10-30 | 5 | Bill's local `config/models.yaml` lacks `reasoning_effort: none` (in the example since Stage 3). With it missing, gemma reasons for about 11 s per voice turn and often produces no spoken reply, and nothing is added to the conversation. His local `tools.yaml` is also still Stage 3's. Fix: add the line and copy `config/examples/tools.yaml`. | |
+| 2026-10-30 | 5 | Approved by Bill. Carried over: phone round trip (needs the certificate); the latency report, short-command timing and two-session stutter check run on the target at the end. | Bill / 2026-10-30 |
+| 2026-10-30 | 6 | Stage 6 timing criterion ("measured times ... compared with the architecture's estimates"): following Bill's rule, no timing runs on the M2. The measurement is built in this stage and run on the target at the end. | |
