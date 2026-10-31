@@ -11,8 +11,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 4 | Tool registry, timers, weather | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
 | 5 | Voice in the browser | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
 | 6 | Local web search | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
-| 7 | Agents and model pools | ready for review | 2026-10-30 | 2026-10-31 | |
-| 8 | Notifications and task dashboard | not started | | | |
+| 7 | Agents and model pools | approved | 2026-10-30 | 2026-10-31 | Bill / 2026-10-31 |
+| 8 | Notifications and task dashboard | in progress | 2026-10-31 | | |
 | 9 | Home control | not started | | | |
 | 10 | Music | not started | | | |
 | 11 | Hardening | not started | | | |
@@ -145,7 +145,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-10-30. Carried over: the search timing comparison, run on the target at the end.
 
 ## Stage 7: Agents and model pools
-- Status: ready for review
+- Status: approved
 - Done criteria:
   - [~] "Ask Hermes …" and "Ask Claude …" work by voice and text; offering an agent works when no tool fits. Hermes and offering: by voice and text. Claude: a stub until it has a key (Bill, 2026-10-31: local AI is the primary mode; no Claude key yet), answering "Claude isn't set up yet." with setup steps (`docs/claude-setup.md`); the pool, decider, overrides, budgets and spend log are built and unit-tested.
   - [x] The decider's choice, confidence, tokens, and cost are logged; "Ask Claude Opus …" overrides it. Logged per call (`pool_choice`, `spend`, the `spend` table); override checked with the real decider and in unit tests. No real Claude call (stub, Bill's decision).
@@ -172,6 +172,18 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Hermes test container under launchd: `services/hermes/install-launchd.sh` writes a KeepAlive LaunchAgent (`com.victoria.hermes`) running `run.sh`; the plist was rendered into a scratch home and passes `plutil -lint`. Not loaded: Bill decides (`--load`).
   - Demo for Bill: with SearXNG, `assistant serve`, `assistant web` and `services/hermes/run.sh` running (LM Studio with `gemma-hermes` loaded at 64K), open http://localhost:8766, start voice, and say: "Ask Hermes what files are in your work folder", "What is Hermes working on?", "Ask Hermes to write a long story to story.txt" then "Cancel the Hermes task", "Book me a flight to Denver" (offers Hermes; say yes), "Ask Claude how many ounces are in a cup" (the stub, with setup steps in chat). Text chat works the same.
   - Open for Bill: the LM Studio key that Hermes holds (decisions log); loading the Hermes and decider LaunchAgents; speaking into a real browser.
+- Bill's review notes: Approved by Bill / 2026-10-31 ("accept stage 7"). Carried over: Claude stays a stub until Bill adds a key; the LM Studio key Hermes holds; loading the Hermes and decider LaunchAgents; speaking into a real browser.
+
+## Stage 8: Notifications and task dashboard
+- Status: in progress
+- Done criteria:
+  - [ ] A background task finishing while the web client's room is idle announces itself; while the room is busy, it waits; during quiet hours, it is silent.
+  - [ ] Pending notifications show a badge in the web client and are read on request.
+  - [ ] An agent question can be answered by voice, from the notification, or in the dashboard.
+  - [ ] A phone with the web client installed receives a push when the page is closed.
+  - [ ] The dashboard shows live status, progress, model, and cost, and supports answer, cancel, retry, re-send, and open.
+- Blocking decisions (answered by Bill, 2026-10-31): quiet hours are set in the config file, default midnight to 8am; during quiet hours an agent question goes to the dashboard only and waits (no room announcement, no push).
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -236,3 +248,5 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-31 | 7 | Hermes test install not yet under launchd (Apple `container` has no restart policy); `run.sh` runs in a terminal. The example's default agent is still `helper`. | |
 | 2026-10-31 | 7 | Whisper prompt biasing: Pipecat's `WhisperSTTServiceMLX` has no `initial_prompt` setting, though `mlx_whisper.transcribe` accepts one. Rather than patch Pipecat, `LockedWhisperSTT` reproduces Pipecat 1.15's MLX `run_stt` (same hallucination and no-speech filters) with `initial_prompt` added, used only when there's a prompt. Re-check on a Pipecat upgrade. Finding: food words are still mis-heard ("leeks" -> "leagues"); the prompt covers agent names only. | |
 | 2026-10-31 | 7 | Bill: the primary mode is local AI; no Claude key yet. Claude stays a stub until a key is added: asking it says "Claude isn't set up yet." and chat points to `docs/claude-setup.md` (what's configured, turning it on, checking spend, turning it off). Hermes's setup note points to `docs/hermes.md`. The guide is not named `docs/claude.md`: on macOS's case-insensitive disk that is also `docs/CLAUDE.md`, which Claude Code reads as agent instructions. | Bill / 2026-10-31 |
+| 2026-10-31 | 7 | Approved by Bill. Carried over: Claude stays a stub until a key is added; the LM Studio key Hermes holds; loading the Hermes and decider LaunchAgents; speaking into a real browser. | Bill / 2026-10-31: "accept stage 7" |
+| 2026-10-31 | 8 | Quiet hours are a config setting, default 00:00 to 08:00. During quiet hours an agent question is not announced in any room and not pushed: it goes on the dashboard and waits. | Bill / 2026-10-31: "default quiet hours should be in the config file and between [midnight] and 8am by default"; "quiet hours question should just go on the dashboard and wait" |
