@@ -20,4 +20,4 @@ Check: `curl http://127.0.0.1:8642/health`. Then connect the assistant as in [do
 
 To upgrade Hermes, change `HERMES_COMMIT` in the `Containerfile` to a newer release's commit and rebuild with a new tag (and update `run.sh`).
 
-Apple `container` is pre-1.0 (0.10.0 here) with no restart policy; to keep Hermes running, wrap `run.sh` in a `launchd` job (architecture §3). Not set up yet.
+Apple `container` is pre-1.0 (0.10.0 here) with no restart policy. To keep Hermes running, `services/hermes/install-launchd.sh --load` writes and loads a LaunchAgent (`com.victoria.hermes`) that runs `run.sh` and restarts it if it exits; logs go to `~/Library/Logs/Victoria Voice Assistant/hermes.log`. Stop it with `launchctl bootout gui/$(id -u)/com.victoria.hermes`. Stop any `run.sh` running in a terminal first, since both use the container name `hermes`.
