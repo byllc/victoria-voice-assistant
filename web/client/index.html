@@ -26,6 +26,16 @@
           <span id="status" class="status">connecting…</span>
           <button id="logout" type="button">Sign out</button>
         </header>
+        <div id="voice" class="voice">
+          <button id="voice-toggle" type="button">Start voice</button>
+          <select id="voice-mode" aria-label="Voice mode">
+            <option value="hands-free">Hands-free</option>
+            <option value="push-to-talk">Push to talk</option>
+          </select>
+          <button id="talk" type="button" hidden>Hold to talk</button>
+          <span id="voice-state" class="status"></span>
+          <audio id="bot-audio" autoplay></audio>
+        </div>
         <div id="ringing" class="ringing" role="alert" hidden>
           <span id="ringing-text"></span>
           <button id="ringing-stop" type="button">Stop</button>

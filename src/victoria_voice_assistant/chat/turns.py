@@ -134,8 +134,8 @@ class TurnPreprocessor(FrameProcessor):
         await self._reply(text, reply, "pending_yes", started)
         return True
 
-    async def _reply(self, user_text: str, reply: str, handled_by: str, started: float) -> None:
-        """Record the exchange in the conversation and send the reply, with no model call."""
+    async def _deliver(self, user_text: str, reply: str) -> None:
+        """Record the exchange in the conversation and send the reply to the chat client."""
         await self.push_frame(
             LLMMessagesAppendFrame(
                 messages=[{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}],
@@ -144,6 +144,10 @@ class TurnPreprocessor(FrameProcessor):
         )
         await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
         await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
+
+    async def _reply(self, user_text: str, reply: str, handled_by: str, started: float) -> None:
+        """Answer with no model call."""
+        await self._deliver(user_text, reply)
         logger.info(
             "Turn handled without a model",
             extra={

@@ -1,3 +1,5 @@
+import { Voice } from "./voice";
+
 type TimerInfo = { id: string; name: string; remaining_s: number; state: "running" | "ringing" };
 
 type ServerMessage =
@@ -24,6 +26,11 @@ const timerList = required<HTMLUListElement>("timers");
 const ringing = required<HTMLElement>("ringing");
 const ringingText = required<HTMLElement>("ringing-text");
 const ringingStop = required<HTMLButtonElement>("ringing-stop");
+const voiceToggle = required<HTMLButtonElement>("voice-toggle");
+const voiceMode = required<HTMLSelectElement>("voice-mode");
+const talkButton = required<HTMLButtonElement>("talk");
+const voiceState = required<HTMLElement>("voice-state");
+const botAudio = required<HTMLAudioElement>("bot-audio");
 
 let socket: WebSocket | null = null;
 let pendingReply: HTMLElement | null = null;
@@ -58,9 +65,9 @@ function setStatus(text: string): void {
   statusLabel.textContent = text;
 }
 
-function appendMessage(role: "you" | "victoria", text: string): HTMLElement {
+function appendMessage(role: "you" | "victoria", text: string, heard = false): HTMLElement {
   const entry = document.createElement("p");
-  entry.className = role;
+  entry.className = heard ? `${role} heard` : role;
   const label = document.createElement("strong");
   label.textContent = role === "you" ? "You: " : "Victoria: ";
   const body = document.createElement("span");
@@ -82,6 +89,8 @@ function connect(): void {
   ws.onclose = (event) => {
     if (socket !== ws) return;
     socket = null;
+    // Never keep beeping for a timer this page can no longer hear about.
+    stopRinging();
     setStatus(event.code === 1008 ? "signed out" : "disconnected");
     if (event.code === 1008) showLogin("Please sign in again.");
   };
@@ -111,6 +120,8 @@ function handleServerMessage(message: ServerMessage): void {
     const now = Date.now();
     timers = message.timers.map((t) => ({ name: t.name, endsAt: now + t.remaining_s * 1000, state: t.state }));
     renderTimers();
+    // The server is the source of truth: nothing ringing there means stop here too.
+    if (!timers.some((t) => t.state === "ringing")) stopRinging();
   } else if (message.type === "timer_ring") {
     startRinging(message.names, message.text);
   } else if (message.type === "timer_ring_stop") {
@@ -219,6 +230,82 @@ composer.addEventListener("submit", (event) => {
   messageInput.value = "";
 });
 
+let voiceReply: HTMLElement | null = null;
+const voice = new Voice(
+  {
+    onUserText: (text) => {
+      voiceReply = null;
+      appendMessage("you", text, true);
+    },
+    onBotText: (text, newTurn) => {
+      if (newTurn || !voiceReply) voiceReply = appendMessage("victoria", "");
+      voiceReply.textContent = `${voiceReply.textContent ?? ""}${voiceReply.textContent ? " " : ""}${text}`.trim();
+      log.scrollTop = log.scrollHeight;
+    },
+    // Voice sessions send notices and timer updates in the chat protocol's shape.
+    onServerMessage: (message) => {
+      if (message && typeof message === "object" && "type" in message) handleServerMessage(message as ServerMessage);
+    },
+    setState: (text) => {
+      voiceState.textContent = text;
+    },
+  },
+  botAudio,
+);
+
+function syncVoiceControls(): void {
+  voiceToggle.textContent = voice.connected ? "Stop voice" : "Start voice";
+  voiceToggle.classList.toggle("active", voice.connected);
+  talkButton.hidden = !(voice.connected && voiceMode.value === "push-to-talk");
+}
+
+const unavailable = Voice.unavailableReason();
+if (unavailable) {
+  voiceToggle.disabled = true;
+  voiceMode.disabled = true;
+  voiceState.textContent = unavailable;
+}
+
+voiceToggle.addEventListener("click", async () => {
+  voiceToggle.disabled = true;
+  try {
+    if (voice.connected) await voice.stop();
+    else await voice.start(voiceMode.value as "hands-free" | "push-to-talk");
+  } catch {
+    // The state line already says why.
+  } finally {
+    voiceToggle.disabled = false;
+    syncVoiceControls();
+  }
+});
+
+voiceMode.addEventListener("change", () => {
+  if (voice.connected) voice.setMode(voiceMode.value as "hands-free" | "push-to-talk");
+  syncVoiceControls();
+});
+
+function talk(active: boolean): void {
+  if (!voice.connected || voiceMode.value !== "push-to-talk") return;
+  talkButton.classList.toggle("active", active);
+  voice.setMic(active);
+}
+
+talkButton.addEventListener("pointerdown", (event) => {
+  talkButton.setPointerCapture(event.pointerId);
+  talk(true);
+});
+talkButton.addEventListener("pointerup", () => talk(false));
+talkButton.addEventListener("pointercancel", () => talk(false));
+window.addEventListener("keydown", (event) => {
+  if (event.code === "Space" && !event.repeat && document.activeElement !== messageInput) {
+    event.preventDefault();
+    talk(true);
+  }
+});
+window.addEventListener("keyup", (event) => {
+  if (event.code === "Space" && document.activeElement !== messageInput) talk(false);
+});
+
 ringingStop.addEventListener("click", () => {
   socket?.send(JSON.stringify({ type: "timer_stop" }));
   stopRinging();
@@ -227,6 +314,8 @@ ringingStop.addEventListener("click", () => {
 window.setInterval(renderTimers, 1000);
 
 logoutButton.addEventListener("click", async () => {
+  if (voice.connected) await voice.stop();
+  syncVoiceControls();
   await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
   log.replaceChildren();
   showLogin();

@@ -9,8 +9,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2 | Skeleton and config | approved | 2026-10-29 | 2026-10-29 | Bill / 2026-10-29 |
 | 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
 | 4 | Tool registry, timers, weather | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
-| 5 | Voice in the browser | in progress | 2026-10-30 | | |
-| 6 | Local web search | not started | | | |
+| 5 | Voice in the browser | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
+| 6 | Local web search | in progress | 2026-10-30 | | |
 | 7 | Agents and model pools | not started | | | |
 | 8 | Notifications and task dashboard | not started | | | |
 | 9 | Home control | not started | | | |
@@ -107,12 +107,28 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-10-30.
 
 ## Stage 5: Voice in the browser
+- Status: approved
+- Done criteria:
+  - [ ] Voice round trip works from a phone and a computer on the LAN. Built. Needs Bill: speaking into a real browser (the browser pane blocks the mic), and a phone once his certificate is in `config/tls/`.
+  - [ ] Latency report for 20 spoken commands, broken down by stage, compared with the 1.5 s target. The harness is built (`assistant voice bench --log <service log>`). Run it on the target at the end; M2 numbers don't count (Bill, 2026-10-30).
+  - [ ] Short commands ("stop", "pause") end their turn promptly. Speech shorter than `turn.short_clip_s` (0.5 s) ends at its first pause without asking Smart Turn (architecture §4.2). Checked with real audio: "Stop" (340 ms of speech) and "Pause" (380 ms) ended without Smart Turn, and "Set a pasta timer for ten minutes" went to Smart Turn. Measure on the target with the harness.
+  - [ ] Two simultaneous voice sessions work without audio stutter. Shared models with per-model locks and a loop-lag monitor are in place; `assistant voice bench --sessions 2` counts late audio frames. Run on the target.
+- Evidence (functional only, no latency figures from the M2):
+  - `uv run pytest -q`: 99 passed, 2 skipped (live). `npm run build` passes (Pipecat client-js 1.14.0, small-webrtc-transport 1.11.0, pinned).
+  - Voice path end to end, driven by an aiortc WebRTC client speaking 20 recorded commands (macOS `say`): all 20 got spoken replies. Whisper transcripts matched (numbers come back as digits: "10 minutes"). Timers, weather, stubs, plain answers and short commands all went through VAD -> Smart Turn -> Whisper -> router/tools -> Kokoro. Pipecat's `UserBotLatencyObserver` logged a per-stage `voice_latency` event for every turn.
+  - Browser (pane): "Start voice" connected through the web interface's `/api/offer` proxy and reached "listening". Switching to push-to-talk showed "Hold to talk"; "Stop voice" ended the session (`voice_connected` and `voice_disconnected` in the log). The pane blocks the microphone, so speech in a browser is still untested.
+  - Bill tested voice in a browser on this Mac: it works.
+  - Safeguards: Whisper and Kokoro load once at startup, in parallel, on threads, and `/api/offer` returns 503 until they're ready (`/health` shows `speech`). Process memory (`rss_mb`) is logged each minute with the loop-lag summary. Each has a lock shared by all sessions, with waits over 50 ms logged (`model_lock_wait`). An event-loop monitor logs stalls over 20 ms (`loop_stall`). A bad offer gets 400, and a session that never connects is ended after 30 s.
+  - HTTPS: see the decision below and `docs/https.md`.
+  - Demo for Bill: `uv run assistant serve`, `uv run assistant web`, open `http://localhost:8766` on this Mac. Click "Start voice" (allow the microphone) and say "set a pasta timer for ten minutes", "what's the weather tomorrow", "turn off the kitchen lights". Then try Push to talk (hold the button or the space bar). For a phone: install the certificate (`docs/https.md`), then open `https://<name>:8766`.
+- Bill's review notes: Approved by Bill / 2026-10-30. Carried over: the phone round trip once Bill's certificate is installed; the 20-command latency report, short-command timing and the two-session stutter check, run on the target at the end.
+
+## Stage 6: Local web search
 - Status: in progress
 - Done criteria:
-  - [ ] Voice round trip works from a phone and a computer on the LAN.
-  - [ ] Latency report for 20 spoken commands, broken down by stage, compared with the 1.5 s target.
-  - [ ] Short commands ("stop", "pause") end their turn promptly.
-  - [ ] Two simultaneous voice sessions work without audio stutter.
+  - [ ] Snippet answers and page-read answers both work by voice and text.
+  - [ ] Measured times for each, compared with the architecture's estimates.
+  - [ ] SearXNG being down gives "I couldn't search right now", not a guess.
 - Evidence:
 - Bill's review notes:
 
@@ -142,4 +158,13 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-30 | 4 | Finding: gemma-4-12b answered "book me a flight to Denver" with 199 newline tokens when the system prompt said only "if no tool fits ... call offer_agent". Naming the cases ("bookings, purchases, research, email ... never refuse in plain text") fixed it (20/20). The system prompt is in code (`chat/prompt.py`), not config, because the architecture doesn't place it in a config file. | |
 | 2026-10-30 | 4 | Live tests now need the real `LMS_API_KEY` (LM Studio rejects the test key). A `live_api_key` fixture reads it from `config/.env`. One flaky failure of `test_health_endpoint_and_config_file_watcher` under load (passes alone and on repeat). | |
 | 2026-10-30 | 4 | Approved by Bill (open proposals: 60 s text pending window, `confirm` deferred to Stage 9). | Bill / 2026-10-30 |
-| 2026-10-30 | 5 | Blocking decision before any code: HTTPS method for the web interface (`mkcert` or Tailscale). Neither is installed on the M2 dev machine. | |
+| 2026-10-30 | 5 | HTTPS method: Bill will supply the certificate (neither `mkcert` nor Tailscale). The web process serves HTTPS from `config/tls/cert.pem` and `key.pem` (git-ignored; overridable with `ASSISTANT_TLS_CERT` and `ASSISTANT_TLS_KEY`). With a certificate it listens on `0.0.0.0` and sets Secure cookies. Without one it stays on plain HTTP at `127.0.0.1`. A half-installed or mismatched pair refuses to start. Install and renewal steps: `docs/https.md`; check with `assistant tls status`. | Bill / 2026-10-30 |
+| 2026-10-30 | 5 | Speech settings go in a new optional `speech:` section of `models.yaml` (`stt.model`, `stt.language`, `tts.voice`, `tts.speed`, `vad.*`, `turn.smart_turn`, `turn.fallback_s`), with defaults: whisper-large-v3-turbo, Kokoro `af_heart`, VAD stop 0.2 s, Smart Turn v3 with a 1.8 s fallback (architecture: 1.5–2 s). The architecture names no file for these. Proposal: keep them in `models.yaml`. | |
+| 2026-10-30 | 5 | Pipecat details: the `whisper` extra (faster-whisper) is installed only because Pipecat's Whisper module imports it even for `WhisperSTTServiceMLX`; transcription runs on MLX. `mlx-whisper` pulls in torch (venv about 1.5 GB). `KokoroTTSService` builds its own ONNX session per instance, so its constructor is routed through a cache and every session shares one Kokoro. Each sentence is synthesized under the Kokoro lock and then streamed out, so a cancelled session can't leave the lock held. | |
+| 2026-10-30 | 5 | Voice sessions keep Pipecat's RTVI on (the browser client uses it for transcripts and state); text chat keeps it off. No STUN/TURN servers: WebRTC uses LAN host candidates only, so audio never leaves the house. Interruptions use Pipecat's built-in behaviour (no extra code). Voice pending questions expire after 10 s (`VOICE_PENDING_S`). Voice and chat share timer device `web`; a ringing timer is also spoken in open voice sessions. | |
+| 2026-10-30 | 5 | Finding: loading the speech models stalls the event loop by 110–230 ms several times, even on threads, because model loading holds the GIL. It happens only at startup, before voice is accepted. Revisit if it shows up during inference. | |
+| 2026-10-30 | 5 | Bill: no benchmark runs on the M2. Latency harnesses are built in their stage but run at the end, on the target. | Bill / 2026-10-30 |
+| 2026-10-30 | 5 | Short clips: Smart Turn judged the one-word "Pause." unfinished and held the turn about 1.2 s. Per architecture §4.2, speech shorter than `turn.short_clip_s` (default 0.5 s; 0 turns it off) now ends at its first pause without Smart Turn. It counts only a turn's first stretch of speech. Finding: the VAD frames' wall-clock timestamps can't measure speech length, because audio is processed in bursts; the length is counted from audio samples instead. At 0.7 s "What time is it?" (680 ms) also counted as short, hence 0.5 s. | |
+| 2026-10-30 | 5 | Bill's local `config/models.yaml` lacks `reasoning_effort: none` (in the example since Stage 3). With it missing, gemma reasons for about 11 s per voice turn and often produces no spoken reply, and nothing is added to the conversation. His local `tools.yaml` is also still Stage 3's. Fix: add the line and copy `config/examples/tools.yaml`. | |
+| 2026-10-30 | 5 | Approved by Bill. Carried over: phone round trip (needs the certificate); the latency report, short-command timing and two-session stutter check run on the target at the end. | Bill / 2026-10-30 |
+| 2026-10-30 | 6 | Stage 6 timing criterion ("measured times ... compared with the architecture's estimates"): following Bill's rule, no timing runs on the M2. The measurement is built in this stage and run on the target at the end. | |
