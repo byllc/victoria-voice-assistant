@@ -21,12 +21,23 @@ from victoria_voice_assistant.tools.testing import format_report, format_status,
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.web.tls import TlsError, describe, find_tls_files, log_cert, validate
-from victoria_voice_assistant.launchd import install_launch_agent, install_web_launch_agent
+from victoria_voice_assistant.launchd import (
+    install_launch_agent,
+    install_searxng_launch_agent,
+    install_web_launch_agent,
+)
 from victoria_voice_assistant.logging_config import configure_logging
 
 
 def _registry(config: AppConfig) -> ToolRegistry:
-    services = Services(timers=TimerService(config.tools.timers), weather=WeatherService(config.tools.weather))
+    from victoria_voice_assistant.search.service import PageReader, SearchService
+
+    services = Services(
+        timers=TimerService(config.tools.timers),
+        weather=WeatherService(config.tools.weather),
+        search=SearchService(config.tools.search),
+        reader=PageReader(config.tools.search.read if config.tools.search else None),
+    )
     return build_registry(config.tools, config.agents, services)
 
 
@@ -92,6 +103,15 @@ def _build_parser() -> argparse.ArgumentParser:
     install_web = launchd_subcommands.add_parser("install-web", help="write web LaunchAgent plist")
     install_web.add_argument("--output", type=Path)
     install_web.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+    install_searxng = launchd_subcommands.add_parser("install-searxng", help="write SearXNG LaunchAgent plist")
+    install_searxng.add_argument("--output", type=Path)
+    install_searxng.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+
+    searxng = commands.add_parser("searxng", help="the local SearXNG search engine")
+    searxng_subcommands = searxng.add_subparsers(dest="searxng_command", required=True)
+    searxng_subcommands.add_parser("install", help="check out the pinned SearXNG and build its environment")
+    searxng_run = searxng_subcommands.add_parser("run", help="run SearXNG on 127.0.0.1:8888")
+    searxng_run.add_argument("--config-dir", help="configuration directory (default: config/)")
     return parser
 
 
@@ -134,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "config" and args.config_command == "init":
         destination = _config_dir(args.config_dir)
         examples = Path(__file__).resolve().parents[2] / "config" / "examples"
-        filenames = ("models.yaml", "tools.yaml", "agents.yaml")
+        filenames = ("models.yaml", "tools.yaml", "agents.yaml", "searxng/settings.yml")
         existing = [name for name in filenames if (destination / name).exists()]
         if existing:
             print(
@@ -142,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "searxng").mkdir(parents=True, exist_ok=True)
         for filename in filenames:
             shutil.copyfile(examples / filename, destination / filename)
         print(f"Example configuration copied to {destination}")
@@ -201,6 +221,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "launchd" and args.launchd_command == "install":
         destination = install_launch_agent(args.output, load=args.load)
         print(f"LaunchAgent plist written: {destination}")
+        return 0
+
+    if args.command == "searxng":
+        from victoria_voice_assistant.search import searxng as searxng_runtime
+
+        if args.searxng_command == "install":
+            print(f"SearXNG {searxng_runtime.SEARXNG_COMMIT} ready in {searxng_runtime.install()}")
+            return 0
+        try:
+            searxng_runtime.run(_config_dir(args.config_dir))
+        except FileNotFoundError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return 0
+
+    if args.command == "launchd" and args.launchd_command == "install-searxng":
+        destination = install_searxng_launch_agent(args.output, load=args.load)
+        print(f"SearXNG LaunchAgent plist written: {destination}")
         return 0
 
     if args.command == "launchd" and args.launchd_command == "install-web":

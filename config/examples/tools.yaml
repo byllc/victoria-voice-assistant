@@ -57,6 +57,32 @@ tools:
     examples:
       - what time is it
 
+  - name: web_search
+    description: Search the web for current facts, news, scores, hours, prices. Returns short snippets.
+    kind: builtin
+    service: search
+    params:
+      query:
+        type: string
+        description: what to search for
+        required: true
+    timeout_s: 4
+    examples:
+      - who won the Red Sox game last night
+      - what time does Home Depot close today
+      - what's the latest news about the Artemis mission
+
+  - name: web_read
+    description: Read one web page from a search result when the snippets don't answer the question.
+    kind: builtin
+    service: search.read
+    params:
+      url:
+        type: string
+        description: a result URL from web_search
+        required: true
+    timeout_s: 6
+
   - name: home_control
     description: "Control or check anything in the home except locks: lights, climate, covers, media, scenes."
     kind: stub
@@ -120,6 +146,7 @@ search:
   max_results: 3
   snippet_chars: 300
   cache_ttl_s: 600
+  browser_fallback: bing   # when SearXNG is down or all its engines fail, search here in the headless browser
   read:
     fetcher: auto
     max_chars: 4000
@@ -156,3 +183,4 @@ tests:
   - { say: "ask helper what to make with leeks", expect: "agent:helper" }
   - { say: "book me a flight to Denver", expect: offer_agent }
   - { say: "how many ounces are in a cup", expect: answer }
+  - { say: "what's the score of the Celtics game", expect: "tool:web_search" }

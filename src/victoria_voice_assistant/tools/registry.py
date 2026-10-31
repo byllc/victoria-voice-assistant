@@ -6,7 +6,7 @@ import json
 import logging
 import string
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 import httpx
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
@@ -15,6 +15,9 @@ from victoria_voice_assistant.config.schema import AgentsConfig, ToolConfig, Too
 from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
+
+if TYPE_CHECKING:
+    from victoria_voice_assistant.search.service import PageReader, SearchService
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,8 @@ class Services:
     timers: TimerService
     weather: WeatherService
     http: httpx.AsyncClient | None = None
+    search: SearchService | None = None
+    reader: PageReader | None = None
 
 
 @dataclass
@@ -299,6 +304,24 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
             return await services.weather.handle(arguments)
 
         return weather
+    if service in ("search", "search.read"):
+        if tools.search is None:
+            raise Unresolved("the `search:` section is missing from tools.yaml")
+        if service == "search":
+
+            async def web_search(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+                if services.search is None:
+                    return ToolOutcome(result={"error": "search unavailable"}, speak="I couldn't search right now.", error=True)
+                return await services.search.search(str(arguments.get("query") or ""))
+
+            return web_search
+
+        async def web_read(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            if services.reader is None:
+                return ToolOutcome(result={"error": "page reading unavailable", "instead": "answer from the search snippets"})
+            return await services.reader.read(str(arguments.get("url") or ""))
+
+        return web_read
     if service is None:
         raise Unresolved("built-in tool has no `service`")
     raise Unresolved(f"built-in service `{service}` isn't available yet")

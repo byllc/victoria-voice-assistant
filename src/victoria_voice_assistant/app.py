@@ -27,6 +27,7 @@ from victoria_voice_assistant.storage.db import default_database_path, migrate
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
+from victoria_voice_assistant.search.service import PageReader, SearchService
 from victoria_voice_assistant.voice.monitor import monitor_loop_lag
 
 logger = logging.getLogger(__name__)
@@ -90,9 +91,14 @@ def create_app(
         database = migrate(database_path or default_database_path())
         app.state.config_manager = manager
         app.state.database_path = database
+        search_settings = manager.current.tools.search
+        reader = PageReader(search_settings.read if search_settings else None)
+        browser_enabled = os.environ.get("ASSISTANT_BROWSER", "1") != "0"
         services = Services(
             timers=TimerService(manager.current.tools.timers, database),
             weather=WeatherService(manager.current.tools.weather),
+            search=SearchService(search_settings, browser_search=reader.search_page if browser_enabled else None),
+            reader=reader,
         )
         await services.timers.start()
         hub = ChatHub()
@@ -102,6 +108,8 @@ def create_app(
         def on_reload(config: AppConfig) -> None:
             services.timers.update_settings(config.tools.timers)
             services.weather.update_settings(config.tools.weather)
+            services.search.update_settings(config.tools.search)
+            services.reader.update_settings(config.tools.search.read if config.tools.search else None)
             _log_tool_status(config, services)
             hub.reload(config, services)
 
@@ -109,6 +117,8 @@ def create_app(
         _log_tool_status(manager.current, services)
 
         background = [asyncio.create_task(monitor_loop_lag(), name="loop-lag")]
+        if search_settings is not None and browser_enabled:
+            background.append(asyncio.create_task(services.reader.warm(), name="browser-warm"))
         app.state.speech = None
         app.state.voice_tasks = set()
         app.state.webrtc = SmallWebRTCRequestHandler()  # no ICE servers: LAN only, nothing leaves the house
@@ -149,6 +159,7 @@ def create_app(
                 task.cancel()
             await app.state.webrtc.close()
             await services.timers.close()
+            await services.reader.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 
     app = FastAPI(title="Victoria Voice Assistant", lifespan=lifespan)

@@ -12,11 +12,14 @@ dependencies = [
     "httpx>=0.28,<1",
     "pipecat-ai[kokoro,mlx-whisper,openai,webrtc,websocket,whisper]==1.15.0",
     "pydantic>=2.11,<3",
+    "playwright>=1.50,<2",
     "python-dotenv>=1,<2",
+    "trafilatura>=2,<3",
     "PyYAML>=6,<7",
     "uvicorn>=0.34,<1",
     "watchfiles>=1,<2",
     "websockets>=15,<18",
+    "lxml>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +34,7 @@ assistant = "victoria_voice_assistant.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-victoria_voice_assistant = ["py.typed", "launchd_template.plist", "storage/migrations/*.sql"]
+victoria_voice_assistant = ["py.typed", "*.plist", "storage/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
