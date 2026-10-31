@@ -7,7 +7,7 @@ servers:
     type: openai
     base_url: http://127.0.0.1:8642/v1
     api_key: ${HERMES_API_KEY:-}   # that gateway's API_SERVER_KEY; optional until one is connected
-  anthropic:                  # Claude, for the `claude` pool; optional until ANTHROPIC_API_KEY is set
+  anthropic:                  # Claude, for the optional `claude` agent (docs/claude-setup.md)
     type: anthropic
     api_key: ${ANTHROPIC_API_KEY:-}
   decider:                    # mlx-lm serving the decision model (`assistant decider run`); localhost only

@@ -147,7 +147,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 ## Stage 7: Agents and model pools
 - Status: in progress
 - Done criteria:
-  - [ ] "Ask Hermes …" and "Ask Claude …" work by voice and text; offering an agent works when no tool fits.
+  - [~] "Ask Hermes …" and "Ask Claude …" work by voice and text; offering an agent works when no tool fits. Hermes and offering: by voice and text. Claude: a stub until it has a key (Bill, 2026-10-31: local AI is the primary mode; no Claude key yet), answering "Claude isn't set up yet." with setup steps (`docs/claude-setup.md`); the pool, decider, overrides, budgets and spend log are built and unit-tested.
   - [ ] The decider's choice, confidence, tokens, and cost are logged; "Ask Claude Opus …" overrides it.
   - [ ] Budget limits downgrade and then stop paid calls as configured.
   - [ ] Tasks can be listed and cancelled by voice.
@@ -229,3 +229,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-31 | 7 | Finding: Hermes holds the LM Studio key (it needs one to call LM Studio), the same key the assistant uses, and it can read it from its environment. Every other assistant key, file and service is out of its reach. Proposal: give Hermes its own LM Studio key if LM Studio supports more than one; otherwise accept it, since the key only grants model access. Also: the container has outbound internet, so Hermes's shell could reach the web even with web tools off. | |
 | 2026-10-31 | 7 | Hermes test install not yet under launchd (Apple `container` has no restart policy); `run.sh` runs in a terminal. The example's default agent is still `helper`. | |
 | 2026-10-31 | 7 | Whisper prompt biasing: Pipecat's `WhisperSTTServiceMLX` has no `initial_prompt` setting, though `mlx_whisper.transcribe` accepts one. Rather than patch Pipecat, `LockedWhisperSTT` reproduces Pipecat 1.15's MLX `run_stt` (same hallucination and no-speech filters) with `initial_prompt` added, used only when there's a prompt. Re-check on a Pipecat upgrade. Finding: food words are still mis-heard ("leeks" -> "leagues"); the prompt covers agent names only. | |
+| 2026-10-31 | 7 | Bill: the primary mode is local AI; no Claude key yet. Claude stays a stub until a key is added: asking it says "Claude isn't set up yet." and chat points to `docs/claude-setup.md` (what's configured, turning it on, checking spend, turning it off). Hermes's setup note points to `docs/hermes.md`. The guide is not named `docs/claude.md`: on macOS's case-insensitive disk that is also `docs/CLAUDE.md`, which Claude Code reads as agent instructions. | Bill / 2026-10-31 |

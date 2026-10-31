@@ -30,6 +30,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Where the chat note for an agent that isn't set up yet points.
+SETUP_DOCS = {"anthropic": "docs/claude-setup.md", "harness": "docs/hermes.md"}
+
 # A task still running after this long is stopped and marked timed_out.
 AGENT_TIMEOUT_S = 300.0
 
@@ -96,10 +99,12 @@ class AgentRunner:
         missing = self._missing_key(agent)
         if missing:
             logger.warning("Agent model has no API key", extra={"event": "agent_unsupported", "agent": agent.name, "reason": missing})
+            kind = "harness" if agent.kind == "harness" else self.config.models.servers[missing].type
+            guide = SETUP_DOCS.get(kind, "config/examples/.env.example")
             return ToolOutcome(
                 result={"error": f"no API key for server {missing!r}"},
                 speak=f"{label(agent.name)} isn't set up yet.",
-                chat=f"Add the API key for the `{missing}` server to config/.env (see config/examples/.env.example).",
+                chat=f"Add the API key for the `{missing}` server to config/.env and restart the assistant. Setup steps: {guide}.",
                 chat_title=f"{agent.name}: setup",
             )
         override = None

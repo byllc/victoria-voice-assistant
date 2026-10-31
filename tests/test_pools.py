@@ -210,7 +210,7 @@ def test_claude_without_a_key_says_it_is_not_set_up(example_config_dir: Path, mo
 
     outcome, calls = run(scenario())
     assert calls == [] and outcome.speak == "Claude isn't set up yet."
-    assert "config/.env" in (outcome.chat or "")
+    assert "config/.env" in (outcome.chat or "") and "docs/claude-setup.md" in (outcome.chat or "")
 
 
 def test_anthropic_models_build_pipecats_anthropic_service(config: AppConfig) -> None:

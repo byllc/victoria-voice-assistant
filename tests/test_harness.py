@@ -177,4 +177,4 @@ def test_unreachable_or_keyless_hermes(example_config_dir: Path) -> None:
 
     said, keyless = asyncio.run(scenario())
     assert said == ["I can't reach Hermes right now."]
-    assert keyless.speak == "Hermes isn't set up yet." and "config/.env" in (keyless.chat or "")
+    assert keyless.speak == "Hermes isn't set up yet." and "docs/hermes.md" in (keyless.chat or "")
