@@ -7,6 +7,7 @@ from pydantic import (
     ConfigDict,
     Field,
     HttpUrl,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -123,6 +124,14 @@ class EntityScope(Schema):
     domains: list[str] = Field(default_factory=list)
 
 
+class HttpToolConfig(Schema):
+    url: str
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    query: dict[str, str] = Field(default_factory=dict)
+    body: dict[str, Any] | None = None
+
+
 class ToolConfig(Schema):
     name: str
     description: str
@@ -147,6 +156,9 @@ class ToolConfig(Schema):
     setup: str | None = None
     then: dict[str, str | bool] | None = None
     mcp_server: str | None = None
+    http: HttpToolConfig | None = None
+    # Set by the loader when the entry failed validation; the registry turns it into an automatic stub.
+    broken: str | None = None
 
 
 class SearchReadConfig(Schema):
@@ -203,9 +215,42 @@ class McpServerConfig(Schema):
     token: str | None = None
 
 
+class ToolTestGiven(Schema):
+    timers: list[str] = Field(default_factory=list)
+
+
 class ToolTestConfig(Schema):
     say: str
     expect: str
+    given: ToolTestGiven | None = None
+
+    @field_validator("expect")
+    @classmethod
+    def known_expectation(cls, value: str) -> str:
+        if value in ("clarify", "offer_agent", "answer"):
+            return value
+        if value.startswith(("tool:", "agent:")) and value.split(":", 1)[1]:
+            return value
+        raise ValueError("expect must be tool:<name>, agent:<name>, clarify, offer_agent, or answer")
+
+
+def _broken_tool_entry(raw: Any, error: ValidationError) -> Any:
+    """Keep a tool whose definition is invalid as a stub, so one bad entry doesn't reject the file."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("name"), str) or not raw["name"]:
+        return raw  # nothing to name the stub after: let validation fail normally
+    problems = "; ".join(
+        f"{'.'.join(str(part) for part in item['loc']) or '$'}: {item['msg']}" for item in error.errors()
+    )
+    description = raw.get("description")
+    params = raw.get("params")
+    valid_params = isinstance(params, dict) and all(isinstance(value, dict) for value in params.values())
+    return {
+        "name": raw["name"],
+        "description": description if isinstance(description, str) and description else raw["name"],
+        "kind": "stub",
+        "params": params if valid_params else {},
+        "broken": f"invalid tool definition: {problems}",
+    }
 
 
 class ToolsConfig(Schema):
@@ -216,6 +261,20 @@ class ToolsConfig(Schema):
     music: MusicConfig | None = None
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     tests: list[ToolTestConfig] = Field(default_factory=list)
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def stub_broken_tools(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        entries = []
+        for raw in value:
+            try:
+                ToolConfig.model_validate(raw)
+            except ValidationError as exc:
+                raw = _broken_tool_entry(raw, exc)
+            entries.append(raw)
+        return entries
 
     @model_validator(mode="after")
     def unique_tool_names(self) -> ToolsConfig:

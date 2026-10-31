@@ -246,7 +246,7 @@ def test_assistant_websocket_rejects_non_loopback(example_config_dir: Path, tmp_
     os.environ.get("ASSISTANT_LIVE_TESTS") != "1",
     reason="needs LM Studio running with the configured fast model; set ASSISTANT_LIVE_TESTS=1",
 )
-def test_live_text_chat_streams_tokens(example_config_dir: Path, tmp_path: Path) -> None:
+def test_live_text_chat_streams_tokens(example_config_dir: Path, tmp_path: Path, live_api_key: None) -> None:
     app = create_app(example_config_dir, tmp_path / "assistant.sqlite3")
     with TestClient(app, client=LOOPBACK) as client:
         with client.websocket_connect("/ws") as ws:

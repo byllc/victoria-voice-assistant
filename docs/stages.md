@@ -8,7 +8,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 1 | Defer early benchmarking | approved | 2026-10-25 | 2026-10-29 | Bill / 2026-10-29 |
 | 2 | Skeleton and config | approved | 2026-10-29 | 2026-10-29 | Bill / 2026-10-29 |
 | 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
-| 4 | Tool registry, timers, weather | in progress | 2026-10-30 | | |
+| 4 | Tool registry, timers, weather | ready for review | 2026-10-30 | 2026-10-30 | |
 | 5 | Voice in the browser | not started | | | |
 | 6 | Local web search | not started | | | |
 | 7 | Agents and model pools | not started | | | |
@@ -83,6 +83,29 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Findings (see decisions log): gemma-4-12b reasoning delay and empty replies at `max_tokens: 200`; the Pipecat output transport needs an `OutputTransportMessageFrame` to deliver text to the client.
 - Bill's review notes:
 
+## Stage 4: Tool registry, timers, weather
+- Status: ready for review
+- Done criteria:
+  - [x] `tools test` passes on the example phrases at an accuracy Bill agrees with, and reports failures clearly. 20/20 on gemma-4-12b (M2); accuracy threshold is Bill's call.
+  - [x] Multiple named timers: start, cancel by name, add time, status of one and all; "cancel the timer" with two running asks which.
+  - [x] Timers survive a service restart.
+  - [x] Calling a stub speaks its notice and shows setup steps in chat; a broken tool definition becomes an automatic stub.
+  - [x] Template replies skip the second model call (visible in timing logs).
+- Evidence:
+  - `uv run pytest -q`: 84 passed, 2 skipped (live). `ASSISTANT_LIVE_TESTS=1 uv run pytest -q -k live`: 2 passed (Stage 3 chat + Stage 4 tools test, against LM Studio). `npm run build` passes.
+  - `assistant tools test --config-dir config/examples` (gemma-4-12b, `reasoning_effort: none`, M2): **20/20 passed, median 1370 ms per request**. Covers every tool's `examples` plus `tests` (clarify on a missing duration, clarify when two timers run, stub routing, `agent:helper`, `offer_agent`, a plain answer). Failures print `FAIL`, the phrase, what the model called, and `expected X, got Y [source]`. Exit code is non-zero below `--min-accuracy` (default 1.0). The first run was 19/20: "book me a flight" made gemma emit only newlines; rewording the `offer_agent` line in the system prompt fixed it (decisions log).
+  - Timers, live over the websocket: "set a pasta timer for 10 minutes" -> "Pasta timer set for 10 minutes."; a second pasta timer -> "pasta 2"; "cancel the timer" with three running -> "Which timer: pasta 2, pasta or laundry?"; "pasta 2" -> "Pasta 2 timer cancelled."; "add 5 minutes to the pasta timer" -> "Added 5 minutes to the pasta timer. 14 minutes 42 seconds left."; status of one and all; a 3 s tea timer rang ("Your tea timer is done."); "stop" silenced it with no model call (`direct_reply handled_by=timer_stop`).
+  - Restart: after stopping and restarting the service, the log shows `timers_restored count=2` and the client got both timers with correct remaining time. A timer that finishes while the service is down rings on start if it ended less than `ring_max_s` ago; otherwise it is dropped and logged `timer_missed` (unit-tested).
+  - Stubs: "turn off the kitchen lights" spoke "Home control isn't set up yet. I've sent the setup steps to the chat." The chat got a `home_control: setup` notice with the setup text, and the log has `stub_called` with the arguments. Automatic stubs: a python tool with a missing handler, a param of type `banana`, an `mcp` kind, an unknown built-in service, and an entry with an unknown kind and key all become `auto_stub`. They are logged at startup, listed by `assistant tools status` with the reason, and flagged by `assistant config check` as warnings. The rest of the file still loads.
+  - Timing logs: template tool -> `tool_call reply=template spoken_directly=true second_llm_call=false llm_call=1`, then only `llm_response_complete llm_call=1`. Weather (reply via model) -> `tool_call second_llm_call=true`, then `llm_first_token llm_call=2 ttft_ms=1696`, `llm_response_complete llm_call=2`.
+  - Weather (Open-Meteo, live): "weather in Boston tomorrow" -> "mostly clear with a high of 52 and a low of 36." Geocoding plus forecast took 634 ms on the first call and 102 ms from cache. Only the fields the question needs go to the model.
+  - Pending questions: "book me a flight to Denver" -> "I can't do that myself. Want me to ask Helper?"; "yes" -> "Agents aren't set up yet." in 706 ms with no model call (`direct_reply handled_by=pending_yes`).
+  - Reload: editing `tools.yaml` while a chat was open logged `config_reloaded` then `tools_reloaded count=9`, and the session's tool list changed with no restart (`LLMSetToolsFrame`).
+  - Web client (browser check): timer chips with live countdown; amber ringing banner with a Stop button and a repeating beep; setup notices shown as a separate block.
+  - M2 latency (for design only): the first request after a restart takes 8-12 s (the ~940-token system and tool prefix is not cached yet). Template tool replies then take 2-4 s end to end; weather takes 7-9 s with the second model call.
+  - Demo: `cp config/examples/tools.yaml config/tools.yaml` (Bill's local copy is still Stage 3's), set `weather.home` lat/lon, and add an agent to `config/agents.yaml` (the local copy has none, so `offer_agent` says "Sorry, I can't do that."). Then `uv run assistant tools status`, `uv run assistant tools test`, `uv run assistant serve` and `uv run assistant web`. Open http://127.0.0.1:8766 and try: "set a pasta timer for 10 minutes", "set a laundry timer for 20 minutes", "cancel the timer", "pasta", "add 5 minutes to the laundry timer", "what timers do I have", "set a tea timer for 10 seconds" (wait for it to ring, then "stop"), "turn off the kitchen lights", "what's the weather tomorrow", "book me a flight", "yes". Restart `assistant serve` with timers running and reload the page.
+- Bill's review notes:
+
 ## Decisions log
 | Date | Stage | Proposal or decision | Bill's answer |
 |---|---|---|---|
@@ -100,3 +123,11 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-30 | 3 | Stage 3 started the web process and the assistant service as separate processes. Pending: launchd install and restart for the web plist (`assistant launchd install-web`) is not yet verified live. | |
 | 2026-10-30 | 3 | Approved by Bill (carried-over items: real LM Studio failover test, live non-loopback test, launchd restart of the web plist, web password under launchd). | Bill / 2026-10-30 |
 | 2026-10-30 | 4/5 | Bill asked for browser voice chat to test the voice pipeline. Voice is Stage 5. Decision: finish Stage 4 first, then Stage 5. | Bill / 2026-10-30 |
+| 2026-10-30 | 4 | Pending questions expire after 60 s in text chat; the architecture's ~10 s (kept as `VOICE_PENDING_S`) is too short to type a reply. Proposal: voice uses 10 s from Stage 5. | |
+| 2026-10-30 | 4 | `tools.yaml` additions (no architecture change intended): an `http:` section (`url`, `method`, `headers`, `query`, `body`, with `{param}` placeholders); `required: true` inside a param; python handlers named in `service` as `package.module:function`; `tests[].given.timers` for state-dependent tests; `expect: answer`. An invalid tool entry becomes an automatic stub instead of rejecting the file, as long as it has a `name`. | |
+| 2026-10-30 | 4 | Kinds `mcp`, `ha_service` and `ha_script` become automatic stubs ("aren't supported yet") until their stages. `confirm: true` is not implemented: no Stage 4 tool needs it. Proposal: add it with the first side-effect tool (Stage 9, locks). | |
+| 2026-10-30 | 4 | All web chat clients share timer device `web`, so a timer rings in every open chat tab. The chime is a beep generated in the browser; `timers.sound` is unused until a device plays audio (Stage 5). | |
+| 2026-10-30 | 4 | Finding (browser test): a message sent while the previous request was still generating ran on a context without the first tool result. The model re-ran the timer, so two timers started, and the first reply was held until the second finished. Fix: requests on one chat connection run one at a time; a message that arrives mid-request waits until the model calls, tool calls and spoken replies finish (`TurnPreprocessor` and `TurnTracker`, with a 60 s safety release). Pipecat has no built-in for this in a text pipeline with interruptions off. | |
+| 2026-10-30 | 4 | Finding: Pipecat 1.15 `PipelineTask` adds RTVI by default; its messages reached the chat client once urgent transport messages (timers) were serialized. Disabled with `enable_rtvi=False`. Also: the model call after a tool result starts from a context frame pushed upstream, so timing counts it after the LLM, not before it. | |
+| 2026-10-30 | 4 | Finding: gemma-4-12b answered "book me a flight to Denver" with 199 newline tokens when the system prompt said only "if no tool fits ... call offer_agent". Naming the cases ("bookings, purchases, research, email ... never refuse in plain text") fixed it (20/20). The system prompt is in code (`chat/prompt.py`), not config, because the architecture doesn't place it in a config file. | |
+| 2026-10-30 | 4 | Live tests now need the real `LMS_API_KEY` (LM Studio rejects the test key). A `live_api_key` fixture reads it from `config/.env`. One flaky failure of `test_health_endpoint_and_config_file_watcher` under load (passes alone and on repeat). | |

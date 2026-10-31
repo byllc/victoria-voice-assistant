@@ -6,6 +6,32 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+LOGGED_FIELDS = (
+    "config_revision",
+    "config_dir",
+    "database_path",
+    "model",
+    "llm_call",
+    "ttft_ms",
+    "total_ms",
+    "tool",
+    "kind",
+    "reply",
+    "spoken_directly",
+    "second_llm_call",
+    "duration_ms",
+    "arguments",
+    "reason",
+    "handled_by",
+    "agent",
+    "timer",
+    "timers",
+    "count",
+    "duration_s",
+    "delta_s",
+)
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         item: dict[str, Any] = {
@@ -20,7 +46,7 @@ class JsonFormatter(logging.Formatter):
         error = getattr(record, "error", None)
         if error is not None:
             item["error"] = error
-        for key in ("config_revision", "config_dir", "database_path", "model", "ttft_ms", "total_ms"):
+        for key in LOGGED_FIELDS:
             value = getattr(record, key, None)
             if value is not None:
                 item[key] = value

@@ -8,8 +8,10 @@ from pipecat.frames.frames import (
     Frame,
     LLMFullResponseEndFrame,
     LLMMessagesAppendFrame,
+    InputTransportMessageFrame,
     LLMTextFrame,
     OutputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.serializers.base_serializer import FrameSerializer
@@ -43,14 +45,17 @@ class ChatProtocolProcessor(FrameProcessor):
 class ChatJsonSerializer(FrameSerializer):
     """Text chat protocol.
 
-    Client -> server: ``{"type": "user_message", "text": "..."}``
+    Client -> server: ``{"type": "user_message", "text": "..."}``, ``{"type": "timer_stop"}``.
     Server -> client: ``{"type": "token", "text": "..."}`` per streamed chunk,
     ``{"type": "done"}`` when a reply ends, ``{"type": "error", "message": "..."}``
-    on failure.
+    on failure, ``{"type": "notice", "title": "...", "text": "..."}`` for text shown
+    in chat only (stub setup steps), ``{"type": "timers", "timers": [...]}`` when
+    timers change, ``{"type": "timer_ring", "names": [...], "text": "..."}`` and
+    ``{"type": "timer_ring_stop", "names": [...]}``.
     """
 
     async def serialize(self, frame: Frame) -> str | None:
-        if isinstance(frame, OutputTransportMessageFrame):
+        if isinstance(frame, (OutputTransportMessageFrame, OutputTransportMessageUrgentFrame)):
             return json.dumps(frame.message)
         return None
 
@@ -60,6 +65,8 @@ class ChatJsonSerializer(FrameSerializer):
         except (TypeError, ValueError):
             logger.warning("Ignoring non-JSON chat message", extra={"event": "chat_message_invalid"})
             return None
+        if isinstance(message, dict) and message.get("type") == "timer_stop":
+            return InputTransportMessageFrame(message={"type": "timer_stop"})
         if not isinstance(message, dict) or message.get("type") != "user_message":
             logger.warning("Ignoring unknown chat message", extra={"event": "chat_message_invalid"})
             return None

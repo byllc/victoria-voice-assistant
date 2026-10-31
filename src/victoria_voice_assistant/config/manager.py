@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from watchfiles import Change, awatch
 
@@ -16,6 +17,11 @@ class ConfigManager:
         self.config_dir = config_dir
         self.current = load_config(config_dir)
         self.revision = 1
+        self._listeners: list[Callable[[AppConfig], None]] = []
+
+    def add_listener(self, listener: Callable[[AppConfig], None]) -> None:
+        """Called with the new configuration after each accepted reload."""
+        self._listeners.append(listener)
 
     def reload(self) -> bool:
         try:
@@ -36,6 +42,11 @@ class ConfigManager:
             "Configuration reloaded",
             extra={"event": "config_reloaded", "config_revision": self.revision},
         )
+        for listener in self._listeners:
+            try:
+                listener(candidate)
+            except Exception:
+                logger.exception("Config reload listener failed", extra={"event": "config_listener_failed"})
         return True
 
     async def watch(self) -> None:

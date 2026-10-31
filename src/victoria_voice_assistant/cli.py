@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import shutil
@@ -14,8 +15,18 @@ from victoria_voice_assistant.config.loader import (
     default_config_dir,
     load_config,
 )
+from victoria_voice_assistant.config.schema import AppConfig
+from victoria_voice_assistant.tools.registry import Services, ToolRegistry, build_registry
+from victoria_voice_assistant.tools.testing import format_report, format_status, run_tool_tests
+from victoria_voice_assistant.tools.timers import TimerService
+from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.launchd import install_launch_agent, install_web_launch_agent
 from victoria_voice_assistant.logging_config import configure_logging
+
+
+def _registry(config: AppConfig) -> ToolRegistry:
+    services = Services(timers=TimerService(config.tools.timers), weather=WeatherService(config.tools.weather))
+    return build_registry(config.tools, config.agents, services)
 
 
 def _config_dir(value: str | None) -> Path:
@@ -32,6 +43,20 @@ def _build_parser() -> argparse.ArgumentParser:
     init.add_argument("--config-dir", help="destination directory (default: config/)")
     check = config_subcommands.add_parser("check", help="validate all configuration files")
     check.add_argument("--config-dir", help="configuration directory (default: config/)")
+
+    tools = commands.add_parser("tools", help="tool registry operations")
+    tools_subcommands = tools.add_subparsers(dest="tools_command", required=True)
+    status = tools_subcommands.add_parser("status", help="list tools, stubs, and why each stub is one")
+    status.add_argument("--config-dir", help="configuration directory (default: config/)")
+    test = tools_subcommands.add_parser("test", help="run example phrases and tests against the router model")
+    test.add_argument("--config-dir", help="configuration directory (default: config/)")
+    test.add_argument("--only", help="only this tool's examples and tests")
+    test.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=1.0,
+        help="exit with an error below this pass rate, 0-1 (default: 1.0)",
+    )
 
     serve = commands.add_parser("serve", help="run assistant health service")
     serve.add_argument("--host", default="127.0.0.1")
@@ -64,7 +89,29 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"Configuration valid: {directory}")
+        for entry in _registry(load_config(directory)).stubs():
+            if entry.status == "auto_stub":
+                print(f"Warning: tool {entry.name!r} is an automatic stub: {entry.reason}")
         return 0
+
+    if args.command == "tools":
+        logging.getLogger().setLevel(logging.ERROR)
+        directory = _config_dir(args.config_dir)
+        try:
+            config = load_config(directory)
+        except ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if args.tools_command == "status":
+            print(format_status(_registry(config)))
+            return 0
+        results = asyncio.run(run_tool_tests(config, only=args.only))
+        if not results:
+            print("No examples or tests found in tools.yaml.")
+            return 1
+        print(format_report(results))
+        accuracy = sum(result.passed for result in results) / len(results)
+        return 0 if accuracy >= args.min_accuracy else 1
 
     if args.command == "config" and args.config_command == "init":
         destination = _config_dir(args.config_dir)
