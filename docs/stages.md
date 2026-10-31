@@ -8,8 +8,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 1 | Defer early benchmarking | approved | 2026-10-25 | 2026-10-29 | Bill / 2026-10-29 |
 | 2 | Skeleton and config | approved | 2026-10-29 | 2026-10-29 | Bill / 2026-10-29 |
 | 3 | Web interface and text chat | approved | 2026-10-29 | 2026-10-30 | Bill / 2026-10-30 |
-| 4 | Tool registry, timers, weather | ready for review | 2026-10-30 | 2026-10-30 | |
-| 5 | Voice in the browser | not started | | | |
+| 4 | Tool registry, timers, weather | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
+| 5 | Voice in the browser | in progress | 2026-10-30 | | |
 | 6 | Local web search | not started | | | |
 | 7 | Agents and model pools | not started | | | |
 | 8 | Notifications and task dashboard | not started | | | |
@@ -84,7 +84,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes:
 
 ## Stage 4: Tool registry, timers, weather
-- Status: ready for review
+- Status: approved
 - Done criteria:
   - [x] `tools test` passes on the example phrases at an accuracy Bill agrees with, and reports failures clearly. 20/20 on gemma-4-12b (M2); accuracy threshold is Bill's call.
   - [x] Multiple named timers: start, cancel by name, add time, status of one and all; "cancel the timer" with two running asks which.
@@ -104,6 +104,16 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Web client (browser check): timer chips with live countdown; amber ringing banner with a Stop button and a repeating beep; setup notices shown as a separate block.
   - M2 latency (for design only): the first request after a restart takes 8-12 s (the ~940-token system and tool prefix is not cached yet). Template tool replies then take 2-4 s end to end; weather takes 7-9 s with the second model call.
   - Demo: `cp config/examples/tools.yaml config/tools.yaml` (Bill's local copy is still Stage 3's), set `weather.home` lat/lon, and add an agent to `config/agents.yaml` (the local copy has none, so `offer_agent` says "Sorry, I can't do that."). Then `uv run assistant tools status`, `uv run assistant tools test`, `uv run assistant serve` and `uv run assistant web`. Open http://127.0.0.1:8766 and try: "set a pasta timer for 10 minutes", "set a laundry timer for 20 minutes", "cancel the timer", "pasta", "add 5 minutes to the laundry timer", "what timers do I have", "set a tea timer for 10 seconds" (wait for it to ring, then "stop"), "turn off the kitchen lights", "what's the weather tomorrow", "book me a flight", "yes". Restart `assistant serve` with timers running and reload the page.
+- Bill's review notes: Approved by Bill / 2026-10-30.
+
+## Stage 5: Voice in the browser
+- Status: in progress
+- Done criteria:
+  - [ ] Voice round trip works from a phone and a computer on the LAN.
+  - [ ] Latency report for 20 spoken commands, broken down by stage, compared with the 1.5 s target.
+  - [ ] Short commands ("stop", "pause") end their turn promptly.
+  - [ ] Two simultaneous voice sessions work without audio stutter.
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -131,3 +141,5 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-10-30 | 4 | Finding: Pipecat 1.15 `PipelineTask` adds RTVI by default; its messages reached the chat client once urgent transport messages (timers) were serialized. Disabled with `enable_rtvi=False`. Also: the model call after a tool result starts from a context frame pushed upstream, so timing counts it after the LLM, not before it. | |
 | 2026-10-30 | 4 | Finding: gemma-4-12b answered "book me a flight to Denver" with 199 newline tokens when the system prompt said only "if no tool fits ... call offer_agent". Naming the cases ("bookings, purchases, research, email ... never refuse in plain text") fixed it (20/20). The system prompt is in code (`chat/prompt.py`), not config, because the architecture doesn't place it in a config file. | |
 | 2026-10-30 | 4 | Live tests now need the real `LMS_API_KEY` (LM Studio rejects the test key). A `live_api_key` fixture reads it from `config/.env`. One flaky failure of `test_health_endpoint_and_config_file_watcher` under load (passes alone and on repeat). | |
+| 2026-10-30 | 4 | Approved by Bill (open proposals: 60 s text pending window, `confirm` deferred to Stage 9). | Bill / 2026-10-30 |
+| 2026-10-30 | 5 | Blocking decision before any code: HTTPS method for the web interface (`mkcert` or Tailscale). Neither is installed on the M2 dev machine. | |
