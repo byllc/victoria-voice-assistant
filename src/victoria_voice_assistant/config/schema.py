@@ -118,6 +118,9 @@ class TurnConfig(Schema):
     smart_turn: bool = True
     # Silence after which the turn ends even if Smart Turn says the speaker isn't done.
     fallback_s: float = Field(default=1.8, gt=0)
+    # Speech shorter than this ("stop", "pause") ends at the first pause without asking
+    # Smart Turn, which judges very short clips poorly. 0 turns this off.
+    short_clip_s: float = Field(default=0.5, ge=0)
 
 
 class SpeechConfig(Schema):

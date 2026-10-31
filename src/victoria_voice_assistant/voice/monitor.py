@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 logger = logging.getLogger(__name__)
@@ -11,8 +12,23 @@ TICK_S = 0.05
 STALL_MS = 20.0
 
 
+async def resident_mb() -> float | None:
+    """This process's resident memory, read with `ps` (no extra dependency)."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ps", "-o", "rss=", "-p", str(os.getpid()), stdout=asyncio.subprocess.PIPE
+        )
+        output, _ = await process.communicate()
+        return round(int(output.strip()) / 1024, 1)
+    except (OSError, ValueError):
+        return None
+
+
 async def monitor_loop_lag(tick_s: float = TICK_S, stall_ms: float = STALL_MS) -> None:
-    """Log every event-loop stall over ``stall_ms`` (architecture §4.2), plus a per-minute worst case."""
+    """Log every event-loop stall over ``stall_ms``, plus each minute the worst lag and memory.
+
+    Architecture §4.2: one blocked loop stutters every stream; a leak in one model
+    grows the whole process."""
     worst = 0.0
     window_started = time.perf_counter()
     while True:
@@ -23,6 +39,9 @@ async def monitor_loop_lag(tick_s: float = TICK_S, stall_ms: float = STALL_MS) -
         if lag_ms > stall_ms:
             logger.warning("Event loop stalled", extra={"event": "loop_stall", "duration_ms": round(lag_ms, 1)})
         if time.perf_counter() - window_started >= 60:
-            logger.info("Event loop lag", extra={"event": "loop_lag", "duration_ms": round(worst, 1)})
+            logger.info(
+                "Event loop lag and memory",
+                extra={"event": "loop_lag", "duration_ms": round(worst, 1), "rss_mb": await resident_mb()},
+            )
             worst = 0.0
             window_started = time.perf_counter()

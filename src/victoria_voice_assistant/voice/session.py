@@ -6,11 +6,21 @@ import logging
 import asyncio
 from typing import Any
 
+from pipecat.audio.turn.base_turn_analyzer import EndOfTurnState
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import Frame, LLMContextFrame, LLMRunFrame, TTSSpeakFrame
+from pipecat.frames.frames import (
+    Frame,
+    InputAudioRawFrame,
+    LLMContextFrame,
+    LLMRunFrame,
+    TTSSpeakFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+)
+from pipecat.metrics.metrics import TurnMetricsData
 from pipecat.observers.user_bot_latency_observer import LatencyBreakdown, UserBotLatencyObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -86,13 +96,90 @@ def last_user_text(context: LLMContext) -> str | None:
     return None
 
 
+class ShortClipSmartTurn(LocalSmartTurnAnalyzerV3):
+    """Smart Turn that can be told to end the current turn without running the model."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.end_now = False
+
+    def _process_speech_segment(self, audio_buffer):
+        if self.end_now:
+            self.end_now = False
+            return EndOfTurnState.COMPLETE, TurnMetricsData(
+                processor="ShortClipSmartTurn", is_complete=True, probability=1.0, e2e_processing_time_ms=0.0
+            )
+        return super()._process_speech_segment(audio_buffer)
+
+
+class ShortClipStopStrategy(TurnAnalyzerUserTurnStopStrategy):
+    """Ends a turn of very short speech ("stop", "pause") at its first pause.
+
+    The Smart Turn project notes that very short clips work poorly, and many home
+    commands are one word. Architecture §4.2: skip Smart Turn for clips under about
+    a second. Speech is measured in audio time, by counting the samples received
+    while the VAD reports speaking: the VAD frames' own wall-clock stamps can't be
+    used, because audio is often processed in bursts. Only a turn's first stretch
+    of speech counts, so a pause later in a sentence still goes to Smart Turn.
+    """
+
+    def __init__(self, *, turn_analyzer: ShortClipSmartTurn, short_clip_s: float, **kwargs) -> None:
+        super().__init__(turn_analyzer=turn_analyzer, **kwargs)
+        self._analyzer = turn_analyzer
+        self._short_clip_s = short_clip_s
+        self._segments = 0
+        self._speech_audio_s = 0.0
+        self._start_secs = 0.0
+
+    async def handle_user_turn_stopped(self):
+        self._segments = 0
+        self._speech_audio_s = 0.0
+        await super().handle_user_turn_stopped()
+
+    def note_speech_started(self, frame: VADUserStartedSpeakingFrame) -> None:
+        self._segments += 1
+        self._start_secs = frame.start_secs
+
+    def note_audio(self, frame: InputAudioRawFrame, speaking: bool) -> None:
+        if speaking and self._segments == 1:
+            self._speech_audio_s += len(frame.audio) / (2 * frame.num_channels * frame.sample_rate)
+
+    def note_speech_stopped(self, frame: VADUserStoppedSpeakingFrame) -> bool:
+        """Whether this pause ends a short clip; if so, the next analysis skips the model."""
+        if self._short_clip_s <= 0 or self._segments != 1:
+            return False
+        # Audio is marked speaking from start_secs into the speech until stop_secs of silence.
+        spoken_s = self._speech_audio_s + self._start_secs - frame.stop_secs
+        if spoken_s >= self._short_clip_s:
+            return False
+        self._analyzer.end_now = True
+        logger.info(
+            "Short clip ended its turn without Smart Turn",
+            extra={"event": "short_clip_turn", "duration_ms": round(spoken_s * 1000, 1)},
+        )
+        return True
+
+    async def _handle_vad_user_started_speaking(self, frame: VADUserStartedSpeakingFrame):
+        self.note_speech_started(frame)
+        await super()._handle_vad_user_started_speaking(frame)
+
+    async def _handle_input_audio(self, frame: InputAudioRawFrame):
+        self.note_audio(frame, self._vad_user_speaking)
+        await super()._handle_input_audio(frame)
+
+    async def _handle_vad_user_stopped_speaking(self, frame: VADUserStoppedSpeakingFrame):
+        self.note_speech_stopped(frame)
+        await super()._handle_vad_user_stopped_speaking(frame)
+
+
 def user_params(speech: SpeechConfig) -> LLMUserAggregatorParams:
     vad = SileroVADAnalyzer(
         params=VADParams(confidence=speech.vad.confidence, start_secs=speech.vad.start_s, stop_secs=speech.vad.stop_s)
     )
     if speech.turn.smart_turn:
-        stop = TurnAnalyzerUserTurnStopStrategy(
-            turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=speech.turn.fallback_s))
+        stop = ShortClipStopStrategy(
+            turn_analyzer=ShortClipSmartTurn(params=SmartTurnParams(stop_secs=speech.turn.fallback_s)),
+            short_clip_s=speech.turn.short_clip_s,
         )
     else:
         stop = SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=speech.turn.fallback_s)

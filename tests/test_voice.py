@@ -36,7 +36,7 @@ async def _ignore(_message: dict[str, Any]) -> None:
 def test_speech_config_defaults_and_example(example_config_dir: Path) -> None:
     speech = load_config(example_config_dir).models.speech
     assert speech.stt.model == "mlx-community/whisper-large-v3-turbo"
-    assert speech.turn.smart_turn and speech.turn.fallback_s == 1.8
+    assert speech.turn.smart_turn and speech.turn.fallback_s == 1.8 and speech.turn.short_clip_s == 0.5
     assert SpeechConfig().vad.stop_s == 0.2
 
 
@@ -181,3 +181,41 @@ def test_bench_report_compares_with_target() -> None:
     text = report(results)
     assert "replies 2/3" in text and "1 within the 1500 ms target" in text
     assert "short commands: Stop. 2000 ms" in text
+
+
+def test_resident_memory_is_read() -> None:
+    from victoria_voice_assistant.voice.monitor import resident_mb
+
+    value = asyncio.run(resident_mb())
+    assert value is not None and value > 10
+
+
+def test_short_clip_ends_turn_without_smart_turn() -> None:
+    import numpy as np
+    from pipecat.audio.turn.base_turn_analyzer import EndOfTurnState
+    from pipecat.frames.frames import InputAudioRawFrame, VADUserStartedSpeakingFrame, VADUserStoppedSpeakingFrame
+
+    from victoria_voice_assistant.voice.session import ShortClipSmartTurn, ShortClipStopStrategy
+
+    def run_turn(*segments_s: float, short_clip_s: float = 0.7) -> tuple[bool, int]:
+        """Speak each segment, pausing after it; Smart Turn is asked at every pause."""
+        analyzer = ShortClipSmartTurn()
+        calls: list[int] = []
+        analyzer._predict_endpoint = lambda audio: calls.append(1) or {"prediction": 0, "probability": 0.1}  # type: ignore[method-assign]
+        strategy = ShortClipStopStrategy(turn_analyzer=analyzer, short_clip_s=short_clip_s)
+        now, state = 1000.0, EndOfTurnState.INCOMPLETE
+        for spoken_s in segments_s:
+            # VAD reports speaking from start_secs into the speech until stop_secs of silence;
+            # the audio arrives as 20 ms frames, timestamps deliberately meaningless.
+            strategy.note_speech_started(VADUserStartedSpeakingFrame(start_secs=0.2, timestamp=now))
+            for _ in range(round((spoken_s - 0.2 + 0.2) / 0.02)):
+                strategy.note_audio(InputAudioRawFrame(audio=bytes(640), sample_rate=16000, num_channels=1), True)
+            strategy.note_speech_stopped(VADUserStoppedSpeakingFrame(stop_secs=0.2, timestamp=now))
+            state, _ = analyzer._process_speech_segment([(0.0, np.ones(320, dtype=np.int16))])
+            now += 1.0
+        return state == EndOfTurnState.COMPLETE, len(calls)
+
+    assert run_turn(0.4) == (True, 0)  # "stop": no model
+    assert run_turn(1.2) == (False, 1)  # a sentence: Smart Turn decides
+    assert run_turn(0.4, short_clip_s=0) == (False, 1)  # turned off
+    assert run_turn(1.2, 0.4) == (False, 2)  # "set a timer for ... ten": a later short stretch still asks Smart Turn

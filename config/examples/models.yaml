@@ -44,6 +44,7 @@ speech:                       # voice sessions (in-process)
   turn:
     smart_turn: true
     fallback_s: 1.8             # end the turn after this much silence regardless
+    short_clip_s: 0.5           # shorter speech ("stop", "pause") skips Smart Turn; 0 = off
 
 roles:
   router: fast

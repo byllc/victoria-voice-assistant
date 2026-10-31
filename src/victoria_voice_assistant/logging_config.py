@@ -40,6 +40,7 @@ LOGGED_FIELDS = (
     "ttfb",
     "tools",
     "measured_from",
+    "rss_mb",
 )
 
 
