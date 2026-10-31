@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+# Long enough to answer by voice; text chat uses a longer window (see decisions log).
+VOICE_PENDING_S = 10.0
+
+
+@dataclass
+class PendingQuestion:
+    """A question the assistant just asked, resolved by the next user turn.
+
+    ``yes_no`` questions are matched without a model call; ``clarify`` answers go to
+    the model with the question already in the conversation.
+    """
+
+    kind: Literal["clarify", "yes_no"]
+    question: str
+    options: list[str] = field(default_factory=list)
+    # For yes/no: the follow-up to run on "yes" (tool name and arguments).
+    on_yes: tuple[str, dict[str, Any]] | None = None
+    expires_at: float = 0.0
+
+    def expired(self, now: float | None = None) -> bool:
+        return (now if now is not None else time.monotonic()) >= self.expires_at
+
+
+@dataclass
+class ToolOutcome:
+    """What a tool handler produced.
+
+    ``result`` goes into the conversation as the tool result. ``speak`` is said
+    directly with no second model call. ``chat`` is extra text for the chat client
+    only (never spoken). ``pending`` asks a question the next turn resolves.
+    """
+
+    result: Any = None
+    speak: str | None = None
+    chat: str | None = None
+    chat_title: str | None = None
+    pending: PendingQuestion | None = None
+    error: bool = False

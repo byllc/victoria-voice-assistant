@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Callable
 
 from pipecat.frames.frames import Frame, LLMContextFrame, LLMFullResponseEndFrame, LLMTextFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -17,10 +18,19 @@ class RequestTimer:
     end, so this is the closest equivalent to the voice path's end-of-speech mark.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_llm_call: Callable[[], int] | None = None) -> None:
         self.model = "unknown"
+        # Index of the model call within the current request (2 = the reply after a tool result).
+        self.llm_call = 0
+        self._on_llm_call = on_llm_call
         self._started: float | None = None
         self._first_token_logged = False
+
+    def begin_call(self) -> None:
+        """A context frame is about to reach the model."""
+        if self._on_llm_call is not None:
+            self.llm_call = self._on_llm_call()
+        self.start()
 
     def start(self) -> None:
         self._started = time.perf_counter()
@@ -35,6 +45,7 @@ class RequestTimer:
             extra={
                 "event": "llm_first_token",
                 "model": self.model,
+                "llm_call": self.llm_call,
                 "ttft_ms": round((time.perf_counter() - self._started) * 1000, 1),
             },
         )
@@ -47,6 +58,7 @@ class RequestTimer:
             extra={
                 "event": "llm_response_complete",
                 "model": self.model,
+                "llm_call": self.llm_call,
                 "total_ms": round((time.perf_counter() - self._started) * 1000, 1),
             },
         )
@@ -54,7 +66,7 @@ class RequestTimer:
 
 
 class TimingStartProcessor(FrameProcessor):
-    """Placed before the LLM switcher: marks when a request enters the LLM."""
+    """Placed before the LLM switcher: marks when a user request enters the LLM."""
 
     def __init__(self, timer: RequestTimer, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -63,12 +75,17 @@ class TimingStartProcessor(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMContextFrame):
-            self._timer.start()
+            self._timer.begin_call()
         await self.push_frame(frame, direction)
 
 
 class TimingEndProcessor(FrameProcessor):
-    """Placed after the LLM switcher: records first token and response end."""
+    """Placed after the LLM switcher: records first token and response end.
+
+    The model call after a tool result is triggered by a context frame the assistant
+    aggregator pushes upstream, which passes here (not the start processor) on its
+    way to the model.
+    """
 
     def __init__(self, timer: RequestTimer, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -76,7 +93,9 @@ class TimingEndProcessor(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if direction == FrameDirection.DOWNSTREAM:
+        if direction == FrameDirection.UPSTREAM and isinstance(frame, LLMContextFrame):
+            self._timer.begin_call()
+        elif direction == FrameDirection.DOWNSTREAM:
             if isinstance(frame, LLMTextFrame):
                 self._timer.first_token()
             elif isinstance(frame, LLMFullResponseEndFrame):

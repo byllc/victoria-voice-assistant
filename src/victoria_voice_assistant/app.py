@@ -12,11 +12,15 @@ from fastapi import FastAPI, Request, WebSocket
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from victoria_voice_assistant.chat.pinning import pin_models
-from victoria_voice_assistant.chat.session import run_chat_session
+from victoria_voice_assistant.chat.session import ChatHub, run_chat_session
 from victoria_voice_assistant.config.loader import default_config_dir
 from victoria_voice_assistant.config.manager import ConfigManager
 from victoria_voice_assistant.logging_config import configure_logging
+from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.storage.db import default_database_path, migrate
+from victoria_voice_assistant.tools.registry import Services, build_registry
+from victoria_voice_assistant.tools.timers import TimerService
+from victoria_voice_assistant.tools.weather import WeatherService
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +61,15 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
+def _log_tool_status(config: AppConfig, services: Services) -> None:
+    """Build the registry once (startup, reload) so automatic stubs are logged once, not per chat."""
+    registry = build_registry(config.tools, config.agents, services, log_stubs=True)
+    logger.info(
+        "Tools loaded",
+        extra={"event": "tools_loaded", "count": len(registry.active)},
+    )
+
+
 def create_app(
     config_dir: Path | None = None,
     database_path: Path | None = None,
@@ -70,6 +83,23 @@ def create_app(
         database = migrate(database_path or default_database_path())
         app.state.config_manager = manager
         app.state.database_path = database
+        services = Services(
+            timers=TimerService(manager.current.tools.timers, database),
+            weather=WeatherService(manager.current.tools.weather),
+        )
+        await services.timers.start()
+        hub = ChatHub()
+        app.state.services = services
+        app.state.chat_hub = hub
+
+        def on_reload(config: AppConfig) -> None:
+            services.timers.update_settings(config.tools.timers)
+            services.weather.update_settings(config.tools.weather)
+            _log_tool_status(config, services)
+            hub.reload(config, services)
+
+        manager.add_listener(on_reload)
+        _log_tool_status(manager.current, services)
         watcher = asyncio.create_task(manager.watch(), name="config-watcher")
         pinning: asyncio.Task | None = None
         if os.environ.get("ASSISTANT_PIN_MODELS", "1") != "0":
@@ -96,6 +126,7 @@ def create_app(
                 pass
             if pinning is not None:
                 pinning.cancel()
+            await services.timers.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 
     app = FastAPI(title="Victoria Voice Assistant", lifespan=lifespan)
@@ -113,7 +144,12 @@ def create_app(
         await websocket.accept()
         manager: ConfigManager = websocket.app.state.config_manager
         try:
-            await run_chat_session(websocket, manager.current.models)
+            await run_chat_session(
+                websocket,
+                manager.current,
+                websocket.app.state.services,
+                websocket.app.state.chat_hub,
+            )
         except Exception:
             logger.exception("Chat session failed", extra={"event": "chat_session_failed"})
             raise

@@ -26,6 +26,11 @@
           <span id="status" class="status">connecting…</span>
           <button id="logout" type="button">Sign out</button>
         </header>
+        <div id="ringing" class="ringing" role="alert" hidden>
+          <span id="ringing-text"></span>
+          <button id="ringing-stop" type="button">Stop</button>
+        </div>
+        <ul id="timers" class="timers" aria-label="Timers" hidden></ul>
         <div id="log" aria-live="polite"></div>
         <form id="composer">
           <input id="message" type="text" placeholder="Ask Victoria…" autocomplete="off" required />

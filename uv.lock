@@ -918,6 +918,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pipecat-ai", extra = ["openai", "websocket"] },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -929,14 +930,13 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "pipecat-ai", extras = ["openai", "websocket"], specifier = "==1.15.0" },
     { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },

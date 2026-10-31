@@ -1,6 +1,64 @@
+# Tools the fast model may call. Reloaded on save; an invalid tool becomes an
+# automatic stub (see `assistant tools status`) instead of rejecting the file.
+#
+# Kinds: builtin (timers, weather), python (`service: package.module:function`),
+# http (`http:` section), stub. mcp, ha_service and ha_script become automatic
+# stubs until their stage. Params take JSON Schema; `required: true` marks one
+# required. reply: { template: true } speaks the tool's own text,
+# { template: "..." } formats a string, { silent: true } says nothing; the
+# default is the model phrasing the result (a second model call).
 tools:
+  - name: timer
+    description: Start, cancel, change, stop, or check named countdown timers. Call it even when no timer name was given; it asks which one if that matters.
+    kind: builtin
+    service: timers
+    params:
+      action:
+        type: string
+        enum: [start, cancel, add_time, remove_time, status, stop]
+        description: what to do
+        required: true
+      name:
+        type: string
+        description: "timer name as said, e.g. pasta or laundry; leave out if none was said "
+      duration:
+        type: string
+        description: "e.g. 10 minutes, 1 hour 30 minutes; for start, add_time, remove_time"
+    reply: { template: true }  # spoken by the timer service, no second model call
+    examples:
+      - set a pasta timer for 10 minutes
+      - how long is left on the laundry
+      - cancel the pasta timer
+      - add 5 minutes to the rice timer
+      - what timers do I have
+
+  - name: weather
+    description: Current conditions and forecast for home or a named place.
+    kind: builtin
+    service: weather
+    params:
+      location:
+        type: string
+        description: "a named place; leave out for home"
+      when:
+        type: string
+        description: "now, today, tonight, tomorrow, a weekday, weekend, or week"
+    timeout_s: 5
+    examples:
+      - what's the weather tomorrow
+      - do I need an umbrella
+      - weather in Boston this weekend
+
+  - name: clock
+    description: The current local time and date.
+    kind: python
+    service: victoria_voice_assistant.tools.local:current_time
+    reply: { template: true }
+    examples:
+      - what time is it
+
   - name: home_control
-    description: Control or check home devices.
+    description: "Control or check anything in the home except locks: lights, climate, covers, media, scenes."
     kind: stub
     params:
       action:
@@ -9,10 +67,51 @@ tools:
       target:
         type: string
         description: device, room, or area
-    notice: Home control isn't set up yet.
-    setup: Configure a Home Assistant MCP server before enabling this tool.
+      value:
+        type: string
+        description: brightness, temperature, etc.
+    notice: "Home control isn't set up yet. I've sent the setup steps to the chat."
+    setup: >
+      Pick an implementation and change `kind`: `mcp` with server `homeassistant`
+      (Home Assistant's MCP Server integration), or `ha_service` for direct calls.
+      Add the Home Assistant URL under mcp_servers and set HA_TOKEN in the environment.
     examples:
       - turn off the kitchen lights
+      - is the heat on upstairs
+
+  - name: music
+    description: Play, pause, skip, or change volume of music; say what's playing.
+    kind: stub
+    params:
+      action:
+        type: string
+        description: play, pause, resume, next, previous, volume, now_playing
+      query:
+        type: string
+        description: artist, album, track, playlist, or genre
+      room:
+        type: string
+        description: optional; defaults to the room of the device
+      level:
+        type: integer
+        description: volume 0-100, for action volume
+    notice: "Music isn't set up yet. I've sent the setup steps to the chat."
+    setup: >
+      Music arrives in Stage 10: run a Music Assistant server, set `music.server`
+      and MUSIC_ASSISTANT_TOKEN, then change this tool to `kind: builtin` with
+      `service: music`.
+    examples:
+      - play some Miles Davis
+      - skip this
+
+  # An http tool: GET a URL with arguments filled in, then speak a template.
+  # - name: sunrise
+  #   description: Sunrise and sunset times at home today.
+  #   kind: http
+  #   http:
+  #     url: https://api.sunrise-sunset.org/json
+  #     query: { lat: "40.7", lng: "-74.0", formatted: "1" }
+  #   reply: { template: "Sunrise is at {results[sunrise]} UTC." }
 
 search:
   provider: searxng
@@ -31,7 +130,7 @@ weather:
   provider: open-meteo
   home:
     name: Home
-    lat: 0
+    lat: 0      # set to our location
     lon: 0
   units: imperial
   cache_ttl_s: 600
@@ -50,5 +149,10 @@ music:
 mcp_servers: {}
 
 tests:
-  - say: set a timer
-    expect: clarify
+  - { say: "set a timer", expect: clarify }               # no duration given
+  - { say: "cancel the timer", expect: clarify, given: { timers: [pasta, laundry] } }
+  - { say: "cancel the timer", expect: "tool:timer", given: { timers: [pasta] } }
+  - { say: "turn off the kitchen lights", expect: "tool:home_control" }  # passes while still a stub
+  - { say: "ask helper what to make with leeks", expect: "agent:helper" }
+  - { say: "book me a flight to Denver", expect: offer_agent }
+  - { say: "how many ounces are in a cup", expect: answer }

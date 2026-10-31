@@ -1,7 +1,13 @@
+type TimerInfo = { id: string; name: string; remaining_s: number; state: "running" | "ringing" };
+
 type ServerMessage =
   | { type: "token"; text: string }
   | { type: "done" }
-  | { type: "error"; message?: string };
+  | { type: "error"; message?: string }
+  | { type: "notice"; title: string; text: string }
+  | { type: "timers"; timers: TimerInfo[] }
+  | { type: "timer_ring"; names: string[]; text: string | null }
+  | { type: "timer_ring_stop"; names: string[] };
 
 const loginSection = required<HTMLElement>("login");
 const chatSection = required<HTMLElement>("chat");
@@ -14,9 +20,17 @@ const log = required<HTMLElement>("log");
 const statusLabel = required<HTMLElement>("status");
 const logoutButton = required<HTMLButtonElement>("logout");
 const insecureBanner = required<HTMLElement>("insecure-banner");
+const timerList = required<HTMLUListElement>("timers");
+const ringing = required<HTMLElement>("ringing");
+const ringingText = required<HTMLElement>("ringing-text");
+const ringingStop = required<HTMLButtonElement>("ringing-stop");
 
 let socket: WebSocket | null = null;
 let pendingReply: HTMLElement | null = null;
+// Each timer's end, in this browser's clock (server sends remaining seconds).
+let timers: { name: string; endsAt: number; state: TimerInfo["state"] }[] = [];
+let chime: number | null = null;
+let audio: AudioContext | null = null;
 
 function required<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -91,7 +105,86 @@ function handleServerMessage(message: ServerMessage): void {
     pendingReply = null;
     appendMessage("victoria", `Sorry, something went wrong${message.message ? `: ${message.message}` : ""}.`);
     setStatus("connected");
+  } else if (message.type === "notice") {
+    appendNotice(message.title, message.text);
+  } else if (message.type === "timers") {
+    const now = Date.now();
+    timers = message.timers.map((t) => ({ name: t.name, endsAt: now + t.remaining_s * 1000, state: t.state }));
+    renderTimers();
+  } else if (message.type === "timer_ring") {
+    startRinging(message.names, message.text);
+  } else if (message.type === "timer_ring_stop") {
+    if (!timers.some((t) => t.state === "ringing" && !message.names.includes(t.name))) stopRinging();
   }
+}
+
+function appendNotice(title: string, text: string): void {
+  const entry = document.createElement("div");
+  entry.className = "notice";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  const body = document.createElement("p");
+  body.textContent = text;
+  entry.append(heading, body);
+  log.append(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+function formatRemaining(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}` : `${minutes}:${seconds}`;
+}
+
+function renderTimers(): void {
+  timerList.hidden = timers.length === 0;
+  timerList.replaceChildren(
+    ...timers.map((t) => {
+      const item = document.createElement("li");
+      item.className = t.state === "ringing" ? "ringing-timer" : "";
+      item.textContent = `${t.name} ${t.state === "ringing" ? "done" : formatRemaining(t.endsAt - Date.now())}`;
+      return item;
+    }),
+  );
+}
+
+function beep(): void {
+  // No chime file is served yet; a short two-tone beep stands in for it.
+  try {
+    audio ??= new AudioContext();
+    const start = audio.currentTime;
+    for (const [offset, frequency] of [[0, 880], [0.25, 660]] as const) {
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.2, start + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + offset + 0.22);
+      oscillator.connect(gain).connect(audio.destination);
+      oscillator.start(start + offset);
+      oscillator.stop(start + offset + 0.22);
+    }
+  } catch {
+    // Audio may be blocked until the page has had a user gesture; the banner still shows.
+  }
+}
+
+function startRinging(names: string[], text: string | null): void {
+  const label = names.length === 1 ? `Your ${names[0]} timer is done.` : `Your ${names.join(" and ")} timers are done.`;
+  ringingText.textContent = text ?? label;
+  ringing.hidden = false;
+  if (text) appendMessage("victoria", text);
+  if (chime === null) {
+    beep();
+    chime = window.setInterval(beep, 2000);
+  }
+}
+
+function stopRinging(): void {
+  ringing.hidden = true;
+  if (chime !== null) window.clearInterval(chime);
+  chime = null;
 }
 
 async function checkSession(): Promise<void> {
@@ -125,6 +218,13 @@ composer.addEventListener("submit", (event) => {
   socket.send(JSON.stringify({ type: "user_message", text }));
   messageInput.value = "";
 });
+
+ringingStop.addEventListener("click", () => {
+  socket?.send(JSON.stringify({ type: "timer_stop" }));
+  stopRinging();
+});
+
+window.setInterval(renderTimers, 1000);
 
 logoutButton.addEventListener("click", async () => {
   await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
