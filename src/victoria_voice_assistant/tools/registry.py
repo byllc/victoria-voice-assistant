@@ -17,6 +17,7 @@ from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 
 if TYPE_CHECKING:
+    from victoria_voice_assistant.agents.runner import AgentRunner
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class Services:
     http: httpx.AsyncClient | None = None
     search: SearchService | None = None
     reader: PageReader | None = None
+    agents: AgentRunner | None = None
 
 
 @dataclass
@@ -158,7 +160,7 @@ def _agent_label(name: str) -> str:
     return _title(name)
 
 
-def builtin_entries(agents: AgentsConfig) -> list[ToolEntry]:
+def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> list[ToolEntry]:
     names = [agent.name for agent in agents.agents]
     default = agents.default
     agent_param: dict[str, Any] = {"type": "string", "description": "agent name"}
@@ -174,8 +176,10 @@ def builtin_entries(agents: AgentsConfig) -> list[ToolEntry]:
             pending=PendingQuestion(kind="clarify", question=question, options=options),
         )
 
-    async def ask_agent(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+    async def ask_agent(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
         agent = str(arguments.get("agent") or default or "")
+        if services is not None and services.agents is not None:
+            return await services.agents.ask(agent, str(arguments.get("task") or ""), ctx.device)
         logger.info(
             "Agent requested before agents exist",
             extra={"event": "agent_requested", "agent": agent, "arguments": arguments},
@@ -420,7 +424,7 @@ def build_registry(
     log_stubs: bool = False,
 ) -> ToolRegistry:
     """Build the tools for one session. ``log_stubs`` warns about automatic stubs (startup and reload)."""
-    builtins = builtin_entries(agents)
+    builtins = builtin_entries(agents, services)
     entries: list[ToolEntry] = []
     for tool in tools.tools:
         if tool.name in BUILTIN_TOOLS:

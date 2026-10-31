@@ -5,7 +5,13 @@ import logging
 from typing import Any
 
 from fastapi import WebSocket
-from pipecat.frames.frames import LLMRunFrame, LLMSetToolsFrame, OutputTransportMessageUrgentFrame
+from pipecat.frames.frames import (
+    LLMMessagesAppendFrame,
+    LLMRunFrame,
+    LLMSetToolsFrame,
+    OutputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -21,6 +27,7 @@ from victoria_voice_assistant.chat.tools import SessionState, ToolRuntime
 from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker
 from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.tools.registry import Services, build_registry
+from victoria_voice_assistant.agents.tasks import TaskEvent
 from victoria_voice_assistant.tools.timers import TimerEvent
 
 logger = logging.getLogger(__name__)
@@ -100,7 +107,7 @@ async def run_chat_session(
         tools=runtime.tools_schema(),
     )
     pair = LLMContextAggregatorPair(context)
-    preprocessor = TurnPreprocessor(state, runtime, services.timers)
+    preprocessor = TurnPreprocessor(state, runtime, services.timers, agents=services.agents)
     runtime.on_settled = preprocessor.release_next
     pipeline = Pipeline(
         [
@@ -130,6 +137,19 @@ async def run_chat_session(
         elif event.kind == "ring_stopped":
             await session.send({"type": "timer_ring_stop", "names": event.names or []})
 
+    async def on_task_event(event: TaskEvent) -> None:
+        # An agent's result, delay notice or error, for this device: shown as an assistant reply
+        # and added to the conversation so follow-up questions can refer to it.
+        if event.kind != "say" or event.task.device != state.device or not event.text:
+            return
+        await task.queue_frames(
+            [
+                LLMMessagesAppendFrame(messages=[{"role": "assistant", "content": event.text}], run_llm=False),
+                OutputTransportMessageFrame(message={"type": "token", "text": event.text}),
+                OutputTransportMessageFrame(message={"type": "done"}),
+            ]
+        )
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client) -> None:
         await session.send({"type": "timers", "timers": services.timers.snapshot(state.device)})
@@ -142,11 +162,15 @@ async def run_chat_session(
         await task.cancel(reason="client disconnected")
 
     services.timers.add_listener(on_timer_event)
+    if services.agents is not None:
+        services.agents.tasks.add_listener(on_task_event)
     if hub is not None:
         hub.sessions.add(session)
     try:
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
         services.timers.remove_listener(on_timer_event)
+        if services.agents is not None:
+            services.agents.tasks.remove_listener(on_task_event)
         if hub is not None:
             hub.sessions.discard(session)

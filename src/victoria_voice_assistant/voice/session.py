@@ -47,6 +47,7 @@ from victoria_voice_assistant.chat.turns import TurnPreprocessor
 from victoria_voice_assistant.config.schema import AppConfig, SpeechConfig
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
+from victoria_voice_assistant.agents.tasks import TaskEvent
 from victoria_voice_assistant.tools.timers import TimerEvent
 from victoria_voice_assistant.voice.models import SpeechModels
 
@@ -240,7 +241,7 @@ async def run_voice_session(
         tools=runtime.tools_schema(),
     )
     pair = LLMContextAggregatorPair(context, user_params=user_params(config.models.speech))
-    preprocessor = VoiceTurnPreprocessor(state, runtime, services.timers, context=context)
+    preprocessor = VoiceTurnPreprocessor(state, runtime, services.timers, agents=services.agents, context=context)
     pipeline = Pipeline(
         [
             transport.input(),
@@ -274,6 +275,10 @@ async def run_voice_session(
         if event.device == state.device and event.kind == "ring" and event.text:
             await task.queue_frame(TTSSpeakFrame(event.text, append_to_context=False))
 
+    async def on_task_event(event: TaskEvent) -> None:
+        if event.kind == "say" and event.task.device == state.device and event.text:
+            await task.queue_frame(TTSSpeakFrame(event.text, append_to_context=True))
+
     connected = asyncio.Event()
 
     @transport.event_handler("on_client_connected")
@@ -295,6 +300,8 @@ async def run_voice_session(
 
     watchdog = asyncio.create_task(end_if_never_connected())
     services.timers.add_listener(on_timer_event)
+    if services.agents is not None:
+        services.agents.tasks.add_listener(on_task_event)
     if hub is not None:
         hub.sessions.add(session)
     try:
@@ -302,5 +309,7 @@ async def run_voice_session(
     finally:
         watchdog.cancel()
         services.timers.remove_listener(on_timer_event)
+        if services.agents is not None:
+            services.agents.tasks.remove_listener(on_task_event)
         if hub is not None:
             hub.sessions.discard(session)

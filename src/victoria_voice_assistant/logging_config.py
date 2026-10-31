@@ -44,6 +44,7 @@ LOGGED_FIELDS = (
     "cached",
     "choice",
     "confidence",
+    "task",
 )
 
 
