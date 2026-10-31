@@ -28,6 +28,7 @@ from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.agents.runner import AgentRunner
+from victoria_voice_assistant.agents.spend import SpendLog
 from victoria_voice_assistant.agents.tasks import TaskService
 from victoria_voice_assistant.search.service import PageReader, SearchService
 from victoria_voice_assistant.voice.monitor import monitor_loop_lag
@@ -105,7 +106,7 @@ def create_app(
         await services.timers.start()
         tasks = TaskService(database)
         tasks.start()
-        services.agents = AgentRunner(manager.current, services, tasks)
+        services.agents = AgentRunner(manager.current, services, tasks, SpendLog(database))
         hub = ChatHub()
         app.state.services = services
         app.state.chat_hub = hub

@@ -76,10 +76,10 @@ def _runner(config: AppConfig, reply=None, database: Path | None = None) -> tupl
     agent_runner = AgentRunner(config, services, tasks)
     services.agents = agent_runner
 
-    async def fake_model_agent(agent, task) -> AgentReply:
+    async def fake_call_model(agent, task, model, tools) -> AgentReply:
         return await reply(agent, task) if reply else AgentReply("Leek and potato soup.", 40, 8)
 
-    agent_runner._model_agent = fake_model_agent  # type: ignore[method-assign]
+    agent_runner._call_model = fake_call_model  # type: ignore[method-assign]
     return agent_runner, events
 
 

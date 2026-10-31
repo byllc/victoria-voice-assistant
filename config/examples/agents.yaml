@@ -8,3 +8,14 @@ agents:
     tools: []
     share_context: minimal
     mode: wait
+
+  - name: claude
+    aliases: [clod, cloud]      # common mis-transcriptions
+    kind: model
+    pool: claude                # the decider picks Haiku, Sonnet or Opus per request
+    system: You answer by voice for our household. Be brief and concrete. No lists or formatting.
+    tools: [weather, web_search, web_read]
+    search: builtin
+    share_context: minimal
+    mode: auto
+    wait_s: 8

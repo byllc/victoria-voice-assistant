@@ -7,6 +7,8 @@ from openai import APIConnectionError
 from pipecat.pipeline.llm_switcher import LLMSwitcher
 from pipecat.pipeline.service_switcher import ServiceSwitcherStrategyFailover
 from pipecat.processors.frame_processor import ErrorCategory
+from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.services.llm_service import LLMService
 from pipecat.services.openai.llm import OpenAILLMService
 
 from victoria_voice_assistant.config.schema import ModelsConfig
@@ -39,22 +41,33 @@ class ChatOpenAILLMService(OpenAILLMService):
         )
 
 
-def build_llm(role: str, models: ModelsConfig) -> ChatOpenAILLMService:
+def _settings_values(model: str, params: dict[str, Any], settings_class: Any) -> dict[str, Any]:
+    """Params Pipecat has a setting for go to its settings; the rest (e.g. reasoning_effort) go to the request body."""
+    known = {field.name for field in dataclasses.fields(settings_class)}
+    values: dict[str, Any] = {"model": model}
+    extra = {key: value for key, value in params.items() if key not in known}
+    values.update({key: value for key, value in params.items() if key in known})
+    if extra:
+        values["extra"] = extra
+    return values
+
+
+def build_llm(role: str, models: ModelsConfig) -> LLMService:
     model_config = models.models[role]
     server = models.servers[model_config.server]
-    if server.type != "openai":
-        raise ValueError(f"model {role!r}: only openai-type servers are supported in chat")
-    # Params Pipecat has no setting for (e.g. reasoning_effort) go to the request body as-is.
-    known = {field.name for field in dataclasses.fields(OpenAILLMService.Settings)}
-    settings_values: dict[str, Any] = {"model": model_config.model}
-    extra: dict[str, Any] = {}
-    for key, value in model_config.params.items():
-        if key in known:
-            settings_values[key] = value
-        else:
-            extra[key] = value
-    if extra:
-        settings_values["extra"] = extra
+    if server.type == "anthropic":
+        if not server.api_key:
+            raise ValueError(f"model {role!r}: the anthropic server needs an api_key (ANTHROPIC_API_KEY)")
+        # Pipecat sends each Claude model's lowest documented thinking setting unless params say otherwise.
+        return AnthropicLLMService(
+            name=role,
+            api_key=server.api_key,
+            settings=AnthropicLLMService.Settings(
+                **_settings_values(model_config.model, model_config.params, AnthropicLLMService.Settings)
+            ),
+            retry_timeout_secs=model_config.timeout_s,
+        )
+    settings_values = _settings_values(model_config.model, model_config.params, OpenAILLMService.Settings)
     return ChatOpenAILLMService(
         name=role,
         settings=OpenAILLMService.Settings(**settings_values),

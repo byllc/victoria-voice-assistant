@@ -45,6 +45,7 @@ LOGGED_FIELDS = (
     "choice",
     "confidence",
     "task",
+    "cost_usd",
 )
 
 

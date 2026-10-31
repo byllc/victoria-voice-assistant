@@ -84,7 +84,7 @@ def test_database_migrations_are_idempotent(tmp_path: Path) -> None:
             "SELECT version FROM schema_migrations"
         ).fetchall()
     assert {"service_state", "timers"} <= tables
-    assert sorted(migrations) == [("0001_initial.sql",), ("0002_timers.sql",), ("0003_tasks.sql",)]
+    assert sorted(migrations) == [("0001_initial.sql",), ("0002_timers.sql",), ("0003_tasks.sql",), ("0004_spend.sql",)]
 
 
 def test_launch_agent_template_renders_a_valid_plist(tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ from victoria_voice_assistant.config.schema import (
 )
 
 T = TypeVar("T", bound=BaseModel)
-ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")  # ${NAME} or ${NAME:-default}
 
 
 class ConfigError(ValueError):
@@ -63,8 +63,10 @@ def substitute_environment(value: Any, filename: str, field: str = "") -> Any:
         return value
 
     def replace(match: re.Match[str]) -> str:
-        name = match.group(1)
+        name, default = match.group(1), match.group(2)
         result = os.environ.get(name)
+        if not result and default is not None:
+            return default  # optional, e.g. a cloud provider's key that may not be set up yet
         if not result:
             raise ConfigError(
                 filename,
