@@ -18,6 +18,7 @@ from victoria_voice_assistant.tools.weather import WeatherService
 
 if TYPE_CHECKING:
     from victoria_voice_assistant.agents.runner import AgentRunner
+    from victoria_voice_assistant.health import HealthMonitor
     from victoria_voice_assistant.notifications.service import NotificationService
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
@@ -39,6 +40,8 @@ class ToolContext:
     """Per-call information a handler may need."""
 
     device: str = "web"
+    # Reports a step to the dashboard, when a task is running the tool (an agent's tool loop).
+    progress: Callable[[str], None] | None = None
 
 
 ToolHandler = Callable[[dict[str, Any], ToolContext], Awaitable[ToolOutcome]]
@@ -55,6 +58,7 @@ class Services:
     reader: PageReader | None = None
     agents: AgentRunner | None = None
     notifications: NotificationService | None = None
+    health: HealthMonitor | None = None
 
 
 @dataclass

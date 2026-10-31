@@ -24,6 +24,9 @@
         <header>
           <h1>Victoria</h1>
           <span id="status" class="status">connecting…</span>
+          <button id="tasks-toggle" type="button" aria-expanded="false" aria-controls="dashboard">
+            Tasks <span id="tasks-badge" class="badge active-badge" hidden>0</span>
+          </button>
           <button id="inbox-toggle" type="button" aria-expanded="false" aria-controls="inbox">
             Notifications <span id="badge" class="badge" hidden>0</span>
           </button>
@@ -38,6 +41,12 @@
           <button id="talk" type="button" hidden>Hold to talk</button>
           <span id="voice-state" class="status"></span>
           <audio id="bot-audio" autoplay></audio>
+        </div>
+        <div id="dashboard" class="dashboard" hidden>
+          <p id="dash-summary" class="status"></p>
+          <ul id="dash-health" class="health" aria-label="Service health"></ul>
+          <input id="dash-search" type="search" placeholder="Search tasks…" aria-label="Search tasks" />
+          <ul id="dash-tasks" class="tasks"></ul>
         </div>
         <div id="inbox" class="inbox" hidden>
           <div class="inbox-head">

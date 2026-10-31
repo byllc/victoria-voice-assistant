@@ -30,6 +30,7 @@ from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.agents.runner import AgentRunner
 from victoria_voice_assistant.agents.spend import SpendLog
 from victoria_voice_assistant.agents.tasks import TaskService
+from victoria_voice_assistant.health import HealthMonitor
 from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.search.service import PageReader, SearchService
 from victoria_voice_assistant.voice.monitor import monitor_loop_lag
@@ -110,6 +111,9 @@ def create_app(
         tasks = TaskService(database)
         tasks.start()
         services.agents = AgentRunner(manager.current, services, tasks, SpendLog(database))
+        services.health = HealthMonitor(manager.current)
+        if os.environ.get("ASSISTANT_HEALTH", "1") != "0":
+            services.health.start()
         hub = ChatHub()
         app.state.services = services
         app.state.chat_hub = hub
@@ -121,6 +125,7 @@ def create_app(
             services.reader.update_settings(config.tools.search.read if config.tools.search else None)
             services.agents.update_config(config)
             services.notifications.update_settings(config.tools.notifications)
+            services.health.update_config(config)
             _log_tool_status(config, services)
             hub.reload(config, services)
 
@@ -171,6 +176,7 @@ def create_app(
             await app.state.webrtc.close()
             await services.timers.close()
             await services.notifications.close()
+            await services.health.close()
             await services.reader.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 

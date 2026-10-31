@@ -14,6 +14,39 @@ type NotificationInfo = {
   created_at: number;
 };
 
+type TaskInfo = {
+  id: string;
+  agent: string;
+  label: string;
+  model: string | null;
+  device: string;
+  request: string;
+  state: "queued" | "running" | "waiting" | "finished" | "failed" | "cancelled" | "timed_out";
+  question: string | null;
+  result: string | null;
+  error: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  created_at: number;
+  updated_at: number;
+  progress: { at: number; text: string }[];
+  cancel_note: string | null;
+  resend: { agents: string[]; models: string[] };
+};
+
+type Health = { name: string; ok: boolean | null; detail: string };
+
+type Dashboard = {
+  tasks: TaskInfo[];
+  summary: {
+    running: number;
+    waiting: number;
+    spend: { pool: string; used_usd: number; budget_usd: number }[];
+    health: Health[];
+  };
+};
+
 type ServerMessage =
   | { type: "token"; text: string }
   | { type: "done" }
@@ -23,6 +56,7 @@ type ServerMessage =
   | { type: "timer_ring"; names: string[]; text: string | null }
   | { type: "timer_ring_stop"; names: string[] }
   | { type: "notifications"; items: NotificationInfo[] }
+  | ({ type: "dashboard" } & Dashboard)
   | { type: "announce"; text: string; sound: boolean; spoken: boolean; items: NotificationInfo[] };
 
 const loginSection = required<HTMLElement>("login");
@@ -51,6 +85,18 @@ const inbox = required<HTMLElement>("inbox");
 const inboxList = required<HTMLUListElement>("inbox-list");
 const inboxEmpty = required<HTMLElement>("inbox-empty");
 const inboxClear = required<HTMLButtonElement>("inbox-clear");
+const tasksToggle = required<HTMLButtonElement>("tasks-toggle");
+const tasksBadge = required<HTMLElement>("tasks-badge");
+const dashboardView = required<HTMLElement>("dashboard");
+const dashSummary = required<HTMLElement>("dash-summary");
+const dashHealth = required<HTMLUListElement>("dash-health");
+const dashSearch = required<HTMLInputElement>("dash-search");
+const dashTasks = required<HTMLUListElement>("dash-tasks");
+let board: Dashboard | null = null;
+// Task cards the user expanded, kept open across live updates.
+const openDetails = new Set<string>();
+// Half-typed answers, by task, kept across live updates (the dashboard is redrawn on every change).
+const answerDrafts = new Map<string, string>();
 
 let socket: WebSocket | null = null;
 let pendingReply: HTMLElement | null = null;
@@ -142,6 +188,9 @@ function handleServerMessage(message: ServerMessage): void {
     renderTimers();
     // The server is the source of truth: nothing ringing there means stop here too.
     if (!timers.some((t) => t.state === "ringing")) stopRinging();
+  } else if (message.type === "dashboard") {
+    board = { tasks: message.tasks, summary: message.summary };
+    renderDashboard();
   } else if (message.type === "notifications") {
     renderInbox(message.items);
   } else if (message.type === "announce") {
@@ -180,6 +229,10 @@ function answerForm(item: NotificationInfo): HTMLFormElement {
   input.type = "text";
   input.placeholder = `Answer ${item.source}…`;
   input.required = true;
+  const draftKey = item.task_id ?? "";
+  input.dataset.task = draftKey;
+  input.value = answerDrafts.get(draftKey) ?? "";
+  input.addEventListener("input", () => answerDrafts.set(draftKey, input.value));
   const send = document.createElement("button");
   send.type = "submit";
   send.textContent = "Answer";
@@ -189,6 +242,7 @@ function answerForm(item: NotificationInfo): HTMLFormElement {
     const text = input.value.trim();
     if (!text || !socket) return;
     socket.send(JSON.stringify({ type: "agent_answer", task_id: item.task_id, text }));
+    answerDrafts.delete(draftKey);
     appendMessage("you", text);
     form.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button").forEach((el) => (el.disabled = true));
   });
@@ -240,6 +294,154 @@ function renderInbox(items: NotificationInfo[]): void {
       return entry;
     }),
   );
+}
+
+const STATE_LABELS: Record<TaskInfo["state"], string> = {
+  queued: "Queued",
+  running: "Running",
+  waiting: "Waiting for an answer",
+  finished: "Finished",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  timed_out: "Timed out",
+};
+
+function sendTaskAction(action: "cancel" | "retry" | "resend" | "open", task: TaskInfo, extra: Record<string, string> = {}): void {
+  socket?.send(JSON.stringify({ type: "task_action", action, task_id: task.id, ...extra }));
+}
+
+function duration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text) node.textContent = text;
+  return node;
+}
+
+function button(text: string, onClick: () => void): HTMLButtonElement {
+  const node = element("button", "", text);
+  node.type = "button";
+  node.addEventListener("click", onClick);
+  return node;
+}
+
+// A <details> whose open state survives re-rendering.
+function keptDetails(key: string, summaryText: string, body: HTMLElement, onOpen?: () => void): HTMLDetailsElement {
+  const details = element("details");
+  details.open = openDetails.has(key);
+  details.append(element("summary", "", summaryText), body);
+  details.addEventListener("toggle", () => {
+    if (details.open) {
+      openDetails.add(key);
+      onOpen?.();
+    } else openDetails.delete(key);
+  });
+  return details;
+}
+
+function taskCard(task: TaskInfo): HTMLLIElement {
+  const card = element("li", `task task-${task.state}`);
+  const head = element("div", "task-head");
+  head.append(element("span", `pill pill-${task.state}`, STATE_LABELS[task.state]), element("strong", "", task.label));
+  const started = new Date(task.created_at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const end = task.state === "queued" || task.state === "running" || task.state === "waiting" ? Date.now() / 1000 : task.updated_at;
+  const meta = element("span", "status task-time", `${started} · ${duration(end - task.created_at)}`);
+  meta.dataset.start = String(task.created_at);
+  meta.dataset.live = String(end !== task.updated_at);
+  meta.dataset.started = started;
+  head.append(meta);
+  card.append(head, element("p", "task-request", `${task.request} — from ${task.device}`));
+
+  const latest = task.progress.at(-1);
+  if (latest) {
+    const history = element("ol", "progress");
+    for (const step of task.progress) {
+      const when = new Date(step.at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+      history.append(element("li", "", `${when} ${step.text}`));
+    }
+    card.append(task.progress.length > 1 ? keptDetails(`progress-${task.id}`, latest.text, history) : element("p", "status", latest.text));
+  }
+  const tokens = task.input_tokens + task.output_tokens;
+  if (tokens) {
+    const cost = task.cost_usd > 0 ? ` · $${task.cost_usd.toFixed(4)}` : "";
+    card.append(element("p", "status", `${tokens.toLocaleString()} tokens${cost}`));
+  }
+  if (task.error && task.state !== "finished") card.append(element("p", "error", task.error));
+  if (task.result) {
+    card.append(keptDetails(`result-${task.id}`, "Open result", element("p", "task-result", task.result), () => sendTaskAction("open", task)));
+  }
+
+  const actions = element("div", "task-actions");
+  if (task.state === "waiting" && task.question) {
+    card.append(element("p", "task-question", `${task.agent} asks: ${task.question}`));
+    card.append(answerForm({ source: task.agent, task_id: task.id } as NotificationInfo));
+  }
+  if (task.state === "queued" || task.state === "running" || task.state === "waiting") {
+    actions.append(button("Cancel", () => sendTaskAction("cancel", task)));
+    if (task.cancel_note) actions.append(element("span", "status", task.cancel_note));
+  } else {
+    if (task.state !== "finished") actions.append(button("Retry", () => sendTaskAction("retry", task)));
+    const targets = [
+      ...task.resend.models.map((model) => ({ label: `${task.agent} on ${model}`, extra: { model } })),
+      ...task.resend.agents.map((agent) => ({ label: agent, extra: { agent } })),
+    ];
+    if (targets.length) {
+      const select = element("select");
+      select.setAttribute("aria-label", "Re-send to");
+      select.append(new Option("Re-send to…", ""));
+      targets.forEach((target, index) => select.append(new Option(target.label, String(index))));
+      select.addEventListener("change", () => {
+        const target = targets[Number(select.value)];
+        if (target) sendTaskAction("resend", task, target.extra);
+        select.value = "";
+      });
+      actions.append(select);
+    }
+  }
+  card.append(actions);
+  return card;
+}
+
+function renderDashboard(): void {
+  if (!board) return;
+  const { summary } = board;
+  const active = summary.running + summary.waiting;
+  tasksBadge.hidden = active === 0;
+  tasksBadge.textContent = String(active);
+  const spend = summary.spend.map((s) => `${s.pool} $${s.used_usd.toFixed(2)} of $${s.budget_usd.toFixed(0)} this month`);
+  dashSummary.textContent = [`${summary.running} running`, `${summary.waiting} waiting`, ...spend].join(" · ");
+  dashHealth.replaceChildren(
+    ...summary.health.map((h) => {
+      const chip = element("li", `chip ${h.ok === true ? "ok" : h.ok === false ? "down" : "unknown"}`, h.name);
+      chip.title = h.detail;
+      return chip;
+    }),
+  );
+  const query = dashSearch.value.trim().toLowerCase();
+  const shown = board.tasks.filter((t) => !query || `${t.request} ${t.agent} ${t.result ?? ""}`.toLowerCase().includes(query));
+  // Keep typing where it was if an answer box had focus.
+  const focused = document.activeElement instanceof HTMLInputElement && dashTasks.contains(document.activeElement)
+    ? document.activeElement.dataset.task
+    : undefined;
+  dashTasks.replaceChildren(...(shown.length ? shown.map(taskCard) : [element("li", "status", query ? "No matching tasks." : "No tasks yet.")]));
+  if (focused !== undefined) {
+    const input = dashTasks.querySelector<HTMLInputElement>(`input[data-task="${CSS.escape(focused)}"]`);
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+// Running tasks' elapsed times tick without waiting for the server.
+function tickElapsed(): void {
+  for (const meta of dashTasks.querySelectorAll<HTMLElement>(".task-time[data-live='true']")) {
+    meta.textContent = `${meta.dataset.started} · ${duration(Date.now() / 1000 - Number(meta.dataset.start))}`;
+  }
 }
 
 function formatRemaining(ms: number): string {
@@ -419,6 +621,12 @@ inboxToggle.addEventListener("click", () => {
   inboxToggle.setAttribute("aria-expanded", String(!inbox.hidden));
 });
 inboxClear.addEventListener("click", () => acknowledge("all"));
+tasksToggle.addEventListener("click", () => {
+  dashboardView.hidden = !dashboardView.hidden;
+  tasksToggle.setAttribute("aria-expanded", String(!dashboardView.hidden));
+});
+dashSearch.addEventListener("input", renderDashboard);
+window.setInterval(tickElapsed, 1000);
 
 logoutButton.addEventListener("click", async () => {
   if (voice.connected) await voice.stop();

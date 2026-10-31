@@ -95,6 +95,8 @@ class TurnPreprocessor(FrameProcessor):
                 unread = self.notifications.unread(self.state.device)
                 wanted = message.get("ids")
                 self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
+            elif message.get("type") == "task_action" and self.agents is not None:
+                await self._task_action(message)
             elif message.get("type") == "agent_answer" and self.agents is not None:
                 # Answered from the notification on the screen.
                 outcome = self.agents.answer(str(message.get("task_id") or ""), str(message.get("text") or ""))
@@ -186,6 +188,25 @@ class TurnPreprocessor(FrameProcessor):
         )
         await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
         await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
+
+    async def _task_action(self, message: dict) -> None:
+        """The dashboard's buttons: cancel, retry, re-send (another agent or a stronger model), open."""
+        assert self.agents is not None
+        task_id, action = message["task_id"], message["action"]
+        task = self.agents.tasks.get(task_id)
+        if task is None:
+            return
+        if action == "cancel":
+            stopped = self.agents.tasks.cancel(task_id)
+            await self._deliver_note(f"Cancelled {task.agent.title()}'s task." if stopped else "That task isn't running.")
+        elif action in ("retry", "resend"):
+            outcome = await self.agents.retry(task_id, agent=message.get("agent"), model=message.get("model"))
+            await self._deliver_note(outcome.speak or "Okay.")
+            if outcome.chat and self.runtime is not None:  # setup steps for an agent that isn't set up
+                await self.runtime.notify({"type": "notice", "title": outcome.chat_title or "Note", "text": outcome.chat})
+        elif action == "open" and self.notifications is not None:
+            # The full result is on the screen now: its notification counts as read.
+            self.notifications.acknowledge([i for i in self.notifications.unread() if i.task_id == task_id])
 
     async def _deliver_note(self, reply: str) -> None:
         """A reply to something done on the screen (no user turn to pair it with)."""

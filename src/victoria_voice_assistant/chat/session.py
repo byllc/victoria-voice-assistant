@@ -28,10 +28,14 @@ from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker
 from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.agents.tasks import TaskEvent
+from victoria_voice_assistant.dashboard import dashboard
 from victoria_voice_assistant.notifications.service import Announcement, Notification
 from victoria_voice_assistant.tools.timers import TimerEvent
 
 logger = logging.getLogger(__name__)
+
+# Task changes arriving within this long reach the dashboard as one update.
+DASHBOARD_DEBOUNCE_S = 0.3
 
 
 class ChatHub:
@@ -206,7 +210,32 @@ async def run_chat_session(
         elif event.kind == "ring_stopped":
             await session.send({"type": "timer_ring_stop", "names": event.names or []})
 
+    dashboard_due: list[asyncio.TimerHandle] = []
+
+    def push_dashboard() -> None:
+        """Send the dashboard soon; changes arriving together are sent once."""
+        if dashboard_due:
+            return
+        loop = asyncio.get_running_loop()
+
+        async def send() -> None:
+            dashboard_due.clear()
+            await session.send(dashboard(services))
+
+        def fire() -> None:
+            pending = loop.create_task(send())
+            session._tasks.add(pending)
+            pending.add_done_callback(session._tasks.discard)
+
+        dashboard_due.append(loop.call_later(DASHBOARD_DEBOUNCE_S, fire))
+
+    async def on_health(_results) -> None:
+        push_dashboard()
+
     async def on_task_event(event: TaskEvent) -> None:
+        if event.kind == "changed":
+            push_dashboard()  # every task, from any device
+            return
         # An agent's result, delay notice or error, for this device: shown as an assistant reply
         # and added to the conversation so follow-up questions can refer to it.
         if event.kind != "say" or event.task.device != state.device or not event.text:
@@ -223,6 +252,7 @@ async def run_chat_session(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client) -> None:
         await session.send({"type": "timers", "timers": services.timers.snapshot(state.device)})
+        await session.send(dashboard(services))
         ringing = [timer.name for timer in services.timers.ringing(state.device)]
         if ringing:
             await session.send({"type": "timer_ring", "names": ringing, "text": None})
@@ -237,11 +267,17 @@ async def run_chat_session(
         services.agents.tasks.add_listener(on_task_event)
     if services.notifications is not None:
         services.notifications.attach(outlet)
+    if services.health is not None:
+        services.health.add_listener(on_health)
     if hub is not None:
         hub.sessions.add(session)
     try:
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
+        for handle in dashboard_due:
+            handle.cancel()
+        if services.health is not None:
+            services.health.remove_listener(on_health)
         if services.notifications is not None:
             services.notifications.detach(outlet)
         services.timers.remove_listener(on_timer_event)

@@ -111,12 +111,13 @@ class AgentRunner:
             None,
         )
 
-    async def ask(self, name: str, request: str, device: str) -> ToolOutcome:
+    async def ask(self, name: str, request: str, device: str, model: str | None = None) -> ToolOutcome:
+        """Hand `request` to an agent. `model` picks a pool member directly (the dashboard's re-send)."""
         agent = self.find(name)
         if agent is None:
             return ToolOutcome(result={"error": f"no agent called {name!r}"}, speak=f"I don't know an agent called {name}.")
         waiting = self.tasks.waiting(agent.name)
-        if waiting:
+        if waiting and model is None:
             # "Tell Hermes the blue folder": the agent asked something, so this is the answer.
             return self.answer(waiting[0].id, request)
         supported = (agent.kind == "model" and (agent.model or agent.pool)) or (agent.kind == "harness" and agent.model)
@@ -140,6 +141,8 @@ class AgentRunner:
             if self.chooser.over_budget(agent.pool):
                 return self._budget_stop(agent, request)
             override, request = split_override(self.config.models.pools[agent.pool], request)
+            if model is not None:
+                override = model
         task = self.tasks.create(agent.name, device, request, agent.mode, model=agent.model or override)
         job = asyncio.create_task(self._run(agent, task, override), name=f"agent-{task.id}")
         self.tasks.attach(task, job)
@@ -147,6 +150,49 @@ class AgentRunner:
         if agent.mode == "background":
             ack += " I'll let you know when it's done."
         return ToolOutcome(result={"task_id": task.id, "agent": agent.name, "mode": agent.mode}, speak=ack)
+
+    async def retry(self, task_id: str, agent: str | None = None, model: str | None = None) -> ToolOutcome:
+        """Run an earlier task's request again: as it was, with another agent, or on another pool member."""
+        task = self.tasks.get(task_id)
+        if task is None:
+            return ToolOutcome(result={"error": "no such task"}, speak="I can't find that task.")
+        if model is not None:
+            target = self.find(agent or task.agent)
+            pool = self.config.models.pools.get(target.pool) if target and target.pool else None
+            if pool is None or model not in [member.model for member in pool.members]:
+                return ToolOutcome(result={"error": f"{model!r} isn't in that agent's pool"}, speak="That model isn't available.")
+        return await self.ask(agent or task.agent, task.request, task.device, model=model)
+
+    def resend_choices(self, task: Task) -> dict[str, list[str]]:
+        """Where the dashboard can re-send a task: other agents, and stronger members of its pool."""
+        agents = [a.name for a in self.config.agents.agents if a.name != task.agent and a.kind in ("model", "harness")]
+        agent = self.find(task.agent)
+        stronger: list[str] = []
+        if agent is not None and agent.pool is not None:
+            members = [member.model for member in self.config.models.pools[agent.pool].members]
+            if task.model in members:
+                stronger = members[members.index(task.model) + 1 :]
+        return {"agents": agents, "models": stronger}
+
+    def describe(self, task: Task) -> str:
+        """ "Claude (Sonnet)", or just "Hermes" for an agent with one model."""
+        agent = self.find(task.agent)
+        name = label(task.agent)
+        if agent is not None and agent.pool is not None and task.model:
+            return f"{name} ({self._member_label(agent, task.model)})"
+        return name
+
+    @staticmethod
+    def _member_label(agent: AgentConfig, model: str) -> str:
+        """ "claude-sonnet" in the claude pool -> "Sonnet"."""
+        return label(model.removeprefix(f"{agent.pool}-"))
+
+    def cancel_note(self, task: Task) -> str | None:
+        """Architecture §10.2: what cancelling can and can't stop."""
+        agent = self.find(task.agent)
+        if agent is not None and agent.kind == "harness":
+            return f"Stops the reply; {label(task.agent)} may finish work it already started."
+        return None
 
     def answer(self, task_id: str, text: str) -> ToolOutcome:
         task = self.tasks.get(task_id)
@@ -161,6 +207,7 @@ class AgentRunner:
         name = label(agent.name)
         self._asked.add(task.id)
         future = self.tasks.ask(task, question)
+        self.tasks.progress(task, f"Asked: {question}")
         if notifications is not None:
             notifications.post(
                 source=agent.name,
@@ -183,6 +230,10 @@ class AgentRunner:
         except TimeoutError:
             logger.info("Agent question went unanswered", extra={"event": "agent_question_timeout", "task": task.id})
         finally:
+            if answer is not None:
+                self.tasks.progress(task, f"Your answer: {answer}")
+            elif not future.cancelled():
+                self.tasks.progress(task, "No answer")
             self.tasks.resume(task)
             if notifications is not None:
                 notifications.close_question(task.id, answered=answer is not None)
@@ -230,14 +281,17 @@ class AgentRunner:
                 self._limits[task.id] = limit
                 reply = await self._model_agent(agent, task, override)
         except asyncio.CancelledError:
+            self.tasks.progress(task, "Cancelled")
             self.tasks.update(task, state="cancelled")
             raise
         except TimeoutError:
+            self.tasks.progress(task, "Stopped: took too long")
             self.tasks.update(task, state="timed_out", error=f"no result after {AGENT_TIMEOUT_S:.0f} s")
             self._report(agent, task, "error", f"{name} took too long, so I stopped it.", delayed=True)
             return
         except Exception as exc:  # noqa: BLE001 - any agent failure is reported, never raised into the session
             logger.warning("Agent failed", extra={"event": "agent_failed", "agent": agent.name, "reason": str(exc)})
+            self.tasks.progress(task, f"Failed: {str(exc) or type(exc).__name__}")
             self.tasks.update(task, state="failed", error=str(exc) or type(exc).__name__)
             unreachable = "connection" in str(exc).lower()
             text = f"I can't reach {name} right now." if unreachable else f"{name} couldn't finish that."
@@ -249,6 +303,7 @@ class AgentRunner:
                 notice.cancel()
         delayed = self._delayed(agent, loop.time() - started) or task.id in self._asked
         self._asked.discard(task.id)
+        self.tasks.progress(task, "Finished")
         self.tasks.update(task, state="finished", result=reply.text)
         spoken = await spoken_version(reply.text, self._summarizer())
         if delayed:
@@ -307,6 +362,11 @@ class AgentRunner:
             assert agent.model is not None
             return await self._attempt(agent, task, agent.model, reason="fixed")
         choice = await self.chooser.choose(agent.pool, task.request, override)
+        if choice.model is not None:
+            why = {"decider": f"picked by the decider ({choice.confidence:.0%} sure)" if choice.confidence else "picked by the decider",
+                   "override": "asked for by name", "low_confidence": "the default (decider unsure)",
+                   "budget_downgrade": "the default (budget nearly used)"}.get(choice.reason, choice.reason)
+            self.tasks.progress(task, f"{self._member_label(agent, choice.model)}: {why}")
         if choice.model is None:
             raise AgentError("this month's budget is used up")
         pool = self.config.models.pools[agent.pool]
@@ -329,6 +389,7 @@ class AgentRunner:
                 "Escalating to the next model",
                 extra={"event": "agent_escalated", "agent": agent.name, "model": step_up, "reason": str(failure)},
             )
+            self.tasks.progress(task, f"Trying {self._member_label(agent, step_up)} ({failure})")
             model, reason, choice, escalated = step_up, "escalation", None, True
 
     async def _harness(self, agent: AgentConfig, task: Task, model: str) -> AgentReply:
@@ -345,6 +406,7 @@ class AgentRunner:
             answer = await self._ask_user(agent, task, question)
             if answer is None:
                 break  # nobody answered: the reply so far is the result, with no further call (decisions log)
+            self.tasks.progress(task, f"Sent your answer to {label(agent.name)}")
             history = [*(history or [{"role": "user", "content": task.request}]),
                        {"role": "assistant", "content": reply.text}, {"role": "user", "content": answer}]
         return AgentReply(reply.text, input_tokens, output_tokens)
@@ -421,6 +483,5 @@ class AgentRunner:
         self, agent: AgentConfig, task: Task, model: str, tools: list, history: list[dict[str, str]] | None = None
     ) -> AgentReply:
         llm = build_llm(model, self.config.models)
-        return await run_model_agent(
-            llm, agent.system, task.request, tools, ToolContext(device=task.device), history=history
-        )
+        context = ToolContext(device=task.device, progress=lambda text: self.tasks.progress(task, text))
+        return await run_model_agent(llm, agent.system, task.request, tools, context, history=history)

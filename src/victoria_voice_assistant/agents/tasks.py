@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
 
@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 TaskState = Literal["queued", "running", "waiting", "finished", "failed", "cancelled", "timed_out"]
 ACTIVE_STATES = ("queued", "running", "waiting")
+# Finished tasks loaded at startup for the dashboard's history.
+HISTORY_SIZE = 200
 
 
 @dataclass
@@ -34,13 +36,17 @@ class Task:
     question: str | None = None  # what the agent is waiting for an answer to (state `waiting`)
     created_at: float = 0.0
     updated_at: float = 0.0
+    # Progress events, oldest first: (time, text). Kept in their own table.
+    progress: list[tuple[float, str]] = field(default_factory=list)
 
     @property
     def active(self) -> bool:
         return self.state in ACTIVE_STATES
 
     def snapshot(self) -> dict[str, object]:
-        return asdict(self)
+        row = asdict(self)
+        row.pop("progress")
+        return row
 
 
 @dataclass
@@ -82,6 +88,19 @@ class TaskService:
             ).rowcount
         if stale:
             logger.warning("Tasks interrupted by a restart", extra={"event": "tasks_interrupted", "count": stale})
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (HISTORY_SIZE,)).fetchall()
+            for row in rows:
+                task = Task(**dict(row))
+                self._tasks[task.id] = task
+            if self._tasks:
+                marks = ", ".join("?" * len(self._tasks))
+                for task_id, at, text in connection.execute(
+                    f"SELECT task_id, at, text FROM task_progress WHERE task_id IN ({marks}) ORDER BY at",
+                    tuple(self._tasks),
+                ):
+                    self._tasks[task_id].progress.append((at, text))
 
     def add_listener(self, listener: TaskListener) -> None:
         self._listeners.append(listener)
@@ -131,6 +150,15 @@ class TaskService:
                     "duration_s": round(task.updated_at - task.created_at, 1),
                 },
             )
+        self._emit(TaskEvent("changed", task))
+
+    def progress(self, task: Task, text: str) -> None:
+        """A step worth showing on the dashboard ("Using web_search", "Waiting for your answer")."""
+        at = self._clock()
+        task.progress.append((at, text))
+        if self.database_path is not None:
+            with self._connect() as connection:
+                connection.execute("INSERT INTO task_progress (task_id, at, text) VALUES (?, ?, ?)", (task.id, at, text))
         self._emit(TaskEvent("changed", task))
 
     def say(self, task: Task, text: str, full: str | None = None) -> None:

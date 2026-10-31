@@ -84,6 +84,8 @@ class _Collector(FrameProcessor):
 
 def _tool_handler(entry: ToolEntry, context: ToolContext):
     async def handler(params: FunctionCallParams) -> None:
+        if context.progress is not None and entry.name != "ask_user":
+            context.progress(f"Using {entry.name}")
         outcome = await entry.handler(dict(params.arguments), context)
         result: Any = outcome.result if outcome.result is not None else {"ok": True}
         if outcome.speak and outcome.result is None:
