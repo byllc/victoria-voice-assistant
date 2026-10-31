@@ -8,7 +8,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
+from pipecat.transports.smallwebrtc.request_handler import (
+    IceCandidate,
+    SmallWebRTCPatchRequest,
+    SmallWebRTCRequest,
+    SmallWebRTCRequestHandler,
+)
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from victoria_voice_assistant.chat.pinning import pin_models
@@ -21,6 +27,7 @@ from victoria_voice_assistant.storage.db import default_database_path, migrate
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
+from victoria_voice_assistant.voice.monitor import monitor_loop_lag
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +107,18 @@ def create_app(
 
         manager.add_listener(on_reload)
         _log_tool_status(manager.current, services)
+
+        background = [asyncio.create_task(monitor_loop_lag(), name="loop-lag")]
+        app.state.speech = None
+        app.state.voice_tasks = set()
+        app.state.webrtc = SmallWebRTCRequestHandler()  # no ICE servers: LAN only, nothing leaves the house
+        if os.environ.get("ASSISTANT_SPEECH", "1") != "0":
+            # Imported here so text-only runs (and tests) don't load MLX and ONNX.
+            from victoria_voice_assistant.voice.models import SpeechModels
+
+            speech = SpeechModels(manager.current.models.speech)
+            app.state.speech = speech
+            background.append(asyncio.create_task(speech.load(), name="speech-load"))
         watcher = asyncio.create_task(manager.watch(), name="config-watcher")
         pinning: asyncio.Task | None = None
         if os.environ.get("ASSISTANT_PIN_MODELS", "1") != "0":
@@ -126,18 +145,64 @@ def create_app(
                 pass
             if pinning is not None:
                 pinning.cancel()
+            for task in [*background, *app.state.voice_tasks]:
+                task.cancel()
+            await app.state.webrtc.close()
             await services.timers.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 
     app = FastAPI(title="Victoria Voice Assistant", lifespan=lifespan)
 
     @app.get("/health")
-    async def health(request: Request) -> dict[str, str | int]:
+    async def health(request: Request) -> dict[str, str | int | None]:
         manager: ConfigManager = request.app.state.config_manager
+        speech = request.app.state.speech
         return {
             "status": "ok",
             "config_revision": manager.revision,
+            "speech": "off" if speech is None else "ready" if speech.ready.is_set() else speech.error or "loading",
         }
+
+    @app.post("/api/offer")
+    async def offer(request: Request) -> dict[str, str]:
+        """WebRTC signaling for browser voice (proxied by the web interface; audio goes direct)."""
+        speech = request.app.state.speech
+        if speech is None or not speech.ready.is_set():
+            raise HTTPException(status_code=503, detail=speech.error if speech and speech.error else "voice is not ready")
+        manager: ConfigManager = request.app.state.config_manager
+        body = await request.json()
+        body.pop("request_data", None)
+        body.pop("requestData", None)
+        sdp = body.get("sdp")
+        is_renegotiation = bool(body.get("pc_id"))
+        if not isinstance(sdp, str) or not sdp.startswith("v=0") or ("m=audio" not in sdp and not is_renegotiation):
+            raise HTTPException(status_code=400, detail="expected an SDP offer with an audio track")
+
+        async def start_session(connection) -> None:
+            from victoria_voice_assistant.voice.session import run_voice_session
+
+            task = asyncio.create_task(
+                run_voice_session(connection, manager.current, request.app.state.services, speech, request.app.state.chat_hub),
+                name=f"voice-{connection.pc_id}",
+            )
+            request.app.state.voice_tasks.add(task)
+            task.add_done_callback(request.app.state.voice_tasks.discard)
+
+        answer = await request.app.state.webrtc.handle_web_request(SmallWebRTCRequest.from_dict(body), start_session)
+        if answer is None:
+            raise HTTPException(status_code=500, detail="no SDP answer")
+        return answer
+
+    @app.patch("/api/offer")
+    async def offer_candidates(request: Request) -> dict[str, str]:
+        body = await request.json()
+        await request.app.state.webrtc.handle_patch_request(
+            SmallWebRTCPatchRequest(
+                pc_id=body["pc_id"],
+                candidates=[IceCandidate(**candidate) for candidate in body.get("candidates", [])],
+            )
+        )
+        return {"status": "ok"}
 
     @app.websocket("/ws")
     async def chat(websocket: WebSocket) -> None:

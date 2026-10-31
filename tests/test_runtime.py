@@ -47,7 +47,7 @@ def test_health_endpoint_and_config_file_watcher(
                 base_url="http://test",
             ) as client:
                 response = await client.get("/health")
-                assert response.json() == {"status": "ok", "config_revision": 1}
+                assert response.json() == {"status": "ok", "config_revision": 1, "speech": "off"}
                 manager: ConfigManager = app.state.config_manager
                 tools_file = example_config_dir / "tools.yaml"
                 tools_file.write_text(

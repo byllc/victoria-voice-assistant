@@ -159,3 +159,33 @@ button {
   font-size: 0.9rem;
   opacity: 0.85;
 }
+
+.voice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.voice select {
+  font: inherit;
+  padding: 0.45rem;
+}
+
+#talk {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#talk.active,
+#voice-toggle.active {
+  background: #1f7a4d;
+  color: #fff;
+  border-color: #1f7a4d;
+}
+
+#log p.heard span::before {
+  content: "🎙 ";
+}

@@ -98,12 +98,44 @@ class RolesConfig(Schema):
         return "off" if value is False else value
 
 
+class SttConfig(Schema):
+    model: str = "mlx-community/whisper-large-v3-turbo"
+    language: str = "en"
+
+
+class TtsConfig(Schema):
+    voice: str = "af_heart"
+    speed: float = Field(default=1.0, gt=0.25, le=3)
+
+
+class VadConfig(Schema):
+    confidence: float = Field(default=0.7, ge=0, le=1)
+    start_s: float = Field(default=0.2, ge=0)
+    stop_s: float = Field(default=0.2, ge=0)
+
+
+class TurnConfig(Schema):
+    smart_turn: bool = True
+    # Silence after which the turn ends even if Smart Turn says the speaker isn't done.
+    fallback_s: float = Field(default=1.8, gt=0)
+
+
+class SpeechConfig(Schema):
+    """In-process speech for voice sessions (Whisper MLX, Kokoro, Silero VAD, Smart Turn)."""
+
+    stt: SttConfig = Field(default_factory=SttConfig)
+    tts: TtsConfig = Field(default_factory=TtsConfig)
+    vad: VadConfig = Field(default_factory=VadConfig)
+    turn: TurnConfig = Field(default_factory=TurnConfig)
+
+
 class ModelsConfig(Schema):
     servers: dict[str, ServerConfig] = Field(min_length=1)
     models: dict[str, ModelConfig] = Field(min_length=1)
     pools: dict[str, PoolConfig] = Field(default_factory=dict)
     decider: DeciderConfig
     roles: RolesConfig
+    speech: SpeechConfig = Field(default_factory=SpeechConfig)
 
 
 class ReplyConfig(Schema):

@@ -20,6 +20,7 @@ from victoria_voice_assistant.tools.registry import Services, ToolRegistry, buil
 from victoria_voice_assistant.tools.testing import format_report, format_status, run_tool_tests
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
+from victoria_voice_assistant.web.tls import TlsError, describe, find_tls_files, log_cert, validate
 from victoria_voice_assistant.launchd import install_launch_agent, install_web_launch_agent
 from victoria_voice_assistant.logging_config import configure_logging
 
@@ -58,12 +59,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="exit with an error below this pass rate, 0-1 (default: 1.0)",
     )
 
+    voice = commands.add_parser("voice", help="voice pipeline tools")
+    voice_subcommands = voice.add_subparsers(dest="voice_command", required=True)
+    bench = voice_subcommands.add_parser("bench", help="speak 20 commands over WebRTC and report latency by stage")
+    bench.add_argument("--url", default="http://127.0.0.1:8765", help="assistant service base URL")
+    bench.add_argument("--sessions", type=int, default=1, help="simultaneous voice sessions")
+    bench.add_argument("--log", type=Path, help="the service's log file, to join per-stage timings")
+
     serve = commands.add_parser("serve", help="run assistant health service")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=int(os.environ.get("ASSISTANT_PORT", "8765")))
 
     web = commands.add_parser("web", help="run the household web chat (login + static client)")
-    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument(
+        "--host",
+        default=os.environ.get("ASSISTANT_WEB_HOST"),
+        help="bind address (default: 0.0.0.0 with a certificate, else 127.0.0.1)",
+    )
+    web.add_argument("--config-dir", help="configuration directory (default: config/)")
+
+    tls = commands.add_parser("tls", help="HTTPS certificate for the web interface")
+    tls_subcommands = tls.add_subparsers(dest="tls_command", required=True)
+    tls_status = tls_subcommands.add_parser("status", help="check the installed certificate and key")
+    tls_status.add_argument("--config-dir", help="configuration directory (default: config/)")
     web.add_argument("--port", type=int, default=int(os.environ.get("ASSISTANT_WEB_PORT", "8766")))
 
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
@@ -140,13 +158,43 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "voice":
+        from victoria_voice_assistant.voice.bench import bench as run_bench
+
+        logging.getLogger().setLevel(logging.ERROR)
+        print(asyncio.run(run_bench(args.url, sessions=args.sessions, log_path=args.log)))
+        return 0
+
+    if args.command == "tls":
+        try:
+            files = find_tls_files(_config_dir(args.config_dir))
+            info = validate(files) if files else None
+        except TlsError as exc:
+            print(f"TLS problem: {exc}", file=sys.stderr)
+            return 1
+        print(describe(files, info))
+        return 0
+
     if args.command == "web":
+        try:
+            files = find_tls_files(_config_dir(args.config_dir))
+            info = validate(files) if files else None
+        except TlsError as exc:
+            # Refuse to start rather than quietly serving plain HTTP after a bad update.
+            print(f"TLS problem: {exc} (see docs/https.md)", file=sys.stderr)
+            return 1
+        tls_options = {}
+        if files is not None and info is not None:
+            log_cert(files, info)
+            os.environ["ASSISTANT_WEB_TLS"] = "1"  # read by the app factory (Secure cookies)
+            tls_options = {"ssl_certfile": str(files.cert), "ssl_keyfile": str(files.key)}
         uvicorn.run(
             "victoria_voice_assistant.web.app:create_default_web_app",
             factory=True,
-            host=args.host,
+            host=args.host or ("0.0.0.0" if files else "127.0.0.1"),
             port=args.port,
             log_config=None,
+            **tls_options,
         )
         return 0
 

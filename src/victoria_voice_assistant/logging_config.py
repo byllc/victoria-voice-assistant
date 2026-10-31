@@ -29,6 +29,17 @@ LOGGED_FIELDS = (
     "count",
     "duration_s",
     "delta_s",
+    "cert",
+    "names",
+    "expires",
+    "days_left",
+    "session",
+    "text",
+    "parts",
+    "labels",
+    "ttfb",
+    "tools",
+    "measured_from",
 )
 
 

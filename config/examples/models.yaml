@@ -30,6 +30,21 @@ decider:
   type: llm_choice
   model: fast-small
 
+speech:                       # voice sessions (in-process)
+  stt:
+    model: mlx-community/whisper-large-v3-turbo
+    language: en
+  tts:
+    voice: af_heart             # a Kokoro voice name
+    speed: 1.0
+  vad:
+    confidence: 0.7
+    start_s: 0.2
+    stop_s: 0.2                 # Pipecat's recommendation with Smart Turn
+  turn:
+    smart_turn: true
+    fallback_s: 1.8             # end the turn after this much silence regardless
+
 roles:
   router: fast
   router_fallback: fast-small

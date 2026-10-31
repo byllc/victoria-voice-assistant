@@ -11,5 +11,9 @@
   "devDependencies": {
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "@pipecat-ai/client-js": "1.14.0",
+    "@pipecat-ai/small-webrtc-transport": "1.11.0"
   }
 }

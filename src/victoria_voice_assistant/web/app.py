@@ -5,6 +5,8 @@ import logging
 import os
 from pathlib import Path
 
+import httpx
+
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -17,6 +19,7 @@ from victoria_voice_assistant.web.auth import COOKIE_NAME, SESSION_TTL_S, Sessio
 logger = logging.getLogger(__name__)
 
 DEFAULT_SERVICE_URL = "ws://127.0.0.1:8765/ws"
+SIGNALING_TIMEOUT_S = 30.0
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_STATIC_DIR = REPO_ROOT / "web" / "client" / "dist"
 
@@ -30,6 +33,7 @@ def create_web_app(
     password: str = "",
     service_url: str = DEFAULT_SERVICE_URL,
     static_dir: Path | None = DEFAULT_STATIC_DIR,
+    secure_cookies: bool = False,
 ) -> FastAPI:
     # Without a password the app runs open (insecure) and the client shows a warning.
     insecure = not password
@@ -66,6 +70,7 @@ def create_web_app(
             httponly=True,
             samesite="strict",
             path="/",
+            secure=secure_cookies,
         )
         logger.info("Web login accepted", extra={"event": "web_login_accepted"})
         return {"authenticated": True}
@@ -74,6 +79,31 @@ def create_web_app(
     async def logout(response: Response) -> dict[str, bool]:
         response.delete_cookie(COOKIE_NAME, path="/", samesite="strict")
         return {"authenticated": False}
+
+    # WebRTC signaling is proxied; the audio itself goes straight to the assistant service.
+    offer_url = _http_url(service_url) + "/api/offer"
+
+    async def forward_offer(request: Request) -> Response:
+        if not authenticated(request.cookies.get(COOKIE_NAME)):
+            raise HTTPException(status_code=401, detail="not signed in")
+        try:
+            async with httpx.AsyncClient(timeout=SIGNALING_TIMEOUT_S) as client:
+                upstream = await client.request(
+                    request.method,
+                    offer_url,
+                    content=await request.body(),
+                    headers={"content-type": "application/json"},
+                )
+        except httpx.HTTPError:
+            logger.error("Assistant service unreachable", extra={"event": "service_unreachable"})
+            raise HTTPException(status_code=502, detail="assistant service unreachable") from None
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type", "application/json"),
+        )
+
+    app.add_api_route("/api/offer", forward_offer, methods=["POST", "PATCH"])
 
     @app.websocket("/ws")
     async def relay(websocket: WebSocket) -> None:
@@ -122,10 +152,17 @@ async def _relay_messages(websocket: WebSocket, upstream) -> None:
             task.cancel()
 
 
+def _http_url(service_url: str) -> str:
+    """http://host:port of the assistant service, from its websocket URL."""
+    base = service_url.removesuffix("/ws")
+    return "https://" + base.removeprefix("wss://") if base.startswith("wss://") else "http://" + base.removeprefix("ws://")
+
+
 def create_default_web_app() -> FastAPI:
     """Factory for uvicorn: the password comes only from the process environment."""
     configure_logging()
     return create_web_app(
         password=os.environ.get("ASSISTANT_WEB_PASSWORD", ""),
         service_url=os.environ.get("ASSISTANT_SERVICE_URL", DEFAULT_SERVICE_URL),
+        secure_cookies=os.environ.get("ASSISTANT_WEB_TLS") == "1",
     )

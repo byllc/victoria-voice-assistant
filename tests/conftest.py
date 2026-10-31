@@ -14,6 +14,7 @@ LOCAL_ENV = Path(__file__).resolve().parents[1] / "config" / ".env"
 @pytest.fixture(autouse=True)
 def disable_model_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ASSISTANT_PIN_MODELS", "0")
+    monkeypatch.setenv("ASSISTANT_SPEECH", "0")
 
 
 @pytest.fixture
