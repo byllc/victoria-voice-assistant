@@ -3,10 +3,10 @@ servers:
     type: openai
     base_url: http://127.0.0.1:1234/v1
     api_key: ${LMS_API_KEY}
-  hermes:                     # Hermes Agent's gateway in its Apple container, published on localhost only
+  hermes:                     # any Hermes Agent gateway (docs/hermes.md); point base_url at yours
     type: openai
     base_url: http://127.0.0.1:8642/v1
-    api_key: ${HERMES_API_KEY:-}   # Hermes's API_SERVER_KEY; optional until Hermes is installed
+    api_key: ${HERMES_API_KEY:-}   # that gateway's API_SERVER_KEY; optional until one is connected
   anthropic:                  # Claude, for the `claude` pool; optional until ANTHROPIC_API_KEY is set
     type: anthropic
     api_key: ${ANTHROPIC_API_KEY:-}
@@ -42,7 +42,7 @@ models:
 
   hermes:
     server: hermes
-    model: hermes-agent
+    model: hermes-agent         # the gateway's API_SERVER_MODEL_NAME (hermes-agent unless it uses a profile)
     # Hermes streams nothing while it runs its own tools, and timeout_s is a stall timeout: allow long gaps.
     timeout_s: 300
   claude-haiku:

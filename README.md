@@ -192,3 +192,4 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/implementation_plan.md](docs/implementation_plan.md): the stages, their order and what "done" means.
 - [docs/stages.md](docs/stages.md): the live tracker, with evidence and the decisions log.
 - [docs/https.md](docs/https.md): installing and renewing the HTTPS certificate.
+- [docs/hermes.md](docs/hermes.md): connecting the assistant to a Hermes Agent installation (any; `services/hermes/` is only a test setup).
