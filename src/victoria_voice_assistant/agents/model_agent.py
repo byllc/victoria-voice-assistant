@@ -99,12 +99,16 @@ async def run_model_agent(
     request: str,
     tools: list[ToolEntry],
     context: ToolContext,
+    history: list[dict[str, str]] | None = None,
 ) -> AgentReply:
-    """Run one task to its final reply. Cancelling the caller stops the pipeline."""
+    """Run one task to its final reply. Cancelling the caller stops the pipeline.
+
+    `history` replaces the request with an earlier exchange to continue (a harness agent's question and its answer).
+    """
     messages: list[dict[str, Any]] = []
     if system:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": request})
+    messages.extend(history or [{"role": "user", "content": request}])
     schema = ToolsSchema(standard_tools=[entry.schema(_tool_handler(entry, context)) for entry in tools])
     llm_context = LLMContext(messages=messages, tools=schema) if tools else LLMContext(messages=messages)
     pair = LLMContextAggregatorPair(llm_context)

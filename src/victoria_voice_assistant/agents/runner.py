@@ -17,13 +17,13 @@ from typing import TYPE_CHECKING, Any
 from victoria_voice_assistant.agents.model_agent import AgentError, AgentReply, run_model_agent
 from victoria_voice_assistant.agents.pools import PoolChoice, PoolChooser, split_override
 from victoria_voice_assistant.agents.spend import SpendEntry, SpendLog, cost_usd
-from victoria_voice_assistant.agents.speech import spoken_version
+from victoria_voice_assistant.agents.speech import plain_text, spoken_version
 from victoria_voice_assistant.agents.tasks import Task, TaskService
 from victoria_voice_assistant.chat.llm import build_llm
 from victoria_voice_assistant.config.schema import AgentConfig, AppConfig
 from victoria_voice_assistant.decider.engine import build_decider
 from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
-from victoria_voice_assistant.tools.registry import BUILTIN_TOOLS, ToolContext, build_registry
+from victoria_voice_assistant.tools.registry import BUILTIN_TOOLS, ToolContext, ToolEntry, build_registry
 
 if TYPE_CHECKING:
     from victoria_voice_assistant.tools.registry import Services
@@ -33,8 +33,18 @@ logger = logging.getLogger(__name__)
 # Where the chat note for an agent that isn't set up yet points.
 SETUP_DOCS = {"anthropic": "docs/claude-setup.md", "harness": "docs/hermes.md"}
 
-# A task still running after this long is stopped and marked timed_out.
+# A task still running after this long is stopped and marked timed_out (time spent waiting for an answer doesn't count).
 AGENT_TIMEOUT_S = 300.0
+# Questions a harness agent may ask in one task before its reply is taken as the result.
+MAX_HARNESS_QUESTIONS = 3
+NO_ANSWER = "No answer from the user. Continue with a sensible default, or stop and say what you need."
+
+# A closing offer like these isn't a question the task is waiting on.
+CLOSER = re.compile(
+    r"\b(anything else|let me know|need anything|something else|how (else )?can i help|can i help with|"
+    r"any (other|more) questions|would you like (me to do )?(anything|something))\b",
+    re.IGNORECASE,
+)
 
 
 # A reply that opens like this is treated as the model declining, for escalate_on_failure.
@@ -46,6 +56,18 @@ REFUSAL = re.compile(
 
 def looks_like_refusal(text: str) -> bool:
     return bool(REFUSAL.match(text[:160]))
+
+
+def harness_question(text: str) -> str | None:
+    """Bill, 2026-10-31: a harness reply that ends with a question is the agent asking one (Hermes's gateway
+    can't pause mid-request). Returns the question as it should be read out, or None for a final reply."""
+    plain = plain_text(text).strip()
+    if not plain.endswith("?"):
+        return None
+    sentences = re.split(r"(?<=[.!?])\s+", plain)
+    if CLOSER.search(sentences[-1]):
+        return None
+    return plain if len(plain) <= 280 else sentences[-1]
 
 
 def label(name: str) -> str:
@@ -75,6 +97,8 @@ class AgentRunner:
         self.tasks = tasks
         self.spend = spend or SpendLog(None)
         self.chooser = PoolChooser(config.models, build_decider(config.models), self.spend)
+        self._limits: dict[str, asyncio.Timeout] = {}
+        self._asked: set[str] = set()
 
     def update_config(self, config: AppConfig) -> None:
         self.config = config
@@ -91,6 +115,10 @@ class AgentRunner:
         agent = self.find(name)
         if agent is None:
             return ToolOutcome(result={"error": f"no agent called {name!r}"}, speak=f"I don't know an agent called {name}.")
+        waiting = self.tasks.waiting(agent.name)
+        if waiting:
+            # "Tell Hermes the blue folder": the agent asked something, so this is the answer.
+            return self.answer(waiting[0].id, request)
         supported = (agent.kind == "model" and (agent.model or agent.pool)) or (agent.kind == "harness" and agent.model)
         if not supported:
             # A2A and relay agents come in later stages.
@@ -119,6 +147,48 @@ class AgentRunner:
         if agent.mode == "background":
             ack += " I'll let you know when it's done."
         return ToolOutcome(result={"task_id": task.id, "agent": agent.name, "mode": agent.mode}, speak=ack)
+
+    def answer(self, task_id: str, text: str) -> ToolOutcome:
+        task = self.tasks.get(task_id)
+        if task is None or not self.tasks.answer(task_id, text):
+            return ToolOutcome(result={"error": "that question isn't waiting any more"}, speak="That question has already closed.")
+        return ToolOutcome(result={"answered": task_id}, speak=f"Okay, I'll tell {label(task.agent)}.")
+
+    async def _ask_user(self, agent: AgentConfig, task: Task, question: str) -> str | None:
+        """Ask the user on the agent's behalf and wait up to `question_timeout_min`. None if nobody answers."""
+        settings = self.config.tools.notifications
+        notifications = self.services.notifications
+        name = label(agent.name)
+        self._asked.add(task.id)
+        future = self.tasks.ask(task, question)
+        if notifications is not None:
+            notifications.post(
+                source=agent.name,
+                kind="question",
+                headline=f"{name} has a question.",
+                summary=question,
+                full=question,
+                target=task.device,
+                priority="urgent",
+                task_id=task.id,
+            )
+        else:
+            self.tasks.say(task, f"{name} has a question. {question}")
+        limit = self._limits.get(task.id)
+        if limit is not None:
+            limit.reschedule(None)  # waiting for us doesn't count against the agent's time
+        answer: str | None = None
+        try:
+            answer = await asyncio.wait_for(future, settings.question_timeout_min * 60)
+        except TimeoutError:
+            logger.info("Agent question went unanswered", extra={"event": "agent_question_timeout", "task": task.id})
+        finally:
+            self.tasks.resume(task)
+            if notifications is not None:
+                notifications.close_question(task.id, answered=answer is not None)
+            if limit is not None:
+                limit.reschedule(asyncio.get_running_loop().time() + AGENT_TIMEOUT_S)
+        return answer
 
     def _missing_key(self, agent: AgentConfig) -> str | None:
         """The name of a cloud server this agent needs whose API key isn't set, if any."""
@@ -156,7 +226,9 @@ class AgentRunner:
                 agent.wait_s, self.tasks.say, task, f"{name} is still working on it. I'll let you know when it's done."
             )
         try:
-            reply = await asyncio.wait_for(self._model_agent(agent, task, override), AGENT_TIMEOUT_S)
+            async with asyncio.timeout(AGENT_TIMEOUT_S) as limit:
+                self._limits[task.id] = limit
+                reply = await self._model_agent(agent, task, override)
         except asyncio.CancelledError:
             self.tasks.update(task, state="cancelled")
             raise
@@ -172,9 +244,11 @@ class AgentRunner:
             self._report(agent, task, "error", text, delayed=self._delayed(agent, loop.time() - started))
             return
         finally:
+            self._limits.pop(task.id, None)
             if notice is not None:
                 notice.cancel()
-        delayed = self._delayed(agent, loop.time() - started)
+        delayed = self._delayed(agent, loop.time() - started) or task.id in self._asked
+        self._asked.discard(task.id)
         self.tasks.update(task, state="finished", result=reply.text)
         spoken = await spoken_version(reply.text, self._summarizer())
         if delayed:
@@ -226,6 +300,9 @@ class AgentRunner:
 
     async def _model_agent(self, agent: AgentConfig, task: Task, override: str | None = None) -> AgentReply:
         """Run the agent on its model, or on the pool member chosen for this request, escalating once if allowed."""
+        if agent.kind == "harness":
+            assert agent.model is not None
+            return await self._harness(agent, task, agent.model)
         if agent.pool is None:
             assert agent.model is not None
             return await self._attempt(agent, task, agent.model, reason="fixed")
@@ -254,8 +331,55 @@ class AgentRunner:
             )
             model, reason, choice, escalated = step_up, "escalation", None, True
 
+    async def _harness(self, agent: AgentConfig, task: Task, model: str) -> AgentReply:
+        """A harness reply ending in a question waits for the answer, then continues with the earlier exchange."""
+        history: list[dict[str, str]] | None = None
+        input_tokens = output_tokens = 0
+        for asked in range(MAX_HARNESS_QUESTIONS + 1):
+            reply = await self._attempt(agent, task, model, reason="fixed", history=history)
+            input_tokens += reply.input_tokens
+            output_tokens += reply.output_tokens
+            question = harness_question(reply.text) if asked < MAX_HARNESS_QUESTIONS else None
+            if question is None:
+                break
+            answer = await self._ask_user(agent, task, question)
+            if answer is None:
+                break  # nobody answered: the reply so far is the result, with no further call (decisions log)
+            history = [*(history or [{"role": "user", "content": task.request}]),
+                       {"role": "assistant", "content": reply.text}, {"role": "user", "content": answer}]
+        return AgentReply(reply.text, input_tokens, output_tokens)
+
+    def _ask_user_entry(self, agent: AgentConfig, task: Task) -> ToolEntry:
+        """The `ask_user` tool every model agent gets (architecture §10.3: agent questions)."""
+
+        async def handler(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            question = str(arguments.get("question") or "").strip()
+            if not question:
+                return ToolOutcome(result={"error": "no question given"})
+            answer = await self._ask_user(agent, task, question)
+            return ToolOutcome(result={"answer": answer} if answer is not None else {"answer": None, "note": NO_ANSWER})
+
+        return ToolEntry(
+            name="ask_user",
+            description=(
+                "Ask the user one short question when you can't finish without their answer. It may take a while. "
+                "Returns their answer, or null if nobody answered."
+            ),
+            kind="builtin",
+            status="ready",
+            handler=handler,
+            properties={"question": {"type": "string", "description": "one short question, as it will be read aloud"}},
+            required=["question"],
+        )
+
     async def _attempt(
-        self, agent: AgentConfig, task: Task, model: str, reason: str, choice: PoolChoice | None = None
+        self,
+        agent: AgentConfig,
+        task: Task,
+        model: str,
+        reason: str,
+        choice: PoolChoice | None = None,
+        history: list[dict[str, str]] | None = None,
     ) -> AgentReply:
         tools = []
         if agent.kind == "model":  # a harness (Hermes) runs its own tools; it gets the request only
@@ -265,8 +389,9 @@ class AgentRunner:
                 for name in agent.tools
                 if name not in BUILTIN_TOOLS and (entry := registry.get(name)) is not None and entry.status == "ready"
             ]
+            tools.append(self._ask_user_entry(agent, task))
         self.tasks.update(task, model=model)
-        reply = await self._call_model(agent, task, model, tools)
+        reply = await self._call_model(agent, task, model, tools, history)
         cost = cost_usd(self.config.models.models[model], reply.input_tokens, reply.output_tokens)
         self.spend.record(
             SpendEntry(
@@ -292,6 +417,10 @@ class AgentRunner:
             raise AgentError("empty reply")
         return reply
 
-    async def _call_model(self, agent: AgentConfig, task: Task, model: str, tools: list) -> AgentReply:
+    async def _call_model(
+        self, agent: AgentConfig, task: Task, model: str, tools: list, history: list[dict[str, str]] | None = None
+    ) -> AgentReply:
         llm = build_llm(model, self.config.models)
-        return await run_model_agent(llm, agent.system, task.request, tools, ToolContext(device=task.device))
+        return await run_model_agent(
+            llm, agent.system, task.request, tools, ToolContext(device=task.device), history=history
+        )

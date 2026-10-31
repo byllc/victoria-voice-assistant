@@ -81,6 +81,10 @@ class Outlet(Protocol):
 
     def busy(self) -> bool: ...
 
+    def speaking(self) -> bool:
+        """The assistant is talking there right now (urgent items wait only for this)."""
+        ...
+
     def requests(self) -> int:
         """How many requests this session has started (to add "By the way" after one)."""
         ...
@@ -137,6 +141,9 @@ class NotificationService:
                 data["mentioned"] = bool(data["mentioned"])
                 item = Notification(**data)
                 self._items[item.id] = item
+                if item.kind == "question":
+                    self._set(item, state="expired")  # its task ended with the restart
+                    continue
                 if item.state == "pending":
                     self._ready_at[item.target] = self._clock()
         self._ticker = asyncio.get_running_loop().create_task(self._tick_forever(), name="notifications")
@@ -205,7 +212,9 @@ class NotificationService:
             "Notification posted",
             extra={"event": "notification_posted", "source": source, "kind": kind, "priority": priority, "device": target},
         )
-        if priority != "low":
+        if priority == "urgent":
+            self._ready_at[target] = now
+        elif priority != "low":
             # Wait a moment so notifications that arrive together are announced together.
             self._ready_at.setdefault(target, now + GROUP_WINDOW_S)
         self._refresh(target)
@@ -234,6 +243,16 @@ class NotificationService:
             return None
         found = [i for i in self._items.values() if i.source == source and i.kind in ("result", "error")]
         return max(found, key=lambda item: item.created_at, default=None)
+
+    def question_for(self, task_id: str) -> Notification | None:
+        return next((i for i in self._items.values() if i.kind == "question" and i.task_id == task_id and i.unread), None)
+
+    def close_question(self, task_id: str, answered: bool) -> None:
+        """The agent's question was answered (read) or timed out (expired): off the badge either way."""
+        item = self.question_for(task_id)
+        if item is not None:
+            self._set(item, state="acknowledged" if answered else "expired")
+            self._refresh(item.target)
 
     def acknowledge(self, items: list[Notification]) -> None:
         devices = set()
@@ -300,12 +319,18 @@ class NotificationService:
 
     async def _deliver(self, device: str) -> bool:
         """Announce the device's pending notifications. False means try again later (busy, or nobody there)."""
-        items = [i for i in self.unread(device) if i.state == "pending" and i.priority != "low"]
-        if not items:
+        pending = [i for i in self.unread(device) if i.state == "pending" and i.priority != "low"]
+        if not pending:
             return True
         outlets = self.outlets(device)
         if not outlets:
             return False  # kept for when a client connects (and for phone push, later)
+        questions = [i for i in pending if i.kind == "question"]
+        if questions and not await self._ask(questions, outlets):
+            return False
+        items = [i for i in pending if i.kind != "question"]
+        if not items:
+            return True
         items.reverse()  # oldest first when spoken
         if self.quiet():
             # No sound: the screen and the badge only.
@@ -352,6 +377,33 @@ class NotificationService:
             "Notifications announced",
             extra={"event": "notification_announced", "count": len(items), "device": device, "style": sorted(styles)},
         )
+        return True
+
+    async def _ask(self, questions: list[Notification], outlets: list[Outlet]) -> bool:
+        """Agent questions are urgent: asked as soon as the assistant isn't speaking there, one at a time.
+        During quiet hours they only wait in the list (Bill, 2026-10-31): no sound, no announcement."""
+        if self.quiet():
+            for item in questions:
+                self._set(item, state="delivered", mentioned=True)  # never "by the way"d either
+            self._refresh(questions[0].target)
+            logger.info("Agent question held for quiet hours", extra={"event": "notification_quiet", "count": len(questions)})
+            return True
+        if any(outlet.speaking() for outlet in outlets):
+            return False
+        for item in reversed(questions):  # oldest first
+            text = f"{item.headline} {item.summary}"
+            announcement = Announcement(
+                text=text,
+                items=[item],
+                question=PendingQuestion(kind="answer", question=text, task_id=item.task_id),
+                full=[item],
+                spoken=any(outlet.speaks for outlet in outlets),
+            )
+            for outlet in outlets:
+                await outlet.announce(announcement)
+            self._set(item, state="delivered", mentioned=True)
+        self._refresh(questions[0].target)
+        logger.info("Agent question asked", extra={"event": "notification_question", "count": len(questions)})
         return True
 
     def _headlines(self, items: list[Notification]) -> str:

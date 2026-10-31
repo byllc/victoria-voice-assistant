@@ -77,6 +77,7 @@ def notification_view(item: Notification) -> dict[str, Any]:
         "full": item.full,
         "priority": item.priority,
         "state": item.state,
+        "task_id": item.task_id,
         "created_at": item.created_at,
     }
 
@@ -94,6 +95,9 @@ class ChatOutlet:
     def busy(self) -> bool:
         return not self.state.idle()
 
+    def speaking(self) -> bool:
+        return False
+
     def requests(self) -> int:
         return self.state.requests
 
@@ -101,6 +105,8 @@ class ChatOutlet:
         task = self.session.task
         if task is None:
             return
+        if announcement.question is not None and announcement.question.kind == "answer":
+            self.state.set_pending(announcement.question)  # the next message typed is the agent's answer
         # In the conversation too, so "what was that about?" has something to refer to.
         await task.queue_frames(
             [

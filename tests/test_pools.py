@@ -122,7 +122,7 @@ def _runner(config: AppConfig, replies: dict[str, object], decider=None, spend: 
     agent_runner.chooser.decider = decider
     calls: list[str] = []
 
-    async def fake_call_model(agent, task, model, tools) -> AgentReply:
+    async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
         calls.append(model)
         reply = replies[model]
         if isinstance(reply, Exception):

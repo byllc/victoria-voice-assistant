@@ -122,6 +122,9 @@ class VoiceOutlet:
     def busy(self) -> bool:
         return self.activity.busy()
 
+    def speaking(self) -> bool:
+        return self.activity.bot_speaking
+
     def requests(self) -> int:
         return self.state.requests
 

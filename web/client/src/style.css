@@ -242,3 +242,13 @@ button {
 .notification summary {
   cursor: pointer;
 }
+
+.answer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.answer input {
+  flex: 1;
+}

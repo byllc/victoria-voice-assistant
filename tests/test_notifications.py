@@ -43,6 +43,9 @@ class FakeOutlet:
     def busy(self) -> bool:
         return self.is_busy
 
+    def speaking(self) -> bool:
+        return False
+
     def requests(self) -> int:
         return self.count
 
@@ -384,7 +387,7 @@ def _runner(example_config_dir: Path, mode: str) -> tuple[AgentRunner, Notificat
     runner = AgentRunner(config, services, tasks, SpendLog(None))
     services.agents = runner
 
-    async def fake_call_model(agent, task, model, tools) -> AgentReply:
+    async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
         return AgentReply("Leeks and potatoes make a fine soup.")
 
     runner._call_model = fake_call_model  # type: ignore[method-assign]
@@ -432,3 +435,208 @@ def test_the_notifications_tool_is_built_in(example_config_dir: Path) -> None:
     )
     entry = build_registry(config.tools, config.agents, services).get("notifications")
     assert entry is not None and entry.status == "ready" and entry.speaks_directly
+
+
+# Agent questions ---------------------------------------------------------------
+
+from victoria_voice_assistant.agents.runner import harness_question  # noqa: E402
+from victoria_voice_assistant.agents.tasks_tool import tasks_tool  # noqa: E402
+
+
+def test_harness_question_detection() -> None:
+    assert harness_question("I can save it. Which folder should I use?") == "I can save it. Which folder should I use?"
+    assert harness_question("Saved to story.txt. Anything else?") is None
+    assert harness_question("Saved to story.txt. Let me know if you want changes?") is None
+    assert harness_question("Saved to story.txt.") is None
+    long = "Here is what I found. " * 20 + "Should I keep the British spelling?"
+    assert harness_question(long) == "Should I keep the British spelling?"
+
+
+def _question_runner(example_config_dir: Path, agent_name: str, timeout_min: float = 30):
+    config = load_config(example_config_dir)
+    tools = config.tools.model_copy(update={"notifications": NotificationsConfig(question_timeout_min=timeout_min)})
+    config = config.model_copy(update={"tools": tools})
+    clock = Clock(AFTERNOON)
+    notifications = NotificationService(config.tools.notifications, clock=clock)
+    services = Services(
+        timers=TimerService(TimersConfig()), weather=WeatherService(WeatherConfig()), notifications=notifications
+    )
+    runner = AgentRunner(config, services, TaskService(None), SpendLog(None))
+    services.agents = runner
+    return runner, notifications, clock
+
+
+def test_a_model_agent_asks_and_gets_an_answer(example_config_dir: Path) -> None:
+    async def scenario():
+        runner, notifications, clock = _question_runner(example_config_dir, "helper")
+        answers = []
+
+        async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
+            ask_user = next(t for t in tools if t.name == "ask_user")
+            outcome = await ask_user.handler({"question": "Vegetarian or not?"}, None)
+            answers.append(outcome.result)
+            return AgentReply(f"Here's a {outcome.result['answer']} plan.")
+
+        runner._call_model = fake_call_model  # type: ignore[method-assign]
+        outcome = await runner.ask("helper", "plan dinners", "web")
+        await asyncio.sleep(0.05)
+        task = runner.tasks.get(outcome.result["task_id"])
+        waiting = (task.state, task.question, [(i.kind, i.priority, i.summary) for i in notifications.unread()])
+        listed = await tasks_tool(runner.tasks, {"action": "list"})
+        reply = await runner.ask("helper", "vegetarian", "web")  # "Tell Helper vegetarian"
+        await _finish(runner)
+        return waiting, listed, reply, answers, task, notifications
+
+    waiting, listed, reply, answers, task, notifications = asyncio.run(scenario())
+    assert waiting == ("waiting", "Vegetarian or not?", [("question", "urgent", "Vegetarian or not?")])
+    assert listed.speak == "Helper is waiting for your answer: Vegetarian or not?"
+    assert reply.speak == "Okay, I'll tell Helper."
+    assert answers == [{"answer": "vegetarian"}] and task.state == "finished" and task.question is None
+    # the question left the badge; the result came after a question, so it's a notification, not said at once
+    assert [(i.kind, i.summary) for i in notifications.unread()] == [("result", "Here's a vegetarian plan.")]
+
+
+def test_an_unanswered_question_tells_the_agent(example_config_dir: Path) -> None:
+    async def scenario():
+        runner, notifications, _ = _question_runner(example_config_dir, "helper", timeout_min=0.001)
+        seen = []
+
+        async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
+            outcome = await next(t for t in tools if t.name == "ask_user").handler({"question": "Which day?"}, None)
+            seen.append(outcome.result)
+            return AgentReply("I planned it for Saturday.")
+
+        runner._call_model = fake_call_model  # type: ignore[method-assign]
+        await runner.ask("helper", "plan a picnic", "web")
+        await _finish(runner)
+        return seen, notifications
+
+    seen, notifications = asyncio.run(scenario())
+    assert seen[0]["answer"] is None and "No answer" in seen[0]["note"]
+    assert [i.kind for i in notifications.unread()] == ["result"]  # the question expired off the badge
+
+
+def test_a_harness_question_continues_with_the_exchange(example_config_dir: Path) -> None:
+    async def scenario():
+        runner, notifications, _ = _question_runner(example_config_dir, "hermes")
+        calls = []
+
+        async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
+            calls.append(history)
+            return AgentReply("Saved it to blue/story.txt." if history else "Which folder should I save it in?")
+
+        runner._call_model = fake_call_model  # type: ignore[method-assign]
+        runner._missing_key = lambda agent: None  # type: ignore[method-assign]
+        outcome = await runner.ask("hermes", "write a story", "web")
+        await asyncio.sleep(0.05)
+        question = notifications.unread()[0]
+        answered = runner.answer(question.task_id, "the blue folder")
+        await _finish(runner)
+        return calls, answered, runner.tasks.get(outcome.result["task_id"]), notifications
+
+    calls, answered, task, notifications = asyncio.run(scenario())
+    assert answered.speak == "Okay, I'll tell Hermes."
+    assert calls == [
+        None,
+        [
+            {"role": "user", "content": "write a story"},
+            {"role": "assistant", "content": "Which folder should I save it in?"},
+            {"role": "user", "content": "the blue folder"},
+        ],
+    ]
+    assert task.state == "finished" and task.result == "Saved it to blue/story.txt."
+
+
+def test_questions_are_asked_at_once_unless_the_assistant_is_speaking() -> None:
+    async def scenario():
+        service, clock = service_at(AFTERNOON)
+        speaker = FakeOutlet(speaks=True)
+        speaker.is_busy = True  # mid-conversation, but not talking right now
+        speaker.speaking = lambda: talking[0]  # type: ignore[method-assign]
+        talking = [True]
+        service.attach(speaker)
+        item = post(service, kind="question", headline="Hermes has a question.", summary="Which folder?", priority="urgent", task_id="t1")
+        await service.tick()
+        held = list(speaker.announced)
+        talking[0] = False
+        await service.tick()
+        return held, speaker, item
+
+    held, speaker, item = asyncio.run(scenario())
+    assert held == []
+    [asked] = speaker.announced
+    assert asked.text == "Hermes has a question. Which folder?"
+    assert asked.question is not None and (asked.question.kind, asked.question.task_id) == ("answer", "t1")
+    assert item.state == "delivered"
+
+
+def test_questions_wait_silently_in_quiet_hours() -> None:
+    async def scenario():
+        service, _ = service_at(NIGHT)
+        speaker, screen = FakeOutlet(speaks=True), FakeOutlet(speaks=False)
+        service.attach(speaker)
+        service.attach(screen)
+        item = post(service, kind="question", headline="Hermes has a question.", summary="Which folder?", priority="urgent", task_id="t1")
+        await service.tick()
+        speaker.count += 1
+        await service.tick()
+        return speaker, screen, item, service
+
+    speaker, screen, item, service = asyncio.run(scenario())
+    assert speaker.announced == [] and screen.announced == []  # the list only: no card, no sound, no "by the way"
+    assert service.unread() == [item]
+
+
+def test_reading_a_question_makes_the_next_turn_its_answer() -> None:
+    async def scenario():
+        service, _ = service_at(AFTERNOON)
+        post(service, kind="question", headline="Hermes has a question.", summary="Which folder?", priority="urgent", task_id="t1")
+        return await notifications_tool(service, {"action": "read"}, "web"), service
+
+    outcome, service = asyncio.run(scenario())
+    assert outcome.speak == "Hermes has a question. Which folder?"
+    assert outcome.pending is not None and (outcome.pending.kind, outcome.pending.task_id) == ("answer", "t1")
+    assert len(service.unread()) == 1  # still unread until it's answered
+
+
+def test_questions_expire_with_a_restart(tmp_path: Path) -> None:
+    database = migrate(tmp_path / "a.sqlite3")
+
+    async def scenario():
+        first, _ = service_at(AFTERNOON, database)
+        post(first, kind="question", headline="Hermes has a question.", summary="Which folder?", priority="urgent", task_id="t1")
+        second, _ = service_at(AFTERNOON, database)
+        second.start()
+        await second.close()
+        return second
+
+    assert asyncio.run(scenario()).unread() == []
+
+
+def test_the_screen_can_acknowledge_and_answer() -> None:
+    from pipecat.frames.frames import InputTransportMessageFrame
+
+    from victoria_voice_assistant.chat.serializer import ChatJsonSerializer
+
+    serializer = ChatJsonSerializer()
+
+    async def scenario():
+        return [
+            await serializer.deserialize(text)
+            for text in [
+                '{"type": "notification_ack", "ids": "all"}',
+                '{"type": "notification_ack", "ids": ["a1"]}',
+                '{"type": "agent_answer", "task_id": "t1", "text": " the blue folder "}',
+                '{"type": "agent_answer", "task_id": "t1", "text": "  "}',
+                '{"type": "notification_ack", "ids": 3}',
+            ]
+        ]
+
+    frames = asyncio.run(scenario())
+    assert [f.message if isinstance(f, InputTransportMessageFrame) else None for f in frames] == [
+        {"type": "notification_ack", "ids": "all"},
+        {"type": "notification_ack", "ids": ["a1"]},
+        {"type": "agent_answer", "task_id": "t1", "text": "the blue folder"},
+        None,
+        None,
+    ]

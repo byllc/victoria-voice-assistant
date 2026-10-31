@@ -10,6 +10,7 @@ type NotificationInfo = {
   full: string;
   priority: "urgent" | "normal" | "low";
   state: "pending" | "delivered";
+  task_id: string | null;
   created_at: number;
 };
 
@@ -171,8 +172,38 @@ function acknowledge(ids: string[] | "all"): void {
   socket?.send(JSON.stringify({ type: "notification_ack", ids }));
 }
 
+// An agent's question: answered here, or by voice or chat ("Tell Hermes ...").
+function answerForm(item: NotificationInfo): HTMLFormElement {
+  const form = document.createElement("form");
+  form.className = "answer";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = `Answer ${item.source}…`;
+  input.required = true;
+  const send = document.createElement("button");
+  send.type = "submit";
+  send.textContent = "Answer";
+  form.append(input, send);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text || !socket) return;
+    socket.send(JSON.stringify({ type: "agent_answer", task_id: item.task_id, text }));
+    appendMessage("you", text);
+    form.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input, button").forEach((el) => (el.disabled = true));
+  });
+  return form;
+}
+
 // The full text, collapsed; opening it marks the notification read (architecture §4.1 "Open").
-function notificationDetails(item: NotificationInfo): HTMLDetailsElement {
+function notificationDetails(item: NotificationInfo): HTMLElement {
+  if (item.kind === "question") {
+    const wrapper = document.createElement("div");
+    const text = document.createElement("p");
+    text.textContent = `${item.headline} ${item.full}`;
+    wrapper.append(text, answerForm(item));
+    return wrapper;
+  }
   const details = document.createElement("details");
   const summary = document.createElement("summary");
   summary.textContent = item.headline;

@@ -31,6 +31,7 @@ class Task:
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    question: str | None = None  # what the agent is waiting for an answer to (state `waiting`)
     created_at: float = 0.0
     updated_at: float = 0.0
 
@@ -66,6 +67,7 @@ class TaskService:
         self._jobs: dict[str, asyncio.Task] = {}
         self._listeners: list[TaskListener] = []
         self._pending: set[asyncio.Task] = set()
+        self._answers: dict[str, asyncio.Future[str]] = {}
 
     def start(self) -> None:
         """Tasks left running when the service stopped can't be resumed: mark them failed."""
@@ -133,6 +135,34 @@ class TaskService:
 
     def say(self, task: Task, text: str, full: str | None = None) -> None:
         self._emit(TaskEvent("say", task, text, full))
+
+    def ask(self, task: Task, question: str) -> asyncio.Future[str]:
+        """Put the task in `waiting` with its question; the future resolves with the answer."""
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._answers[task.id] = future
+        logger.info("Agent asked a question", extra={"event": "agent_question", "agent": task.agent, "task": task.id})
+        self.update(task, state="waiting", question=question)
+        return future
+
+    def resume(self, task: Task) -> None:
+        """The question was answered or timed out: back to running."""
+        self._answers.pop(task.id, None)
+        if task.state == "waiting":
+            self.update(task, state="running", question=None)
+
+    def answer(self, task_id: str, text: str) -> bool:
+        """Answer a waiting task's question. False if it isn't waiting."""
+        future = self._answers.get(task_id)
+        if future is None or future.done() or not text.strip():
+            return False
+        logger.info("Agent question answered", extra={"event": "agent_answered", "task": task_id})
+        future.set_result(text.strip())
+        return True
+
+    def waiting(self, agent: str | None = None) -> list[Task]:
+        """Tasks waiting for an answer, newest first."""
+        found = [t for t in self._tasks.values() if t.state == "waiting" and (agent is None or t.agent == agent)]
+        return sorted(found, key=lambda t: t.created_at, reverse=True)
 
     def cancel(self, task_id: str) -> bool:
         """Stop a running task. False if it isn't running."""

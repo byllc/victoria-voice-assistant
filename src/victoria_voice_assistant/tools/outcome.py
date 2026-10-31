@@ -13,14 +13,17 @@ class PendingQuestion:
     """A question the assistant just asked, resolved by the next user turn.
 
     ``yes_no`` questions are matched without a model call; ``clarify`` answers go to
-    the model with the question already in the conversation.
+    the model with the question already in the conversation; ``answer`` questions are an
+    agent's, and the next turn goes to that agent as its answer, with no model call.
     """
 
-    kind: Literal["clarify", "yes_no"]
+    kind: Literal["clarify", "yes_no", "answer"]
     question: str
     options: list[str] = field(default_factory=list)
     # For yes/no: the follow-up to run on "yes" (tool name and arguments).
     on_yes: tuple[str, dict[str, Any]] | None = None
+    # For answer: the agent task waiting for it; the next turn is passed to the agent as it is.
+    task_id: str | None = None
     expires_at: float = 0.0
 
     def expired(self, now: float | None = None) -> bool:

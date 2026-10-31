@@ -106,12 +106,15 @@ async def notifications_tool(
             return ToolOutcome(result={"read": []}, speak="No new notifications.")
         spoken, rest = items[:READ_AT_MOST], items[READ_AT_MOST:]
         speak = _read_out(spoken) + (f" And {len(rest)} more on the screen." if rest else "")
-        service.acknowledge(spoken)
+        # A question stays unread until it's answered; reading it out makes the next turn its answer.
+        question = next((i for i in spoken if i.kind == "question" and i.task_id), None)
+        service.acknowledge([i for i in spoken if i.kind != "question"])
         return ToolOutcome(
             result={"read": [i.snapshot() for i in spoken]},
             speak=speak,
             chat=_full_text(spoken),
             chat_title="Full text",
+            pending=PendingQuestion(kind="answer", question=speak, task_id=question.task_id) if question else None,
         )
 
     if action == "dismiss":

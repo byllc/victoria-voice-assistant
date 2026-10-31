@@ -45,13 +45,15 @@ class ChatProtocolProcessor(FrameProcessor):
 class ChatJsonSerializer(FrameSerializer):
     """Text chat protocol.
 
-    Client -> server: ``{"type": "user_message", "text": "..."}``, ``{"type": "timer_stop"}``.
+    Client -> server: ``{"type": "user_message", "text": "..."}``, ``{"type": "timer_stop"}``,
+    ``{"type": "notification_ack", "ids": [...] | "all"}``, ``{"type": "agent_answer", "task_id": "...", "text": "..."}``.
     Server -> client: ``{"type": "token", "text": "..."}`` per streamed chunk,
     ``{"type": "done"}`` when a reply ends, ``{"type": "error", "message": "..."}``
     on failure, ``{"type": "notice", "title": "...", "text": "..."}`` for text shown
     in chat only (stub setup steps), ``{"type": "timers", "timers": [...]}`` when
     timers change, ``{"type": "timer_ring", "names": [...], "text": "..."}`` and
-    ``{"type": "timer_ring_stop", "names": [...]}``.
+    ``{"type": "timer_ring_stop", "names": [...]}``, ``{"type": "notifications", "items": [...]}`` (the unread
+    list, for the badge) and ``{"type": "announce", "text": "...", "sound": bool, "spoken": bool, "items": [...]}``.
     """
 
     async def serialize(self, frame: Frame) -> str | None:
@@ -67,6 +69,14 @@ class ChatJsonSerializer(FrameSerializer):
             return None
         if isinstance(message, dict) and message.get("type") == "timer_stop":
             return InputTransportMessageFrame(message={"type": "timer_stop"})
+        if isinstance(message, dict) and message.get("type") == "notification_ack":
+            ids = message.get("ids")
+            if ids == "all" or (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):
+                return InputTransportMessageFrame(message={"type": "notification_ack", "ids": ids})
+        if isinstance(message, dict) and message.get("type") == "agent_answer":
+            task_id, text = message.get("task_id"), message.get("text")
+            if isinstance(task_id, str) and isinstance(text, str) and text.strip():
+                return InputTransportMessageFrame(message={"type": "agent_answer", "task_id": task_id, "text": text.strip()})
         if not isinstance(message, dict) or message.get("type") != "user_message":
             logger.warning("Ignoring unknown chat message", extra={"event": "chat_message_invalid"})
             return None

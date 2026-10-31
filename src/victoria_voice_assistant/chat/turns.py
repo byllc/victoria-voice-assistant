@@ -95,6 +95,10 @@ class TurnPreprocessor(FrameProcessor):
                 unread = self.notifications.unread(self.state.device)
                 wanted = message.get("ids")
                 self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
+            elif message.get("type") == "agent_answer" and self.agents is not None:
+                # Answered from the notification on the screen.
+                outcome = self.agents.answer(str(message.get("task_id") or ""), str(message.get("text") or ""))
+                await self._deliver_note(outcome.speak or "Okay.")
             return
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMMessagesAppendFrame) and frame.run_llm:
             text = _user_text(frame)
@@ -136,6 +140,12 @@ class TurnPreprocessor(FrameProcessor):
         if pending.kind == "clarify":
             self.state.answering_clarify = True
             return await self._agent_address(text, started)
+        if pending.kind == "answer" and self.agents is not None and pending.task_id:
+            outcome = self.agents.answer(pending.task_id, text)
+            if outcome.result and "answered" in outcome.result:
+                await self._reply(text, outcome.speak or "Okay.", "agent_answer", started)
+                return True
+            return await self._agent_address(text, started)  # the question closed: an ordinary request
         answer = match_yes_no(text)
         if answer is None:
             # not a yes/no: a new request, for an agent by name or for the model
@@ -174,6 +184,11 @@ class TurnPreprocessor(FrameProcessor):
                 run_llm=False,
             )
         )
+        await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
+        await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
+
+    async def _deliver_note(self, reply: str) -> None:
+        """A reply to something done on the screen (no user turn to pair it with)."""
         await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
         await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
 
