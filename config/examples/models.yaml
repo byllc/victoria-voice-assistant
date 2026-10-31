@@ -3,6 +3,9 @@ servers:
     type: openai
     base_url: http://127.0.0.1:1234/v1
     api_key: ${LMS_API_KEY}
+  decider:                    # mlx-lm serving the decision model (`assistant decider run`); localhost only
+    type: openai
+    base_url: http://127.0.0.1:8090/v1
 
 models:
   fast:
@@ -24,11 +27,20 @@ models:
     timeout_s: 30
     pin: true
 
+  decider:
+    server: decider
+    # The MLX weights folder mlx-lm loads; here, the copy LM Studio downloaded (don't also load it there).
+    model: ~/.lmstudio/models/SirSahOl/Tev1-4B-experimental-chat-mlx-16bit
+    timeout_s: 5
+
 pools: {}
 
 decider:
-  type: llm_choice
-  model: fast-small
+  type: decision_model        # Tev1-4B-experimental: one lettered choice, confidence from token probabilities
+  server: decider
+  model: decider
+  # type: llm_choice          # alternative: a small LM Studio model answering a constrained question
+  # model: fast-small
 
 speech:                       # voice sessions (in-process)
   stt:

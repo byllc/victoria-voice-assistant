@@ -81,8 +81,9 @@ class DeciderConfig(Schema):
     def require_engine_reference(self) -> DeciderConfig:
         if self.type == "llm_choice" and self.model is None:
             raise ValueError("model is required for llm_choice")
-        if self.type == "decision_model" and self.server is None:
-            raise ValueError("server is required for decision_model")
+        if self.type == "decision_model" and (self.server is None or self.model is None):
+            # model names the models.yaml entry whose `model` is the weights folder mlx-lm serves
+            raise ValueError("server and model are required for decision_model")
         return self
 
 

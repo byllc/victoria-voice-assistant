@@ -13,9 +13,11 @@ from victoria_voice_assistant.storage.db import default_database_path
 LABEL = "com.victoria.voice-assistant"
 WEB_LABEL = "com.victoria.voice-assistant-web"
 SEARXNG_LABEL = "com.victoria.searxng"
+DECIDER_LABEL = "com.victoria.decider"
 TEMPLATE = Path(__file__).with_name("launchd_template.plist")
 WEB_TEMPLATE = Path(__file__).with_name("launchd_web_template.plist")
 SEARXNG_TEMPLATE = Path(__file__).with_name("launchd_searxng_template.plist")
+DECIDER_TEMPLATE = Path(__file__).with_name("launchd_decider_template.plist")
 
 
 def _render(template_path: Path, substitutions: dict[str, str]) -> dict[str, object]:
@@ -84,6 +86,23 @@ def render_searxng_launch_agent(
     )
 
 
+def render_decider_launch_agent(
+    python_executable: Path,
+    project_dir: Path,
+    config_dir: Path,
+    log_dir: Path,
+) -> dict[str, object]:
+    return _render(
+        DECIDER_TEMPLATE,
+        {
+            "@PYTHON_EXECUTABLE@": escape(str(python_executable)),
+            "@PROJECT_DIR@": escape(str(project_dir)),
+            "@CONFIG_DIR@": escape(str(config_dir)),
+            "@LOG_DIR@": escape(str(log_dir)),
+        },
+    )
+
+
 def _write_plist(document: dict[str, object], destination: Path, load: bool) -> Path:
     destination = destination.expanduser()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -144,4 +163,13 @@ def install_searxng_launch_agent(output: Path | None = None, load: bool = False)
     destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{SEARXNG_LABEL}.plist")
     log_dir.mkdir(parents=True, exist_ok=True)
     document = render_searxng_launch_agent(Path(sys.executable), project_dir, config_dir, log_dir, source_dir())
+    return _write_plist(document, destination, load)
+
+
+def install_decider_launch_agent(output: Path | None = None, load: bool = False) -> Path:
+    project_dir, config_dir, log_dir = _shared_paths()
+    load_config(config_dir)
+    destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{DECIDER_LABEL}.plist")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    document = render_decider_launch_agent(Path(sys.executable), project_dir, config_dir, log_dir)
     return _write_plist(document, destination, load)

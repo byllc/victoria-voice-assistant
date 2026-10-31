@@ -42,6 +42,8 @@ LOGGED_FIELDS = (
     "measured_from",
     "rss_mb",
     "cached",
+    "choice",
+    "confidence",
 )
 
 
