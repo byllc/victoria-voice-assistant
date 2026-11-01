@@ -192,6 +192,7 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/implementation_plan.md](docs/implementation_plan.md): the stages, their order and what "done" means.
 - [docs/stages.md](docs/stages.md): the live tracker, with evidence and the decisions log.
 - [docs/https.md](docs/https.md): installing and renewing the HTTPS certificate.
+- [docs/home-assistant.md](docs/home-assistant.md): home control through Home Assistant: setup, the `voice` label, what you can say.
 - [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens): kept in the macOS Keychain, run from `config/.env`, which is never committed.
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.
 - [docs/claude-setup.md](docs/claude-setup.md): turning on the optional Claude agent (an API key; it's a stub until then).

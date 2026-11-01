@@ -179,6 +179,8 @@ def create_app(
             await services.timers.close()
             await services.notifications.close()
             await services.health.close()
+            if services.home is not None:
+                await services.home.close()
             await services.reader.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 

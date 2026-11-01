@@ -84,8 +84,12 @@ tools:
     timeout_s: 6
 
   - name: home_control
-    description: "Control or check anything in the home except locks: lights, climate, covers, media, scenes."
-    kind: stub
+    description: "Control or check lights, switches, climate and scenes at home (not locks): turn on or off, set brightness or temperature, or check whether something is on."
+    kind: mcp                        # Home Assistant's MCP Server integration (Stage 9)
+    mcp_server: homeassistant
+    service: home_assistant          # maps action/target/value onto Home Assistant's intents
+    entities: { label: voice }       # only entities with the `voice` label can be controlled
+    reply: { template: true }        # "Turned on the bedroom light." (no second model call)
     params:
       action:
         type: string
@@ -98,16 +102,31 @@ tools:
         description: brightness, temperature, etc.
     notice: "Home control isn't set up yet. I've sent the setup steps to the chat."
     setup: >
-      Pick an implementation and change `kind`: `mcp` with server `homeassistant`
-      (Home Assistant's MCP Server integration), or `ha_service` for direct calls.
-      Add the Home Assistant URL under mcp_servers and store a long-lived access token with
-      `uv run assistant secrets set HA_TOKEN` (docs/secrets.md).
+      Install Home Assistant's "Model Context Protocol Server" integration, set its URL under
+      mcp_servers.homeassistant in tools.yaml, store a long-lived access token with
+      `uv run assistant secrets set HA_TOKEN`, and put the `voice` label on the devices to control
+      (docs/home-assistant.md).
     examples:
       - turn off the kitchen lights
       - is the heat on upstairs
 
+  - name: lock_door
+    description: Lock a door at home, for example the front door.
+    kind: ha_service
+    service: lock.lock
+    mcp_server: homeassistant        # the Home Assistant connection (URL and token)
+    entities: { label: voice, domains: [lock] }
+    confirm: true
+    params:
+      target:
+        type: string
+        description: which door, for example front door
+    reply: { template: "{name} is locked." }
+    examples:
+      - lock the front door
+
   - name: music
-    description: Play, pause, skip, or change volume of music; say what's playing.
+    description: "Music and what's playing: play, pause, resume, skip this song (next), go back, change the volume, or say what's playing."
     kind: stub
     params:
       action:
@@ -184,13 +203,18 @@ music:
   rooms: {}
   duck_level: 20
 
-mcp_servers: {}
+mcp_servers:
+  homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration
 
 tests:
   - { say: "set a timer", expect: clarify }               # no duration given
   - { say: "cancel the timer", expect: clarify, given: { timers: [pasta, laundry] } }
   - { say: "cancel the timer", expect: "tool:timer", given: { timers: [pasta] } }
-  - { say: "turn off the kitchen lights", expect: "tool:home_control" }  # passes while still a stub
+  - { say: "turn off the kitchen lights", expect: "tool:home_control" }
+  - { say: "turn on the bedroom light", expect: "tool:home_control" }
+  - { say: "is the bedroom light on", expect: "tool:home_control" }
+  - { say: "set the piano light to 40 percent", expect: "tool:home_control" }
+  - { say: "lock the front door", expect: "tool:lock_door" }
   - { say: "ask helper what to make with leeks", expect: "agent:helper" }
   - { say: "book me a flight to Denver", expect: offer_agent }
   - { say: "what is helper working on", expect: "tool:tasks" }
