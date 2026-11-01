@@ -26,7 +26,7 @@ Music runs through **Music Assistant**, which streams Plex (and Spotify, when co
 
 ## Where it plays
 
-Music plays where you say (Bill, 2026-11-01): "play Footprints in the exercise room", "play some Miles Davis on the Mac mini". Any Music Assistant player can be named by its name. Without a place, a request from the web app plays in that browser (below); from anywhere else, the first request asks "Where should I play it: ...?"; after that the device keeps using that player until you name another. A satellite (Stage 12) plays in its own room.
+Music plays where you say (Bill, 2026-11-01): "play Footprints in the exercise room", "play some Miles Davis on the Mac mini". Any Music Assistant player can be named by its name. Without a place, music always plays on the device that heard the request, by chat or voice (Bill, 2026-11-01): the web app plays in that browser (below), turning its speaker on if it's off; a satellite (Stage 12) plays in its own room. A device with no speaker of its own answers "I can't play music on this device yet. Name a speaker, like the exercise room." It never asks where, and never picks another speaker.
 
 `rooms` adds friendlier names and ties a satellite to its room:
 

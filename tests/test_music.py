@@ -96,16 +96,28 @@ def test_pick(query, sources, expected) -> None:
     assert (choice.uri if choice else None) == expected
 
 
-def test_play_asks_where_then_remembers() -> None:
+def test_with_no_place_it_plays_only_on_the_device_that_heard() -> None:
     music, backend = service()
-    asked = run(music.handle("web", {"action": "play", "query": "Miles Davis"}))
-    assert asked.speak == "Where should I play it: Exercise room speaker or Bill’s Mac mini?"  # available players only
-    assert asked.pending is not None and asked.pending.kind == "clarify" and backend.played == []
+    refused = run(music.handle("web", {"action": "play", "query": "Miles Davis"}))  # no speaker of its own
+    assert refused.speak == "I can't play music on this device yet. Name a speaker, like the exercise room."
+    assert refused.pending is None and backend.played == []  # never "where should I play it?"
     played = run(music.handle("web", {"action": "play", "query": "Miles Davis", "room": "the exercise room"}))
     assert played.speak == "Playing Miles Davis from Plex on the Exercise room speaker."
-    again = run(music.handle("web", {"action": "play", "query": "Pangaea"}))  # no place: the last one
-    assert again.speak == "Playing Pangaea by Miles Davis from Plex on the Exercise room speaker."
-    assert backend.played == [("ex", "library://artist/1"), ("ex", "library://album/2")]
+    again = run(music.handle("web", {"action": "play", "query": "Pangaea"}))  # not the last one either
+    assert again.speak.startswith("I can't play music on this device")
+    skipped = run(music.handle("web", {"action": "next"}))  # controls still act on what's playing
+    assert skipped.speak == "Skipping." and backend.played == [("ex", "library://artist/1")]
+
+
+def test_a_browser_with_its_speaker_off_asks_what_when_nothing_is_named() -> None:
+    music, backend = service()
+
+    async def send(message: dict) -> None:
+        pass
+
+    music.set_speaker("laptop", None, send)
+    asked = run(music.handle("web", {"action": "play"}, client_id="laptop"))
+    assert asked.speak == "What should I play?" and asked.pending is not None
 
 
 def test_rooms_aliases_and_a_satellites_own_room() -> None:
@@ -249,11 +261,11 @@ def test_a_browser_speaker_plays_its_own_requests() -> None:
     backend.players_.append({"player_id": "browser-1", "name": "Victoria (Safari on iPhone)", "available": True, "volume": 80, "state": "idle", "now": None, "outputs": ["sendspin-client-id"]})
     music.set_speaker("phone", "sendspin-client-id")
     here = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="phone"))
-    other = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="laptop"))  # no speaker: asks
+    other = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="laptop"))  # no player on that page
     named = run(music.handle("web", {"action": "play", "query": "Pangaea", "room": "exercise room"}, client_id="phone"))
     paused = run(music.handle("web", {"action": "pause"}, client_id="phone"))
     assert here.speak == "Playing Pangaea by Miles Davis from Plex here."
-    assert other.pending is not None  # "Where should I play it: ..."
+    assert other.speak == "Music isn't available in this browser. Name a speaker, like the exercise room."
     assert named.speak.endswith("on the Exercise room speaker.")  # a named place still wins
     assert paused.speak == "Paused here."  # its own speaker was playing
     assert backend.played[0] == ("browser-1", "library://album/2")

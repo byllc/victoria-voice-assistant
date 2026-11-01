@@ -3,9 +3,10 @@
 Control goes through `music-assistant-client` over one connection to the configured server:
 search, play, pause, resume, skip, volume and now playing. Music plays where the request says
 (Bill, 2026-11-01): a room from `music.rooms` or any Music Assistant player by name ("in the
-exercise room", "on the Mac mini"). A device with its own room (a satellite) uses that room; a
-browser running the web app plays on its own speaker, turning it on first if it is off (the
-`music_start` message); anything else asks "Where should I play it?" once and keeps that player.
+exercise room", "on the Mac mini"). With no place named it always plays on the device that heard
+the request, by chat or voice (Bill, 2026-11-01): a browser running the web app on its own
+speaker, turning it on first if it is off (the `music_start` message); a satellite in its room.
+A device with no speaker of its own says so; it never picks another speaker.
 A play only counts once the player reports playing; one that never starts is said so.
 Search tries the sources in `source_order` (Plex, then Spotify) unless the request names one.
 While someone talks to the assistant, music playing for that device is ducked to `duck_level`.
@@ -338,7 +339,7 @@ class MusicService:
         )
 
     def _where(self, device: str, players: list[dict[str, Any]], client_id: str | None = None) -> dict[str, Any] | None:
-        """No place named: this browser's own speaker, the device's room, or where its music last went."""
+        """No place named, for controls and ducking: this browser's own speaker, the device's room, or where its music last went."""
         own = self._own(client_id, players)
         if own is not None:
             return own
@@ -348,14 +349,18 @@ class MusicService:
         last = self.last_player.get(client_id or device)
         return next((p for p in players if p["player_id"] == last), None)
 
-    def _ask_where(self, arguments: dict[str, Any], players: list[dict[str, Any]]) -> ToolOutcome:
-        names = [p["name"] for p in players if p["available"]][:5]
-        question = f"Where should I play it: {', '.join(names[:-1])} or {names[-1]}?" if len(names) > 1 else "Where should I play it?"
-        return ToolOutcome(
-            result={"needs": "room", "players": names},
-            speak=question,
-            pending=PendingQuestion(kind="clarify", question=question, options=names),
+    def _room_player(self, device: str, players: list[dict[str, Any]]) -> dict[str, Any] | None:
+        room = self._room_for_device(device)
+        return self._match_player(room, players) if room else None
+
+    def _not_here(self, client_id: str | None) -> ToolOutcome:
+        """The device that heard the request has no speaker of its own: say so rather than pick another."""
+        speak = (
+            "I can't play music on this device yet. Name a speaker, like the exercise room."
+            if client_id is None
+            else "Music isn't available in this browser. Name a speaker, like the exercise room."
         )
+        return ToolOutcome(result={"error": "no speaker here"}, speak=speak)
 
     # The tool -------------------------------------------------------------------------------
 
@@ -375,23 +380,25 @@ class MusicService:
             if player is None:
                 return ToolOutcome(result={"error": f"no speaker called {place!r}"}, speak=f"I don't know a speaker called {place}.")
         elif action == "play":
-            if self._own(client_id, players) is None and client_id in self.browsers and arguments.get("query"):
+            if self._own(client_id, players) is None and client_id in self.browsers:
+                if not str(arguments.get("query") or "").strip():
+                    question = "What should I play?"
+                    return ToolOutcome(result={"needs": "query"}, speak=question, pending=PendingQuestion(kind="clarify", question=question))
                 try:
                     return await self._play_here(client_id, arguments)  # type: ignore[arg-type]
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Music command failed", extra={"event": "music_failed", "action": action, "reason": str(exc) or type(exc).__name__})
                     return ToolOutcome(result={"error": str(exc)}, speak="The music server couldn't do that.", error=True)
-            player = self._where(device, players, client_id)
+            # Always the device that heard the request (Bill, 2026-11-01): never another speaker by guess.
+            player = self._own(client_id, players) or self._room_player(device, players)
             if player is None:
-                return self._ask_where(arguments, players)
+                return self._not_here(client_id)
         else:
             playing = [p for p in players if p["state"] == "playing"]
             own = self._own(client_id, players)
             player = own if own and own["state"] == "playing" else (self._where(device, players, client_id) if len(playing) != 1 else playing[0])
             if player is None:
-                if action == "now_playing":
-                    return ToolOutcome(result={"playing": []}, speak="Nothing is playing.")
-                return self._ask_where(arguments, players)
+                return ToolOutcome(result={"playing": []}, speak="Nothing is playing.")
         if not player["available"]:
             return ToolOutcome(result={"error": "speaker offline"}, speak=f"{_cap(_the(player['name']))} isn't available right now.")
         try:
