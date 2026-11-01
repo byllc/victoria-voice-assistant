@@ -4,6 +4,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import time
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -114,7 +115,13 @@ def _write_plist(document: dict[str, object], destination: Path, load: bool) -> 
     if load:
         # Reinstalling replaces the running agent: unload the old one first (fine if it wasn't loaded).
         label = str(document["Label"])
-        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, check=False)
+        target = f"gui/{os.getuid()}/{label}"
+        subprocess.run(["launchctl", "bootout", target], capture_output=True, check=False)
+        # bootout returns before the old service has stopped; loading again until then fails (error 5).
+        for _ in range(100):
+            if subprocess.run(["launchctl", "print", target], capture_output=True, check=False).returncode != 0:
+                break
+            time.sleep(0.1)
         subprocess.run(
             ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(destination)],
             check=True,
@@ -122,16 +129,15 @@ def _write_plist(document: dict[str, object], destination: Path, load: bool) -> 
     return destination
 
 
-def _shared_paths() -> tuple[Path, Path]:
+def log_directory() -> Path:
+    """Where the LaunchAgents write each service's output."""
+    return Path(os.environ.get("ASSISTANT_LOG_DIR", Path.home() / "Library" / "Logs" / "Victoria Voice Assistant")).expanduser()
+
+
+def _shared_paths() -> tuple[Path, Path, Path]:
     project_dir = Path(__file__).resolve().parents[2]
     config_dir = Path(os.environ.get("ASSISTANT_CONFIG_DIR", project_dir / "config")).expanduser()
-    log_dir = Path(
-        os.environ.get(
-            "ASSISTANT_LOG_DIR",
-            Path.home() / "Library" / "Logs" / "Victoria Voice Assistant",
-        )
-    ).expanduser()
-    return project_dir, config_dir.resolve(), log_dir
+    return project_dir, config_dir.resolve(), log_directory()
 
 
 def install_launch_agent(output: Path | None = None, load: bool = False) -> Path:
@@ -204,7 +210,7 @@ def render_backup_launch_agent(
 
 
 def install_backup_launch_agent(output: Path | None = None, load: bool = False) -> Path:
-    """A daily `assistant backup create` (Stage 11)."""
+    """The daily job, `assistant daily`: a backup, then log rotation (Stage 11)."""
     project_dir, config_dir, log_dir = _shared_paths()
     data_dir = Path(os.environ.get("ASSISTANT_DATA_DIR", default_database_path().parent)).expanduser()
     destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{BACKUP_LABEL}.plist")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import os
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -80,3 +82,18 @@ def configure_logging(level: int = logging.INFO) -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level)
+    # httpx logs every request at INFO; the health checks alone are four every 30 s. Warnings still show.
+    for name in ("httpx", "httpx2"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    _quiet_pipecat()
+
+
+def _quiet_pipecat() -> None:
+    """Pipecat logs through loguru at DEBUG by default: every frame link, every model call's full prompt
+    (about 18 MB a day under launchd). Keep INFO and up; ASSISTANT_PIPECAT_LOG_LEVEL=DEBUG brings it back."""
+    try:
+        from loguru import logger as pipecat_logger
+    except ImportError:
+        return
+    pipecat_logger.remove()
+    pipecat_logger.add(sys.stderr, level=os.environ.get("ASSISTANT_PIPECAT_LOG_LEVEL", "INFO").upper())

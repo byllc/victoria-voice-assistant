@@ -9,8 +9,7 @@
         <string>@PYTHON_EXECUTABLE@</string>
         <string>-m</string>
         <string>victoria_voice_assistant</string>
-        <string>backup</string>
-        <string>create</string>
+        <string>daily</string>
     </array>
     <key>WorkingDirectory</key>
     <string>@PROJECT_DIR@</string>

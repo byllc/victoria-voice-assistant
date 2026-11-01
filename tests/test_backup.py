@@ -91,8 +91,38 @@ def test_the_daily_backup_launch_agent(tmp_path: Path) -> None:
 
     document = render_backup_launch_agent(Path("/py"), Path("/proj"), Path("/cfg"), Path("/logs"), Path("/data"))
     assert document["Label"] == "com.victoria.backup"
-    assert document["ProgramArguments"][-2:] == ["backup", "create"]
+    assert document["ProgramArguments"][-1] == "daily"
     assert document["StartCalendarInterval"] == {"Hour": 3, "Minute": 30}
     assert "KeepAlive" not in document  # runs once a day, not kept alive
     written = install_backup_launch_agent(tmp_path / "backup.plist")
     assert plistlib.loads(written.read_bytes())["EnvironmentVariables"]["ASSISTANT_DATA_DIR"]
+
+
+def test_logs_over_the_limit_are_compressed_and_emptied(tmp_path: Path) -> None:
+    import gzip
+
+    from victoria_voice_assistant.log_rotation import rotate
+
+    big, small = tmp_path / "assistant-error.log", tmp_path / "web.log"
+    big.write_text("x" * 200)
+    small.write_text("y" * 10)
+    for n in range(1, 4):
+        (tmp_path / f"assistant-error.log.{n}.gz").write_bytes(gzip.compress(f"old {n}".encode()))
+    assert rotate(tmp_path, max_bytes=100, keep=3) == [big]
+    assert big.read_text() == "" and small.read_text() == "y" * 10
+    assert gzip.decompress((tmp_path / "assistant-error.log.1.gz").read_bytes()) == b"x" * 200
+    assert gzip.decompress((tmp_path / "assistant-error.log.2.gz").read_bytes()) == b"old 1"
+    assert gzip.decompress((tmp_path / "assistant-error.log.3.gz").read_bytes()) == b"old 2"
+    assert not (tmp_path / "assistant-error.log.4.gz").exists()  # "old 3" dropped
+
+
+def test_the_daily_job_backs_up_and_rotates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config, database, _ = make_setup(tmp_path)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "assistant-error.log").write_bytes(b"z" * (6 * 1024 * 1024))
+    monkeypatch.setenv("ASSISTANT_DATA_DIR", str(database.parent))
+    monkeypatch.setenv("ASSISTANT_LOG_DIR", str(logs))
+    assert main(["daily", "--config-dir", str(config)]) == 0
+    assert backup.list_backups(database.parent / "backups")
+    assert (logs / "assistant-error.log").stat().st_size == 0 and (logs / "assistant-error.log.1.gz").is_file()

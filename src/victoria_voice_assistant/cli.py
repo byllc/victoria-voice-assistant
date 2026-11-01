@@ -128,6 +128,13 @@ def _build_parser() -> argparse.ArgumentParser:
     backup_restore = backup_subcommands.add_parser("restore", help="restore a backup (stop the services first)")
     backup_restore.add_argument("name", help="a backup's file name from `backup list`, or a path")
 
+    logs = commands.add_parser("logs", help="the services' log files")
+    logs_subcommands = logs.add_subparsers(dest="logs_command", required=True)
+    logs_subcommands.add_parser("rotate", help="compress and empty logs over 5 MB, keeping 5 old copies")
+
+    daily = commands.add_parser("daily", help="the daily job: a backup, then log rotation (run by launchd at 03:30)")
+    daily.add_argument("--config-dir", help="configuration directory (default: config/)")
+
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
     install = launchd_subcommands.add_parser("install", help="write assistant LaunchAgent plist")
@@ -262,6 +269,15 @@ def _push_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rotate_logs() -> int:
+    from victoria_voice_assistant.launchd import log_directory
+    from victoria_voice_assistant.log_rotation import rotate
+
+    rotated = rotate(log_directory())
+    print(f"Rotated {len(rotated)} log(s)" + (f": {', '.join(p.name for p in rotated)}" if rotated else ""))
+    return 0
+
+
 def _backup_command(args: argparse.Namespace) -> int:
     from victoria_voice_assistant.storage import backup
     from victoria_voice_assistant.storage.db import default_database_path
@@ -380,6 +396,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "backup":
         return _backup_command(args)
+
+    if args.command == "logs":
+        return _rotate_logs()
+
+    if args.command == "daily":
+        args.backup_command, args.dest, args.keep = "create", None, 14
+        status = _backup_command(args)
+        return _rotate_logs() or status
 
     if args.command == "web":
         try:
