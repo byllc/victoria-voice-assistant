@@ -16,6 +16,7 @@ from victoria_voice_assistant.config.loader import (
     load_config,
 )
 from victoria_voice_assistant.config.schema import AppConfig
+from victoria_voice_assistant.secret_store import get_secret, set_secret
 from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.registry import Services, ToolRegistry, build_registry
 from victoria_voice_assistant.tools.testing import format_report, format_status, run_tool_tests
@@ -100,10 +101,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     push = commands.add_parser("push", help="Web Push to installed web clients")
     push_subcommands = push.add_subparsers(dest="push_command", required=True)
-    push_keys = push_subcommands.add_parser("keys", help="create the VAPID key in config/.env (never printed)")
-    push_keys.add_argument("--config-dir", help="configuration directory (default: config/)")
+    push_subcommands.add_parser("keys", help="create the VAPID key in the Keychain (never printed)")
     push_status = push_subcommands.add_parser("status", help="whether push is set up, and the subscribed browsers")
     push_status.add_argument("--config-dir", help="configuration directory (default: config/)")
+
+    secrets_parser = commands.add_parser("secrets", help="secrets in the macOS Keychain (docs/secrets.md)")
+    secrets_subcommands = secrets_parser.add_subparsers(dest="secrets_command", required=True)
+    secrets_subcommands.add_parser("list", help="which secrets are set (never their values)")
+    secret_set = secrets_subcommands.add_parser("set", help="store a secret; prompts for it without echoing")
+    secret_set.add_argument("name")
+    secret_delete = secrets_subcommands.add_parser("delete", help="remove a secret")
+    secret_delete.add_argument("name")
+    secret_get = secrets_subcommands.add_parser("get", help="print a secret for a script (refuses to print to a terminal)")
+    secret_get.add_argument("name")
+    import_env = secrets_subcommands.add_parser("import-env", help="move a .env file's secrets into the Keychain, then delete it")
+    import_env.add_argument("path", help="the .env file, for example config/.env")
 
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
@@ -135,26 +147,76 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _secrets_command(args: argparse.Namespace) -> int:
+    import getpass
+
+    from victoria_voice_assistant.secret_store import KNOWN, delete_secret
+
+    if args.secrets_command == "list":
+        for name, purpose in KNOWN.items():
+            print(f"  {'set    ' if get_secret(name) else 'not set'}  {name}: {purpose}")
+        return 0
+    if args.secrets_command == "set":
+        # Typed at a hidden prompt, or piped in; never taken as an argument (it would show in the process list).
+        value = getpass.getpass(f"{args.name}: ") if sys.stdin.isatty() else sys.stdin.readline()
+        value = value.strip()
+        if not value:
+            print("Nothing entered; unchanged.", file=sys.stderr)
+            return 1
+        set_secret(args.name, value)
+        print(f"Stored {args.name} in the Keychain. Restart the assistant to use it.")
+        return 0
+    if args.secrets_command == "delete":
+        print(f"Deleted {args.name}." if delete_secret(args.name) else f"{args.name} wasn't in the Keychain.")
+        return 0
+    if args.secrets_command == "get":
+        if sys.stdout.isatty():
+            print("Refusing to print a secret to the terminal; this is for scripts (`$(assistant secrets get NAME)`).", file=sys.stderr)
+            return 1
+        value = get_secret(args.name)
+        if not value:
+            print(f"{args.name} is not set.", file=sys.stderr)
+            return 1
+        sys.stdout.write(value)
+        return 0
+    # import-env: move each NAME=value line into the Keychain, check it reads back, then delete the file.
+    path = Path(args.path).expanduser()
+    if not path.is_file():
+        print(f"{path} doesn't exist.", file=sys.stderr)
+        return 1
+    entries = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            name, value = line.split("=", 1)
+            if value.strip():
+                entries[name.strip()] = value.strip().strip("'\"")
+    for name, value in entries.items():
+        set_secret(name, value)
+        if get_secret(name) != value:
+            print(f"{name} didn't read back from the Keychain; {path} left in place.", file=sys.stderr)
+            return 1
+        print(f"Stored {name}")
+    path.unlink()
+    print(f"Deleted {path}; secrets now come from the Keychain.")
+    return 0
+
+
 def _push_command(args: argparse.Namespace) -> int:
     from victoria_voice_assistant.notifications.push import PushService, generate_private_key, public_key
     from victoria_voice_assistant.storage.db import default_database_path, migrate
 
-    directory = _config_dir(args.config_dir)
-    env_file = directory / ".env"
     if args.push_command == "keys":
-        existing = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
-        if any(line.startswith("VAPID_PRIVATE_KEY=") for line in existing.splitlines()):
-            print(f"{env_file} already has VAPID_PRIVATE_KEY; left unchanged (a new key would cut off every subscribed browser).")
+        if get_secret("VAPID_PRIVATE_KEY"):
+            print("VAPID_PRIVATE_KEY is already set; left unchanged (a new key would cut off every subscribed browser).")
             return 0
         key = generate_private_key()
-        with env_file.open("a", encoding="utf-8") as handle:
-            handle.write(("" if not existing or existing.endswith("\n") else "\n") + f"VAPID_PRIVATE_KEY={key}\n")
-        env_file.chmod(0o600)
-        print(f"Added VAPID_PRIVATE_KEY to {env_file}. Public key (safe to share): {public_key(key)}")
+        set_secret("VAPID_PRIVATE_KEY", key)
+        print(f"Stored VAPID_PRIVATE_KEY in the Keychain. Public key (safe to share): {public_key(key)}")
         print("Then set notifications.web_push: true and vapid_subject in tools.yaml, and restart the assistant.")
         return 0
     try:
-        config = load_config(directory)
+        config = load_config(_config_dir(args.config_dir))
     except ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -217,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         for filename in filenames:
             shutil.copyfile(examples / filename, destination / filename)
         print(f"Example configuration copied to {destination}")
-        print(f"Copy {examples / '.env.example'} to {destination / '.env'} and set secrets.")
+        print("Store secrets in the Keychain: `uv run assistant secrets set LMS_API_KEY` (docs/secrets.md).")
         return 0
 
     if args.command == "serve":
@@ -248,6 +310,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "push":
         return _push_command(args)
+
+    if args.command == "secrets":
+        return _secrets_command(args)
 
     if args.command == "web":
         try:

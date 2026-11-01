@@ -13,7 +13,6 @@ dependencies = [
     "pipecat-ai[anthropic,kokoro,mlx-whisper,openai,webrtc,websocket,whisper]==1.15.0",
     "pydantic>=2.11,<3",
     "playwright>=1.50,<2",
-    "python-dotenv>=1,<2",
     "trafilatura>=2,<3",
     "PyYAML>=6,<7",
     "uvicorn>=0.34,<1",
@@ -21,6 +20,7 @@ dependencies = [
     "websockets>=15,<18",
     "lxml>=6,<7",
     "pywebpush>=2,<3",
+    "keyring>=25,<26",
 ]
 
 [project.optional-dependencies]

@@ -84,8 +84,8 @@ uv sync --extra dev
 
 # 2. Configuration: copies the examples into config/
 uv run assistant config init
-cp config/examples/.env.example config/.env
-#    Set LMS_API_KEY in config/.env (LM Studio > Developer > API key).
+uv run assistant secrets set LMS_API_KEY
+#    LM Studio > Developer > API key; stored in the macOS Keychain (docs/secrets.md).
 #    Set weather.home (lat/lon) in config/tools.yaml.
 uv run assistant config check
 
@@ -151,7 +151,6 @@ Everything lives in `config/` (or the directory in `ASSISTANT_CONFIG_DIR`); the 
 | `tools.yaml` | Tools, built-in service settings (weather, timers, search), and the phrases `tools test` checks |
 | `searxng/settings.yml` | SearXNG's settings: localhost only, JSON output, which engines, a short timeout |
 | `agents.yaml` | Agents and their aliases (used from Stage 7) |
-| `.env` | Secrets such as `LMS_API_KEY`. Git-ignored. |
 | `tls/` | The HTTPS certificate and key. Git-ignored. |
 
 Edits to the YAML files are picked up while the service runs. An invalid edit is rejected and logged, and the previous configuration stays in use.
@@ -192,6 +191,7 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/implementation_plan.md](docs/implementation_plan.md): the stages, their order and what "done" means.
 - [docs/stages.md](docs/stages.md): the live tracker, with evidence and the decisions log.
 - [docs/https.md](docs/https.md): installing and renewing the HTTPS certificate.
+- [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens) in the macOS Keychain; nothing secret is kept in `config/`.
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.
 - [docs/claude-setup.md](docs/claude-setup.md): turning on the optional Claude agent (an API key; it's a stub until then).
 - [docs/hermes.md](docs/hermes.md): connecting the assistant to a Hermes Agent installation (any; `services/hermes/` is only a test setup).

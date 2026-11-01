@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import yaml
-from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
 from victoria_voice_assistant.config.schema import (
@@ -17,6 +16,7 @@ from victoria_voice_assistant.config.schema import (
     ToolsConfig,
     validate_references,
 )
+from victoria_voice_assistant.secret_store import get_secret
 
 T = TypeVar("T", bound=BaseModel)
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")  # ${NAME} or ${NAME:-default}
@@ -64,14 +64,14 @@ def substitute_environment(value: Any, filename: str, field: str = "") -> Any:
 
     def replace(match: re.Match[str]) -> str:
         name, default = match.group(1), match.group(2)
-        result = os.environ.get(name)
+        result = get_secret(name)  # the process environment, then the Keychain
         if not result and default is not None:
             return default  # optional, e.g. a cloud provider's key that may not be set up yet
         if not result:
             raise ConfigError(
                 filename,
                 field or "$",
-                f"environment variable {name} is not set or is empty",
+                f"{name} is not set (store it with `assistant secrets set {name}`)",
             )
         return result
 
@@ -120,7 +120,6 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
     if not directory.is_dir():
         raise ConfigError(str(directory), "$", "configuration directory does not exist")
 
-    load_dotenv(directory / ".env", override=False)
     models = _read_yaml(directory, "models.yaml", ModelsConfig)
     tools = _read_yaml(directory, "tools.yaml", ToolsConfig)
     agents = _read_yaml(directory, "agents.yaml", AgentsConfig)

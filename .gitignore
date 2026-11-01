@@ -1,4 +1,4 @@
-# --- Secrets (ground rule: secrets come only from config/.env, never committed) ---
+# --- Secrets live in the macOS Keychain (docs/secrets.md); an old config/.env is still never committed ---
 config/.env
 .env
 config/models.yaml

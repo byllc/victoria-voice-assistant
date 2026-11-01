@@ -1,16 +1,17 @@
 #!/bin/sh
 # Run the test Hermes container in the foreground (so launchd or a terminal can supervise it).
-# Keys come from config/.env: HERMES_API_KEY (the gateway's key) and LMS_API_KEY (LM Studio's).
+# Keys come from the macOS Keychain (docs/secrets.md): HERMES_API_KEY (the gateway's key) and LMS_API_KEY (LM Studio's).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-config_dir=${ASSISTANT_CONFIG_DIR:-$here/../../config}
+project=$here/../..
 work_dir=${HERMES_WORK_DIR:-$HOME/Services/hermes/work}
 
-value() { sed -n "s/^$1=//p" "$config_dir/.env" | tail -n 1; }
+# Read into this process only, and passed to the container by name (never on a command line).
+value() { uv run --project "$project" --quiet assistant secrets get "$1" 2>/dev/null; }
 API_SERVER_KEY=$(value HERMES_API_KEY)
 LM_API_KEY=$(value LMS_API_KEY)
 if [ -z "$API_SERVER_KEY" ] || [ -z "$LM_API_KEY" ]; then
-    echo "Set HERMES_API_KEY and LMS_API_KEY in $config_dir/.env" >&2
+    echo "Store HERMES_API_KEY and LMS_API_KEY: uv run assistant secrets set HERMES_API_KEY (docs/secrets.md)" >&2
     exit 1
 fi
 export API_SERVER_KEY LM_API_KEY
