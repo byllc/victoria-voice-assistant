@@ -263,6 +263,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Blocking decisions: none in the plan. Latency figures come from the target Mac mini, at the end, not the M2 (Bill's standing instruction).
 - Carried in from earlier stages: overlapping voice turns can lose a command; open the Home Assistant connection at startup; a bare "yes" with no open question; the blank reply to "set a timer"; the Hermes process left running after a cancel; the web interface's `--config-dir` and `config/.env`.
 - Evidence:
+  - Backups (`storage/backup.py`, `assistant backup create|list|restore`): one `victoria-<UTC time>.tar.gz` in `backups/` beside the database (or `--dest`), holding a consistent copy of the database (SQLite's online backup, safe while the service runs) and `config/` (YAML, SearXNG settings, TLS certificates), never `config/.env` or private keys; the newest 14 are kept. Restore refuses entries outside `database/` and `config/` or any secret file, saves what it replaces as a `pre-restore` archive first, and leaves `.env` and keys untouched. Tests: `tests/test_backup.py` (5). A real backup of Bill's data: `victoria-20261101-230033.tar.gz`, 9 KB: the database, agents/models/tools YAML, SearXNG settings, `ca.pem` and `cert.pem`. `uv run pytest -q`: 294 passed, 3 skipped. Not yet scheduled (a daily LaunchAgent needs Bill's go-ahead).
 - Bill's review notes:
 
 ## Decisions log

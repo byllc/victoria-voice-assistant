@@ -117,6 +117,16 @@ def _build_parser() -> argparse.ArgumentParser:
     secret_get = secrets_subcommands.add_parser("get", help="print a secret for a script (refuses to print to a terminal)")
     secret_get.add_argument("name")
 
+    backup = commands.add_parser("backup", help="back up and restore the database and configuration")
+    backup.add_argument("--config-dir", help="configuration directory (default: config/)")
+    backup.add_argument("--dest", help="backups folder (default: backups/ beside the database)")
+    backup_subcommands = backup.add_subparsers(dest="backup_command", required=True)
+    backup_create = backup_subcommands.add_parser("create", help="write a backup now (never secrets)")
+    backup_create.add_argument("--keep", type=int, default=14, help="how many backups to keep (default: 14)")
+    backup_subcommands.add_parser("list", help="list backups, newest first")
+    backup_restore = backup_subcommands.add_parser("restore", help="restore a backup (stop the services first)")
+    backup_restore.add_argument("name", help="a backup's file name from `backup list`, or a path")
+
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
     install = launchd_subcommands.add_parser("install", help="write assistant LaunchAgent plist")
@@ -247,6 +257,36 @@ def _push_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _backup_command(args: argparse.Namespace) -> int:
+    from victoria_voice_assistant.storage import backup
+    from victoria_voice_assistant.storage.db import default_database_path
+
+    database = default_database_path()
+    dest = Path(args.dest).expanduser() if args.dest else backup.default_backup_dir(database)
+    config_dir = _config_dir(args.config_dir)
+    if args.backup_command == "create":
+        archive = backup.create(config_dir, database, dest, keep=args.keep)
+        logging.getLogger(__name__).info("Backup written", extra={"event": "backup_created", "path": str(archive)})
+        print(f"Backup written: {archive}")
+        return 0
+    if args.backup_command == "list":
+        found = backup.list_backups(dest)
+        if not found:
+            print(f"No backups in {dest}")
+        for archive in found:
+            print(f"{archive.name}  {archive.stat().st_size // 1024} KB")
+        return 0
+    name = Path(args.name).expanduser()
+    archive = name if name.is_file() else dest / args.name
+    try:
+        saved = backup.restore(archive, config_dir, database, dest)
+    except backup.BackupError as exc:
+        print(f"Restore failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Restored {archive.name}. What it replaced is saved as {saved.name}. Start the services again.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
     parser = _build_parser()
@@ -332,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "secrets":
         return _secrets_command(args)
+
+    if args.command == "backup":
+        return _backup_command(args)
 
     if args.command == "web":
         try:
