@@ -245,8 +245,9 @@ def test_relay_not_set_up(example_config_dir: Path, monkeypatch) -> None:
 
 def test_a_browser_speaker_plays_its_own_requests() -> None:
     music, backend = service()
-    backend.players_.append({"player_id": "browser-1", "name": "Victoria (Safari on iPhone)", "available": True, "volume": 80, "state": "idle", "now": None})
-    music.set_speaker("phone", "browser-1")
+    # Music Assistant gives the browser its own id and keeps the Sendspin client id as the output id.
+    backend.players_.append({"player_id": "browser-1", "name": "Victoria (Safari on iPhone)", "available": True, "volume": 80, "state": "idle", "now": None, "outputs": ["sendspin-client-id"]})
+    music.set_speaker("phone", "sendspin-client-id")
     here = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="phone"))
     other = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="laptop"))  # no speaker: asks
     named = run(music.handle("web", {"action": "play", "query": "Pangaea", "room": "exercise room"}, client_id="phone"))
@@ -280,12 +281,26 @@ def test_the_web_interface_relays_sendspin_only_when_signed_in() -> None:
 
     from victoria_voice_assistant.web.app import create_web_app
 
-    locked = TestClient(create_web_app(password="pw", static_dir=None, music_url="http://ma.test:8095"))
+    locked = TestClient(create_web_app(password="pw", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
     assert locked.get("/api/music").json() == {"speaker": False}  # not signed in
     with pytest.raises(WebSocketDisconnect):
         with locked.websocket_connect("/sendspin") as ws:
             ws.receive_text()
-    no_music = TestClient(create_web_app(password="", static_dir=None, music_url=None))
+    no_music = TestClient(create_web_app(password="", static_dir=None, sendspin_url=None))
     assert no_music.get("/api/music").json() == {"speaker": False}
-    with_music = TestClient(create_web_app(password="", static_dir=None, music_url="http://ma.test:8095"))
+    with_music = TestClient(create_web_app(password="", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
     assert with_music.get("/api/music").json() == {"speaker": True}
+    assert MusicConfig(server="http://ma.test:8095").sendspin() == "ws://ma.test:8927/sendspin"
+
+
+
+def test_artwork_comes_only_from_the_music_server() -> None:
+    from fastapi.testclient import TestClient
+
+    from victoria_voice_assistant.web.app import create_web_app
+
+    open_app = TestClient(create_web_app(password="", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
+    assert open_app.get("/api/music/artwork", params={"url": "http://evil.test/x.png"}).status_code == 400
+    assert open_app.get("/api/music/artwork", params={"url": "file:///etc/passwd"}).status_code == 400
+    locked = TestClient(create_web_app(password="pw", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
+    assert locked.get("/api/music/artwork", params={"url": "http://ma.test:8095/a.png"}).status_code == 401

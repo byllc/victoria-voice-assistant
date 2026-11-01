@@ -4,6 +4,7 @@ import asyncio
 import logging
 import mimetypes
 import os
+from urllib.parse import urlsplit
 from pathlib import Path
 
 import httpx
@@ -38,7 +39,7 @@ def create_web_app(
     service_url: str = DEFAULT_SERVICE_URL,
     static_dir: Path | None = DEFAULT_STATIC_DIR,
     secure_cookies: bool = False,
-    music_url: str | None = None,
+    sendspin_url: str | None = None,
 ) -> FastAPI:
     # Without a password the app runs open (insecure) and the client shows a warning.
     insecure = not password
@@ -128,26 +129,55 @@ def create_web_app(
     @app.get("/api/music")
     async def music_info(request: Request) -> dict[str, bool]:
         """Whether this browser can be a music speaker (Sendspin through /sendspin)."""
-        return {"speaker": bool(music_url) and authenticated(request.cookies.get(COOKIE_NAME))}
+        return {"speaker": bool(sendspin_url) and authenticated(request.cookies.get(COOKIE_NAME))}
+
+    music_host = urlsplit(sendspin_url).hostname if sendspin_url else None
+
+    @app.get("/api/music/artwork")
+    async def music_artwork(request: Request, url: str) -> Response:
+        """Album art for the player widget. Music Assistant serves it over plain HTTP, which an HTTPS page
+        won't load, so it comes through here: only images, only from the Music Assistant host."""
+        if not authenticated(request.cookies.get(COOKIE_NAME)):
+            raise HTTPException(status_code=401, detail="not signed in")
+        target = urlsplit(url)
+        if not music_host or target.scheme not in ("http", "https") or target.hostname != music_host:
+            raise HTTPException(status_code=400, detail="not the music server")
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                upstream = await client.get(url)
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="music server unreachable") from None
+        content_type = upstream.headers.get("content-type", "")
+        if upstream.status_code != 200 or not content_type.startswith("image/"):
+            raise HTTPException(status_code=404, detail="no image")
+        return Response(content=upstream.content, media_type=content_type, headers={"Cache-Control": "private, max-age=3600"})
 
     @app.websocket("/sendspin")
     async def sendspin(websocket: WebSocket) -> None:
         """The browser as a Music Assistant speaker: Sendspin relayed to Music Assistant (Stage 10).
 
         Relayed rather than direct so it works from the HTTPS page (a browser won't open plain ws:// there)
-        and stays behind the household login. Audio frames are binary.
+        and stays behind the household login. Goes to Music Assistant's Sendspin listener (port 8927 by
+        default), not its API port's /sendspin, which wants Music Assistant's own login first. Audio is binary.
         """
-        if not music_url or not authenticated(websocket.cookies.get(COOKIE_NAME)):
+        if not sendspin_url or not authenticated(websocket.cookies.get(COOKIE_NAME)):
             await websocket.close(code=1008)
             return
         await websocket.accept()
-        upstream_url = music_url.rstrip("/").replace("https://", "wss://").replace("http://", "ws://") + "/sendspin"
         try:
-            async with connect(upstream_url, max_size=None) as upstream:
-                await _relay_frames(websocket, upstream)
-        except (OSError, WebSocketException):
-            logger.error("Music server unreachable", extra={"event": "sendspin_unreachable"})
+            async with connect(sendspin_url, max_size=None) as upstream:
+                try:
+                    await _relay_frames(websocket, upstream)
+                finally:
+                    logger.info(
+                        "Speaker relay closed",
+                        extra={"event": "sendspin_closed", "status": upstream.close_code, "reason": upstream.close_reason or ""},
+                    )
+        except OSError as exc:
+            logger.error("Music server unreachable", extra={"event": "sendspin_unreachable", "reason": str(exc)})
             await websocket.close(code=1011)
+        except WebSocketException as exc:
+            logger.warning("Speaker relay ended", extra={"event": "sendspin_closed", "reason": repr(exc)})
         except WebSocketDisconnect:
             pass
 
@@ -228,5 +258,5 @@ def create_default_web_app() -> FastAPI:
         password=get_secret("ASSISTANT_WEB_PASSWORD") or "",
         service_url=os.environ.get("ASSISTANT_SERVICE_URL", DEFAULT_SERVICE_URL),
         secure_cookies=os.environ.get("ASSISTANT_WEB_TLS") == "1",
-        music_url=os.environ.get("ASSISTANT_MUSIC_URL") or None,
+        sendspin_url=os.environ.get("ASSISTANT_SENDSPIN_URL") or None,
     )

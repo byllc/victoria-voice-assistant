@@ -4,14 +4,30 @@ import { SendspinPlayer } from "@sendspin/sendspin-js";
 
 import type { Chat } from "./useChat";
 
+export type NowPlaying = {
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  artwork: string | null;
+  durationMs: number | null;
+  // Where the track was, and when (this browser's clock), so the progress bar can run between updates.
+  progressMs: number | null;
+  progressAt: number;
+  speed: number;
+};
+
 export type Speaker = {
   /** The web interface can relay Sendspin to Music Assistant (music is configured, signed in). */
   available: boolean;
   on: boolean;
   playing: boolean;
-  title: string | null;
+  volume: number;
+  now: NowPlaying | null;
+  commands: string[];
   error: string | null;
   toggle: () => Promise<void>;
+  command: (name: "play" | "pause" | "next" | "previous") => void;
+  setVolume: (volume: number) => void;
 };
 
 function browserName(): string {
@@ -21,16 +37,26 @@ function browserName(): string {
   return `${browser} on ${device}`;
 }
 
+// Artwork comes from Music Assistant over plain HTTP; an HTTPS page loads it through the web interface.
+function artworkUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (location.protocol === "https:" && url.startsWith("http:")) return `/api/music/artwork?url=${encodeURIComponent(url)}`;
+  return url;
+}
+
 /**
  * "Play music here": this browser as a Music Assistant speaker over Sendspin (relayed by the web interface at
- * /sendspin). Its player id goes to the assistant, so music asked for from here with no place named plays here.
+ * /sendspin). Its id goes to the assistant, so music asked for from here with no place named plays here.
+ * Kept above the tabs, so switching tabs doesn't cut the music off.
  */
 export function useSpeaker(chat: Chat): Speaker {
   const player = useRef<SendspinPlayer | null>(null);
   const [available, setAvailable] = useState(false);
   const [on, setOn] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [title, setTitle] = useState<string | null>(null);
+  const [volume, setVolumeState] = useState(100);
+  const [now, setNow] = useState<NowPlaying | null>(null);
+  const [commands, setCommands] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,7 +66,7 @@ export function useSpeaker(chat: Chat): Speaker {
       .catch(() => setAvailable(false));
   }, []);
 
-  // The chat socket reconnects on its own; tell the assistant about this speaker again each time.
+  // The chat socket may reconnect; tell the assistant about this speaker again each time.
   useEffect(() => {
     if (chat.status === "connected" && player.current?.isConnected) {
       chat.send({ type: "music_speaker", player_id: player.current.clientId });
@@ -56,7 +82,7 @@ export function useSpeaker(chat: Chat): Speaker {
       player.current = null;
       setOn(false);
       setPlaying(false);
-      setTitle(null);
+      setNow(null);
       chat.send({ type: "music_speaker", player_id: null });
       return;
     }
@@ -66,9 +92,22 @@ export function useSpeaker(chat: Chat): Speaker {
       productName: "Victoria",
       correctionMode: "quality-local",
       onStateChange: (state) => {
-        setPlaying(state.isPlaying);
+        setPlaying(state.groupState?.playback_state === "playing" || state.isPlaying);
+        if (state.serverState?.controller?.supported_commands) setCommands(state.serverState.controller.supported_commands);
+        if (typeof state.serverState?.controller?.volume === "number") setVolumeState(state.serverState.controller.volume);
         const meta = state.serverState?.metadata;
-        setTitle(meta?.title ? [meta.title, meta.artist].filter(Boolean).join(" · ") : null);
+        if (meta) {
+          setNow({
+            title: meta.title ?? null,
+            artist: meta.artist ?? null,
+            album: meta.album ?? null,
+            artwork: artworkUrl(meta.artwork_url),
+            durationMs: meta.progress?.track_duration ?? null,
+            progressMs: meta.progress?.track_progress ?? null,
+            progressAt: Date.now(),
+            speed: meta.progress?.playback_speed ?? 1,
+          });
+        }
       },
     });
     try {
@@ -84,5 +123,14 @@ export function useSpeaker(chat: Chat): Speaker {
     chat.send({ type: "music_speaker", player_id: created.clientId });
   }, [chat.send]);
 
-  return { available, on, playing, title, error, toggle };
+  const command = useCallback((name: "play" | "pause" | "next" | "previous") => {
+    player.current?.sendCommand(name, undefined);
+  }, []);
+
+  const setVolume = useCallback((value: number) => {
+    setVolumeState(value);
+    player.current?.sendCommand("volume", { volume: value });
+  }, []);
+
+  return { available, on, playing, volume, now, commands, error, toggle, command, setVolume };
 }

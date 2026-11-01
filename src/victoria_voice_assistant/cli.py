@@ -349,8 +349,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             # The browser-as-speaker relay (/sendspin) goes to Music Assistant, if music is configured.
             music = load_config(_config_dir(args.config_dir)).tools.music
-            if music is not None and music.server is not None:
-                os.environ["ASSISTANT_MUSIC_URL"] = str(music.server)
+            if music is not None and music.sendspin():
+                os.environ["ASSISTANT_SENDSPIN_URL"] = music.sendspin()  # type: ignore[assignment]
         except ConfigError:
             pass
         uvicorn.run(

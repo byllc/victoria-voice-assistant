@@ -126,6 +126,8 @@ class AssistantBackend:
                     "volume": player.volume_level,
                     "state": getattr(player.playback_state, "value", player.playback_state),
                     "now": title,
+                    # A Sendspin browser is wrapped in a "universal player"; its Sendspin output id is the browser's id.
+                    "outputs": [output.output_protocol_id for output in (getattr(player, "output_protocols", None) or [])],
                 }
             )
         return found
@@ -278,8 +280,13 @@ class MusicService:
         logger.info("Browser speaker", extra={"event": "music_speaker", "count": len(self.speakers)})
 
     def _own(self, client_id: str | None, players: list[dict[str, Any]]) -> dict[str, Any] | None:
-        player_id = self.speakers.get(client_id or "")
-        return next((p for p in players if p["player_id"] == player_id and p["available"]), None)
+        speaker = self.speakers.get(client_id or "")
+        if not speaker:
+            return None
+        return next(
+            (p for p in players if p["available"] and (p["player_id"] == speaker or speaker in p.get("outputs", []))),
+            None,
+        )
 
     def _where(self, device: str, players: list[dict[str, Any]], client_id: str | None = None) -> dict[str, Any] | None:
         """No place named: this browser's own speaker, the device's room, or where its music last went."""

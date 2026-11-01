@@ -8,7 +8,6 @@ import type { VoiceHandlers } from "./App";
 import { NotificationCard } from "./NotificationCard";
 import type { Chat } from "./useChat";
 import type { ServerMessage } from "./types";
-import { useSpeaker } from "./useSpeaker";
 
 type Mode = "hands-free" | "push-to-talk";
 
@@ -56,7 +55,6 @@ export function ChatView({ chat, voice, onOpenAlerts }: { chat: Chat; voice: Voi
         <div ref={end} />
       </div>
       <VoiceBar chat={chat} voice={voice} />
-      <SpeakerBar chat={chat} />
       <TextInputComponent
         placeholder="Ask Victoria…"
         onSend={(text) => {
@@ -66,22 +64,6 @@ export function ChatView({ chat, voice, onOpenAlerts }: { chat: Chat; voice: Voi
         buttonLabel="Send"
       />
       <NotificationStrip chat={chat} onOpen={onOpenAlerts} />
-    </div>
-  );
-}
-
-/** "Play music here": this browser as a speaker for music asked for from it. */
-function SpeakerBar({ chat }: { chat: Chat }) {
-  const speaker = useSpeaker(chat);
-  if (!speaker.available) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
-      <Button size="sm" variant={speaker.on ? "active" : "outline"} onClick={() => void speaker.toggle()} aria-pressed={speaker.on}>
-        {speaker.on ? "🔊 Music plays here" : "Play music here"}
-      </Button>
-      <span className="min-w-0 flex-1 truncate opacity-70">
-        {speaker.error ?? (speaker.on ? (speaker.playing && speaker.title ? speaker.title : "Ask for music and it plays in this browser.") : "")}
-      </span>
     </div>
   );
 }
