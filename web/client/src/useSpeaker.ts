@@ -47,6 +47,11 @@ function browserName(): string {
   return `${browser} on ${device}`;
 }
 
+// The same test the Sendspin library uses for Safari (Mac, iPhone, iPad).
+function isSafari(): boolean {
+  return /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+}
+
 // Artwork comes from Music Assistant over plain HTTP; an HTTPS page loads it through the web interface.
 function artworkUrl(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -114,6 +119,10 @@ export function useSpeaker(chat: Chat): Speaker {
         clientName: `Victoria (${browserName()})`,
         productName: "Victoria",
         correctionMode: "quality-local",
+        // Safari gets uncompressed audio: its Opus decoding (native or the library's fallback) played silently
+        // here while the player showed the track. PCM needs no decoder; on the home network the extra
+        // bandwidth (about 1.5 Mbit/s) doesn't matter. Other browsers keep the library's choice.
+        codecs: isSafari() ? ["pcm"] : undefined,
         onStateChange: (state) => {
           if (state.serverState?.controller?.supported_commands) {
             ready.current?.();
