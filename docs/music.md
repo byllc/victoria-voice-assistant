@@ -26,7 +26,7 @@ Music runs through **Music Assistant**, which streams Plex (and Spotify, when co
 
 ## Where it plays
 
-Music plays where you say (Bill, 2026-11-01): "play Footprints in the exercise room", "play some Miles Davis on the Mac mini". Any Music Assistant player can be named by its name. Without a place, the first request from a device asks "Where should I play it: ...?"; after that the device keeps using that player until you name another. A satellite (Stage 12) plays in its own room.
+Music plays where you say (Bill, 2026-11-01): "play Footprints in the exercise room", "play some Miles Davis on the Mac mini". Any Music Assistant player can be named by its name. Without a place, a request from the web app plays in that browser (below); from anywhere else, the first request asks "Where should I play it: ...?"; after that the device keeps using that player until you name another. A satellite (Stage 12) plays in its own room.
 
 `rooms` adds friendlier names and ties a satellite to its room:
 
@@ -38,16 +38,16 @@ rooms:
 
 ## The web app as a speaker and player
 
-Above the tabs, the web app has a music player: artwork, title, artist and album, the track time and a progress bar, previous / play-pause / next, and volume. Pressing play (or the speaker button, **🔈 Off** / **🔊 Here**) turns that browser into a Music Assistant speaker ("Victoria (Safari on iPhone)") over Sendspin, Music Assistant's streaming protocol (`@sendspin/sendspin-js`). Music asked for from that browser with no place named then plays right there ("Playing Footprints by Miles Davis from Plex here."). Voice and chat commands (pause, skip, volume) and ducking act on it too, and it keeps playing while you switch tabs.
+Above the tabs, the web app has a music player: artwork, title, artist and album, the track time and a progress bar, previous / play-pause / next, and volume. Pressing play (or the speaker button, **🔈 Off** / **🔊 Here**) turns that browser into a Music Assistant speaker ("Victoria (Safari on iPhone)") over Sendspin, Music Assistant's streaming protocol (`@sendspin/sendspin-js`). Music asked for from that browser with no place named plays right there ("Playing Footprints by Miles Davis from Plex here."); if its speaker is off, the assistant turns it on first (the `music_start` message) and plays once Music Assistant lists it. Voice and chat commands (pause, skip, volume) and ducking act on it too, and it keeps playing while you switch tabs.
 
 - The web interface relays the browser's `/sendspin` connection to Music Assistant's Sendspin listener (port 8927 on the `music.server` host; `music.sendspin_url` overrides it), behind the household login, so it works from the HTTPS page. Music Assistant's `/sendspin` on its API port isn't used: it wants Music Assistant's own login first ("First message must be auth").
 - Music Assistant shows the browser as a "universal player" with its own id; the browser's Sendspin id is that player's output id, which is how "here" finds it.
 - Artwork, which Music Assistant serves over plain HTTP, comes through the web interface (`/api/music/artwork`, images from the Music Assistant host only).
-- Browsers only allow audio after a tap, so after reloading press play (or the speaker button) again.
+- Browsers only allow audio after a tap. Turning the speaker on for a typed request relies on the tap that sent it; if the browser still refuses, press play.
 
 ## What you can say
 
-- **Play**: an artist, album, track or playlist; "from Plex" / "on Spotify" picks the source. The reply says what was found and where: "Playing Footprints by Miles Davis from Plex on the Exercise room speaker." If the exact album isn't in the library, the closest match plays (often the artist), and the reply names it.
+- **Play**: an artist, album, track or playlist; "from Plex" / "on Spotify" picks the source. The reply says what was found and where: "Playing Footprints by Miles Davis from Plex on the Exercise room speaker." If the exact album isn't in the library, the closest match plays (often the artist), and the reply names it. A play counts only once the player reports playing within 5 seconds; Music Assistant queues music even for a speaker it can't reach (an AirPlay Mac with its receiver off), so otherwise the reply is "Bill's MacBook Pro didn't start playing. It may be off or unreachable."
 - **Control** (the player that's playing, or the one this device last used): pause, resume, skip, go back, stop, "volume 30", "turn it down", "what's playing?".
 - **Ducking**: while you talk to the assistant by voice, music on that device's player drops to `duck_level` and comes back after the reply.
 - An unreachable server: "I can't reach the music server right now."

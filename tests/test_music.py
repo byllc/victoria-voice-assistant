@@ -272,7 +272,48 @@ def test_the_serializer_passes_the_speaker() -> None:
             for text in ['{"type": "music_speaker", "player_id": "abc"}', '{"type": "music_speaker", "player_id": null}']
         ]
 
-    assert run(scenario()) == [{"type": "music_speaker", "player_id": "abc"}, {"type": "music_speaker", "player_id": None}]
+    assert run(scenario()) == [
+        {"type": "music_speaker", "player_id": "abc", "can_play": False},
+        {"type": "music_speaker", "player_id": None, "can_play": False},
+    ]
+
+
+def test_asked_from_a_browser_with_its_speaker_off_it_turns_on_and_plays_there() -> None:
+    music, backend = service()
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    async def scenario():
+        music.set_speaker("laptop", None, send)  # the page has the player, its speaker off
+        outcome = await music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="laptop")
+        assert sent == [{"type": "music_start"}] and backend.played == []
+        # The browser connects; Music Assistant lists it a moment later.
+        music.set_speaker("laptop", "sendspin-laptop", send)
+        await asyncio.sleep(0.05)
+        backend.players_.append({"player_id": "browser-2", "name": "Victoria (Chrome on Mac)", "available": True, "volume": 80, "state": "idle", "now": None, "outputs": ["sendspin-laptop"]})
+        await asyncio.wait_for(asyncio.gather(*music._tasks), 5)
+        return outcome
+
+    outcome = run(scenario())
+    assert outcome.speak == "Playing Pangaea by Miles Davis from Plex here."
+    assert outcome.pending is None  # no "where should I play it?"
+    assert backend.played == [("browser-2", "library://album/2")]
+
+
+def test_a_player_that_never_starts_is_said_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    import victoria_voice_assistant.tools.music as module
+
+    class Silent(FakeMusic):
+        async def play(self, player_id: str, uri: str) -> None:
+            self.played.append((player_id, uri))  # queued, but the speaker never plays (AirPlay off)
+
+    monkeypatch.setattr(module, "PLAY_CHECK_S", 0.3)
+    music, backend = service(Silent())
+    outcome = run(music.handle("web", {"action": "play", "query": "Pangaea", "room": "Mac mini"}))
+    assert outcome.error
+    assert outcome.speak == "Bill’s Mac mini didn't start playing. It may be off or unreachable."
 
 
 def test_the_web_interface_relays_sendspin_only_when_signed_in() -> None:

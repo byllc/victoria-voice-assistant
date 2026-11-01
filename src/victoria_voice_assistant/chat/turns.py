@@ -101,7 +101,9 @@ class TurnPreprocessor(FrameProcessor):
             elif message.get("type") == "hello":
                 self.state.client_id = message["client_id"]
             elif message.get("type") == "music_speaker" and self.music is not None and self.state.client_id:
-                self.music.set_speaker(self.state.client_id, message["player_id"])
+                # A page with the music player can be asked to turn its speaker on ("music_start").
+                send = self._send_message if message.get("can_play") else None
+                self.music.set_speaker(self.state.client_id, message["player_id"], send)
             elif message.get("type") == "push_subscribe" and self.notifications is not None and self.notifications.push:
                 saved = self.state.client_id is not None and self.notifications.push.subscribe(
                     self.state.client_id, self.state.device, message["subscription"]
@@ -127,6 +129,9 @@ class TurnPreprocessor(FrameProcessor):
                 await self._start(frame, text)
                 return
         await self.push_frame(frame, direction)
+
+    async def _send_message(self, message: dict) -> None:
+        await self.push_frame(OutputTransportMessageFrame(message=message))
 
     async def release_next(self) -> None:
         """Run the next waiting message once the current request has settled."""

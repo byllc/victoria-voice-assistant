@@ -3,8 +3,10 @@
 Control goes through `music-assistant-client` over one connection to the configured server:
 search, play, pause, resume, skip, volume and now playing. Music plays where the request says
 (Bill, 2026-11-01): a room from `music.rooms` or any Music Assistant player by name ("in the
-exercise room", "on the Mac mini"). A device with its own room (a satellite) uses that room; the
-web client asks "Where should I play it?" the first time and then keeps using that player.
+exercise room", "on the Mac mini"). A device with its own room (a satellite) uses that room; a
+browser running the web app plays on its own speaker, turning it on first if it is off (the
+`music_start` message); anything else asks "Where should I play it?" once and keeps that player.
+A play only counts once the player reports playing; one that never starts is said so.
 Search tries the sources in `source_order` (Plex, then Spotify) unless the request names one.
 While someone talks to the assistant, music playing for that device is ducked to `duck_level`.
 Replies are templates; no second model call.
@@ -15,7 +17,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from victoria_voice_assistant.config.schema import MusicConfig
@@ -24,6 +28,9 @@ from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT_S = 10.0
+PLAY_CHECK_S = 5.0  # how long a player gets to report playing before it counts as not started
+SPEAKER_WAIT_S = 15.0  # how long a browser asked to turn its speaker on has, before its music is dropped
+POLL_S = 0.25
 FILLER = {"the", "a", "my", "our", "in", "on", "speaker", "speakers", "room", "music"}
 SOURCES = {"plex": "Plex", "spotify": "Spotify"}
 ACTIONS = ("play", "pause", "resume", "next", "previous", "volume", "volume_up", "volume_down", "now_playing", "stop")
@@ -244,6 +251,9 @@ class MusicService:
         )
         self.last_player: dict[str, str] = {}  # device or browser -> the player its music last went to
         self.speakers: dict[str, str] = {}  # browser (client id) -> its own Sendspin player ("play it here")
+        self.browsers: dict[str, Callable[[dict[str, Any]], Awaitable[None]]] = {}  # browsers that can be a speaker
+        self._waiting: dict[str, tuple[str, str, float]] = {}  # browser -> (uri, last_player key, asked at)
+        self._tasks: set[asyncio.Task[None]] = set()
         self._ducked: dict[str, int] = {}  # player -> volume before ducking
 
     def update_settings(self, config: MusicConfig | None) -> None:
@@ -271,13 +281,52 @@ class MusicService:
         found = exact or partial
         return max(found, key=lambda p: len(_key(p["name"]))) if found else None
 
-    def set_speaker(self, client_id: str, player_id: str | None) -> None:
-        """A browser turned "Play music here" on (its Sendspin player id) or off (None)."""
+    def set_speaker(
+        self, client_id: str, player_id: str | None, send: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    ) -> None:
+        """A browser turned its speaker on (its Sendspin player id) or off (None); `send` reaches it, to turn it on."""
+        if send is not None:
+            self.browsers[client_id] = send
         if player_id:
             self.speakers[client_id] = player_id
+            waiting = self._waiting.pop(client_id, None)
+            if waiting and time.monotonic() - waiting[2] < SPEAKER_WAIT_S:
+                task = asyncio.get_running_loop().create_task(self._play_when_ready(client_id, waiting[0], waiting[1]))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
         else:
             self.speakers.pop(client_id, None)
         logger.info("Browser speaker", extra={"event": "music_speaker", "count": len(self.speakers)})
+
+    async def _play_when_ready(self, client_id: str, uri: str, key: str) -> None:
+        """The browser turned its speaker on for music asked for here: play once Music Assistant lists it."""
+        deadline = time.monotonic() + SPEAKER_WAIT_S
+        try:
+            while True:
+                player = self._own(client_id, await self.backend.players())  # type: ignore[union-attr]
+                if player is not None:
+                    await self.backend.play(player["player_id"], uri)  # type: ignore[union-attr]
+                    self.last_player[key] = player["player_id"]
+                    started = await self._started(player["player_id"])
+                    logger.info("Music playing here", extra={"event": "music_play", "kind": "browser", "started": started})
+                    return
+                if time.monotonic() >= deadline:
+                    logger.warning("Browser speaker never appeared", extra={"event": "music_failed", "action": "play"})
+                    return
+                await asyncio.sleep(POLL_S)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Music command failed", extra={"event": "music_failed", "action": "play", "reason": str(exc) or type(exc).__name__})
+
+    async def _started(self, player_id: str) -> bool:
+        """Whether the player reports playing within PLAY_CHECK_S (Music Assistant queues even when it can't play)."""
+        deadline = time.monotonic() + PLAY_CHECK_S
+        while True:
+            player = next((p for p in await self.backend.players() if p["player_id"] == player_id), None)  # type: ignore[union-attr]
+            if player is not None and player["state"] == "playing":
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(POLL_S)
 
     def _own(self, client_id: str | None, players: list[dict[str, Any]]) -> dict[str, Any] | None:
         speaker = self.speakers.get(client_id or "")
@@ -326,6 +375,12 @@ class MusicService:
             if player is None:
                 return ToolOutcome(result={"error": f"no speaker called {place!r}"}, speak=f"I don't know a speaker called {place}.")
         elif action == "play":
+            if self._own(client_id, players) is None and client_id in self.browsers and arguments.get("query"):
+                try:
+                    return await self._play_here(client_id, arguments)  # type: ignore[arg-type]
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Music command failed", extra={"event": "music_failed", "action": action, "reason": str(exc) or type(exc).__name__})
+                    return ToolOutcome(result={"error": str(exc)}, speak="The music server couldn't do that.", error=True)
             player = self._where(device, players, client_id)
             if player is None:
                 return self._ask_where(arguments, players)
@@ -349,13 +404,25 @@ class MusicService:
             logger.warning("Music command failed", extra={"event": "music_failed", "action": action, "reason": str(exc) or type(exc).__name__})
             return ToolOutcome(result={"error": str(exc)}, speak="The music server couldn't do that.", error=True)
 
-    async def _play(self, device: str, player: dict[str, Any], arguments: dict[str, Any], here: bool = False) -> ToolOutcome:
-        where = "here" if here else f"on {_the(player['name'])}"
+    async def _play_here(self, client_id: str, arguments: dict[str, Any]) -> ToolOutcome:
+        """Asked from a browser whose speaker is off: find it, ask the browser to turn its speaker on, play it there."""
+        found = await self._find(arguments)
+        if isinstance(found, ToolOutcome):
+            return found
+        try:
+            await self.browsers[client_id]({"type": "music_start"})
+        except Exception:  # noqa: BLE001 - the page went away
+            self.browsers.pop(client_id, None)
+            return ToolOutcome(result={"error": "browser gone"}, speak="I couldn't reach this browser's speaker.", error=True)
+        self._waiting[client_id] = (found.uri, client_id, time.monotonic())
+        source = SOURCES.get(found.source, found.source.title())
+        return ToolOutcome(
+            result={"playing": found.describe(), "source": found.source, "player": "this browser"},
+            speak=f"Playing {found.describe()} from {source} here.",
+        )
+
+    async def _find(self, arguments: dict[str, Any]) -> Choice | ToolOutcome:
         query = str(arguments.get("query") or "").strip()
-        if not query:
-            await self.backend.command(player["player_id"], "resume")  # type: ignore[union-attr]
-            self.last_player[device] = player["player_id"]
-            return ToolOutcome(result={"resumed": player["player_id"]}, speak=f"Resuming {where}.")
         requested = str(arguments.get("source") or "").strip().lower() or None
         order = [requested] if requested else list(self.config.source_order if self.config else ["plex", "spotify"])
         available = await self.backend.sources()  # type: ignore[union-attr]
@@ -373,9 +440,27 @@ class MusicService:
         if choice is None:
             where = f" on {SOURCES.get(requested, requested)}" if requested else ""
             return ToolOutcome(result={"found": None}, speak=f"I couldn't find {query}{where}.")
+        return choice
+
+    async def _play(self, device: str, player: dict[str, Any], arguments: dict[str, Any], here: bool = False) -> ToolOutcome:
+        where = "here" if here else f"on {_the(player['name'])}"
+        if not str(arguments.get("query") or "").strip():
+            await self.backend.command(player["player_id"], "resume")  # type: ignore[union-attr]
+            self.last_player[device] = player["player_id"]
+            return ToolOutcome(result={"resumed": player["player_id"]}, speak=f"Resuming {where}.")
+        choice = await self._find(arguments)
+        if isinstance(choice, ToolOutcome):
+            return choice
         await self.backend.play(player["player_id"], choice.uri)  # type: ignore[union-attr]
         self.last_player[device] = player["player_id"]
-        logger.info("Music playing", extra={"event": "music_play", "kind": choice.kind, "source": choice.source})
+        started = await self._started(player["player_id"])
+        logger.info("Music playing", extra={"event": "music_play", "kind": choice.kind, "source": choice.source, "started": started})
+        if not started:
+            return ToolOutcome(
+                result={"error": "player didn't start", "player": player["name"]},
+                speak=f"{_cap(_the(player['name']))} didn't start playing. It may be off or unreachable.",
+                error=True,
+            )
         source = SOURCES.get(choice.source, choice.source.title())
         return ToolOutcome(
             result={"playing": choice.describe(), "source": choice.source, "player": player["name"]},

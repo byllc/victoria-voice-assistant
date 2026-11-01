@@ -27,6 +27,8 @@ export function useChat(onSignedOut: () => void) {
   const [notifications, setNotifications] = useState<NotificationInfo[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [pushKey, setPushKey] = useState<string | null>(null);
+  // Counts "music_start" messages (music asked for here while the speaker is off); the speaker turns on for each.
+  const [musicStarts, setMusicStarts] = useState(0);
 
   const append = useCallback((entry: NewLogEntry): number => {
     const id = nextId++;
@@ -111,6 +113,9 @@ export function useChat(onSignedOut: () => void) {
         case "push_config":
           setPushKey(message.public_key);
           break;
+        case "music_start":
+          setMusicStarts((n) => n + 1);
+          break;
       }
     },
     [append, appendToEntry, stopRinging],
@@ -182,6 +187,7 @@ export function useChat(onSignedOut: () => void) {
     notifications,
     dashboard,
     pushKey,
+    musicStarts,
     send,
     sendMessage,
     addHeard,

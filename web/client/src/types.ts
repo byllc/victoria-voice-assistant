@@ -60,7 +60,8 @@ export type ServerMessage =
   | { type: "notifications"; items: NotificationInfo[] }
   | { type: "announce"; text: string; sound: boolean; spoken: boolean; items: NotificationInfo[] }
   | ({ type: "dashboard" } & Dashboard)
-  | { type: "push_config"; public_key: string | null; problem: string | null };
+  | { type: "push_config"; public_key: string | null; problem: string | null }
+  | { type: "music_start" };
 
 // One line in the conversation: typed or spoken by you, said by Victoria, a notice, or a notification card.
 export type LogEntry =

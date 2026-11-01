@@ -71,12 +71,12 @@ export function useSpeaker(chat: Chat): Speaker {
       .catch(() => setAvailable(false));
   }, []);
 
-  // The chat socket may reconnect; tell the assistant about this speaker again each time.
+  // The chat socket may reconnect; tell the assistant about this speaker (or that this page can be one) each time.
   useEffect(() => {
-    if (chat.status === "connected" && player.current?.isConnected) {
-      chat.send({ type: "music_speaker", player_id: player.current.clientId });
+    if (chat.status === "connected" && available) {
+      chat.send({ type: "music_speaker", player_id: player.current?.isConnected ? player.current.clientId : null, can_play: true });
     }
-  }, [chat.status, chat.send]);
+  }, [chat.status, chat.send, available]);
 
   useEffect(() => () => player.current?.disconnect("shutdown"), []);
 
@@ -88,7 +88,7 @@ export function useSpeaker(chat: Chat): Speaker {
       setOn(false);
       setPlaying(false);
       setNow(null);
-      chat.send({ type: "music_speaker", player_id: null });
+      chat.send({ type: "music_speaker", player_id: null, can_play: true });
       return;
     }
     const created = new SendspinPlayer({
@@ -140,7 +140,7 @@ export function useSpeaker(chat: Chat): Speaker {
     }
     player.current = created;
     setOn(true);
-    chat.send({ type: "music_speaker", player_id: created.clientId });
+    chat.send({ type: "music_speaker", player_id: created.clientId, can_play: true });
   }, [chat.send]);
 
   const start = useCallback(async () => {
@@ -155,6 +155,14 @@ export function useSpeaker(chat: Chat): Speaker {
     }
     player.current?.sendCommand("play", undefined);
   }, [toggle]);
+
+  // Music asked for here while the speaker is off: turn it on, and the assistant plays it once it is listed.
+  const starts = useRef(chat.musicStarts);
+  useEffect(() => {
+    if (chat.musicStarts === starts.current) return;
+    starts.current = chat.musicStarts;
+    if (!player.current) void toggle();
+  }, [chat.musicStarts, toggle]);
 
   const command = useCallback((name: "play" | "pause" | "next" | "previous") => {
     player.current?.sendCommand(name, undefined);
