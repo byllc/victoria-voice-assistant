@@ -132,7 +132,7 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
           </TabsTrigger>
         </TabsList>
         <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
-          <ChatView chat={chat} voice={voice} />
+          <ChatView chat={chat} voice={voice} onOpenAlerts={() => setTab("alerts")} />
         </TabsContent>
         <TabsContent value="tasks" className="min-h-0 flex-1 overflow-y-auto">
           <TasksView chat={chat} />

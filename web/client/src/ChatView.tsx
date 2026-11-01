@@ -17,7 +17,7 @@ function voiceUnavailable(): string | null {
   return null;
 }
 
-export function ChatView({ chat, voice }: { chat: Chat; voice: VoiceHandlers }) {
+export function ChatView({ chat, voice, onOpenAlerts }: { chat: Chat; voice: VoiceHandlers; onOpenAlerts: () => void }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" }); // returns a promise in newer browsers: not an effect cleanup
@@ -63,7 +63,30 @@ export function ChatView({ chat, voice }: { chat: Chat; voice: VoiceHandlers }) 
         }}
         buttonLabel="Send"
       />
+      <NotificationStrip chat={chat} onOpen={onOpenAlerts} />
     </div>
+  );
+}
+
+/** A small strip under the message box: the newest unread notification (tap for Alerts), or a quiet "all caught up". */
+function NotificationStrip({ chat, onOpen }: { chat: Chat; onOpen: () => void }) {
+  const latest = chat.notifications[0];
+  const more = chat.notifications.length - 1;
+  if (!latest) {
+    return <p className="rounded-lg bg-black/5 px-3 py-2 text-xs opacity-60 dark:bg-white/5">No new notifications</p>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full items-center gap-2 rounded-lg bg-amber-500/15 px-3 py-2 text-left text-sm"
+    >
+      <span aria-hidden>🔔</span>
+      <span className="min-w-0 flex-1 truncate">
+        {latest.kind === "question" ? `${latest.headline} ${latest.full}` : latest.headline}
+      </span>
+      {more > 0 && <span className="text-xs opacity-70">+{more} more</span>}
+    </button>
   );
 }
 
