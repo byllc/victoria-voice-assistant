@@ -68,7 +68,12 @@ export function useSpeaker(chat: Chat): Speaker {
   const [now, setNow] = useState<NowPlaying | null>(null);
   const [commands, setCommands] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [locked, setLocked] = useState(false);
+  const [locked, setLockedState] = useState(false);
+  const isLocked = useRef(false); // the same, for the tap handler
+  const setLocked = useCallback((value: boolean) => {
+    isLocked.current = value;
+    setLockedState(value);
+  }, []);
 
   useEffect(() => {
     void fetch("/api/music", { credentials: "same-origin" })
@@ -86,6 +91,70 @@ export function useSpeaker(chat: Chat): Speaker {
 
   useEffect(() => () => player.current?.disconnect("shutdown"), []);
 
+  // A browser plays sound only once a tap or key press has allowed it, and Safari holds it back otherwise.
+  // So every tap or key press in the page allows it ahead of time: a player made (not connected) and
+  // unlocked in that moment, ready for music asked for later by chat or voice; or the connected one unlocked.
+  const primed = useRef<SendspinPlayer | null>(null);
+  const makePlayer = useCallback(
+    (): SendspinPlayer =>
+      new SendspinPlayer({
+        baseUrl: location.origin, // the web interface relays /sendspin to Music Assistant
+        clientName: `Victoria (${browserName()})`,
+        productName: "Victoria",
+        correctionMode: "quality-local",
+        onStateChange: (state) => {
+          if (state.serverState?.controller?.supported_commands) {
+            ready.current?.();
+            ready.current = null;
+          }
+          const isPlaying = state.groupState?.playback_state === "playing" || state.isPlaying;
+          if (isPlaying !== wasPlaying.current) {
+            // Started or stopped: measure the running clock from where the track is now, not from the last report.
+            wasPlaying.current = isPlaying;
+            setNow((current) => {
+              if (!current || current.progressMs === null) return current;
+              const moved = isPlaying ? 0 : (Date.now() - current.progressAt) * current.speed;
+              const at = Math.min(current.progressMs + moved, current.durationMs ?? Infinity);
+              return { ...current, progressMs: at, progressAt: Date.now() };
+            });
+          }
+          setPlaying(isPlaying);
+          if (state.serverState?.controller?.supported_commands) setCommands(state.serverState.controller.supported_commands);
+          if (typeof state.serverState?.controller?.volume === "number") setVolumeState(state.serverState.controller.volume);
+          const meta = state.serverState?.metadata;
+          if (meta && (meta.progress || meta.title !== undefined)) {
+            setNow({
+              title: meta.title ?? null,
+              artist: meta.artist ?? null,
+              album: meta.album ?? null,
+              artwork: artworkUrl(meta.artwork_url),
+              durationMs: meta.progress?.track_duration ?? null,
+              progressMs: meta.progress?.track_progress ?? null,
+              progressAt: Date.now(),
+              speed: (meta.progress?.playback_speed ?? 1000) / 1000, // reported in thousandths: 1000 is normal speed
+            });
+          }
+        },
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (!available) return;
+    const allow = () => {
+      if (player.current) {
+        if (isLocked.current) void player.current.unlock().then(() => setLocked(false), () => undefined);
+        return;
+      }
+      if (!primed.current && !connecting.current) primed.current = makePlayer();
+      void primed.current?.unlock().catch(() => undefined); // starts the browser's audio inside this tap
+    };
+    const events = ["pointerdown", "keydown", "touchend", "click"] as const;
+    for (const name of events) document.addEventListener(name, allow, { capture: true });
+    return () => {
+      for (const name of events) document.removeEventListener(name, allow, { capture: true });
+    };
+  }, [available, makePlayer]);
+
   const toggle = useCallback(async () => {
     setError(null);
     if (connecting.current) return;
@@ -99,45 +168,8 @@ export function useSpeaker(chat: Chat): Speaker {
       chat.send({ type: "music_speaker", player_id: null, can_play: true });
       return;
     }
-    const created = new SendspinPlayer({
-      baseUrl: location.origin, // the web interface relays /sendspin to Music Assistant
-      clientName: `Victoria (${browserName()})`,
-      productName: "Victoria",
-      correctionMode: "quality-local",
-      onStateChange: (state) => {
-        if (state.serverState?.controller?.supported_commands) {
-          ready.current?.();
-          ready.current = null;
-        }
-        const isPlaying = state.groupState?.playback_state === "playing" || state.isPlaying;
-        if (isPlaying !== wasPlaying.current) {
-          // Started or stopped: measure the running clock from where the track is now, not from the last report.
-          wasPlaying.current = isPlaying;
-          setNow((current) => {
-            if (!current || current.progressMs === null) return current;
-            const moved = isPlaying ? 0 : (Date.now() - current.progressAt) * current.speed;
-            const at = Math.min(current.progressMs + moved, current.durationMs ?? Infinity);
-            return { ...current, progressMs: at, progressAt: Date.now() };
-          });
-        }
-        setPlaying(isPlaying);
-        if (state.serverState?.controller?.supported_commands) setCommands(state.serverState.controller.supported_commands);
-        if (typeof state.serverState?.controller?.volume === "number") setVolumeState(state.serverState.controller.volume);
-        const meta = state.serverState?.metadata;
-        if (meta && (meta.progress || meta.title !== undefined)) {
-          setNow({
-            title: meta.title ?? null,
-            artist: meta.artist ?? null,
-            album: meta.album ?? null,
-            artwork: artworkUrl(meta.artwork_url),
-            durationMs: meta.progress?.track_duration ?? null,
-            progressMs: meta.progress?.track_progress ?? null,
-            progressAt: Date.now(),
-            speed: (meta.progress?.playback_speed ?? 1000) / 1000, // reported in thousandths: 1000 is normal speed
-          });
-        }
-      },
-    });
+    const created = primed.current ?? makePlayer();
+    primed.current = null;
     connecting.current = true;
     try {
       // Allowing sound needs a tap; Safari leaves the promise waiting until one comes rather than failing.
@@ -161,7 +193,7 @@ export function useSpeaker(chat: Chat): Speaker {
     player.current = created;
     setOn(true);
     chat.send({ type: "music_speaker", player_id: created.clientId, can_play: true });
-  }, [chat.send]);
+  }, [chat.send, makePlayer, setLocked]);
 
   const start = useCallback(async () => {
     if (!player.current) {
