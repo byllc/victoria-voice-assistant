@@ -23,7 +23,7 @@ Work is organized into numbered stages in `docs/stages.md`, tracked per `docs/im
 - Dev box is an **M2 Mac (32 GB)** with local test LLMs in LM Studio; the deployment target is a Mac mini M4 Pro (64 GB). M2 numbers are for design validation only.
 - **Pipecat built-ins first** (see architecture §11: `WhisperSTTServiceMLX`, `KokoroTTSService`, Silero VAD, Smart Turn, OpenAI LLM service, `LLMSwitcher`, `MCPClient`, SmallWebRTC). Replace a built-in only with measured evidence, recorded in the decisions log.
 - All config lives in **`config/`** (`models.yaml`, `tools.yaml`, `agents.yaml`, `config/searxng/`). Never in the repo root. Service default is `config/`, overridable by `ASSISTANT_CONFIG_DIR`. Committed examples go in `config/examples/`.
-- Secrets only from the macOS Keychain (`assistant secrets set NAME`; docs/secrets.md), never in `config/` or the repo.
+- Secrets: kept in the macOS Keychain, run from `config/.env` (never committed); set with `assistant secrets set NAME` (docs/secrets.md). Never in YAML or code.
 - Config is the interface: anything the architecture places in `models.yaml`/`tools.yaml`/`agents.yaml` is data, not code.
 - Each stage adds automated tests for what it builds; hardware/model-dependent tests are skippable in quick runs.
 - From stage 3 on, every request logs **per-stage latency** (end of speech → reply start; target ~1.5 s on the tool path). Measure, don't assume.

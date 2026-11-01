@@ -27,11 +27,9 @@ def example_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def live_api_key(example_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Live tests talk to the real LM Studio, which may require its key from the Keychain."""
-    monkeypatch.setenv("ASSISTANT_KEYCHAIN", "1")
-    monkeypatch.delenv("LMS_API_KEY", raising=False)
-    from victoria_voice_assistant.secret_store import get_secret
+    """Live tests talk to the real LM Studio, which may require the key from config/.env."""
+    from victoria_voice_assistant.secret_store import read_env_file
 
-    key = get_secret("LMS_API_KEY")
+    key = read_env_file(Path(__file__).resolve().parents[1] / "config" / ".env").get("LMS_API_KEY")
     if key:
         monkeypatch.setenv("LMS_API_KEY", key)

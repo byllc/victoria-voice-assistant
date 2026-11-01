@@ -84,8 +84,9 @@ uv sync --extra dev
 
 # 2. Configuration: copies the examples into config/
 uv run assistant config init
+git config core.hooksPath .githooks       # refuses to commit secrets files
 uv run assistant secrets set LMS_API_KEY
-#    LM Studio > Developer > API key; stored in the macOS Keychain (docs/secrets.md).
+#    LM Studio > Developer > API key; stored in the Keychain and config/.env (docs/secrets.md).
 #    Set weather.home (lat/lon) in config/tools.yaml.
 uv run assistant config check
 
@@ -113,7 +114,7 @@ Things to try: "set a pasta timer for ten minutes", "what timers do I have", "ca
 
 ### Login
 
-The web interface reads the household password from the Keychain, never from a file:
+The web interface reads the household password as a secret (docs/secrets.md):
 
 ```sh
 uv run assistant secrets set ASSISTANT_WEB_PASSWORD
@@ -191,7 +192,7 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/implementation_plan.md](docs/implementation_plan.md): the stages, their order and what "done" means.
 - [docs/stages.md](docs/stages.md): the live tracker, with evidence and the decisions log.
 - [docs/https.md](docs/https.md): installing and renewing the HTTPS certificate.
-- [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens) in the macOS Keychain; nothing secret is kept in `config/`.
+- [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens): kept in the macOS Keychain, run from `config/.env`, which is never committed.
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.
 - [docs/claude-setup.md](docs/claude-setup.md): turning on the optional Claude agent (an API key; it's a stub until then).
 - [docs/hermes.md](docs/hermes.md): connecting the assistant to a Hermes Agent installation (any; `services/hermes/` is only a test setup).

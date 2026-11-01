@@ -21,6 +21,7 @@ dependencies = [
     "lxml>=6,<7",
     "pywebpush>=2,<3",
     "keyring>=25,<26",
+    "python-dotenv>=1,<2",
 ]
 
 [project.optional-dependencies]

@@ -105,17 +105,17 @@ def _build_parser() -> argparse.ArgumentParser:
     push_status = push_subcommands.add_parser("status", help="whether push is set up, and the subscribed browsers")
     push_status.add_argument("--config-dir", help="configuration directory (default: config/)")
 
-    secrets_parser = commands.add_parser("secrets", help="secrets in the macOS Keychain (docs/secrets.md)")
+    secrets_parser = commands.add_parser("secrets", help="secrets: the Keychain and config/.env (docs/secrets.md)")
+    secrets_parser.add_argument("--config-dir", help="configuration directory (default: config/)")
     secrets_subcommands = secrets_parser.add_subparsers(dest="secrets_command", required=True)
-    secrets_subcommands.add_parser("list", help="which secrets are set (never their values)")
-    secret_set = secrets_subcommands.add_parser("set", help="store a secret; prompts for it without echoing")
+    secrets_subcommands.add_parser("list", help="which secrets are set, and where (never their values)")
+    secret_set = secrets_subcommands.add_parser("set", help="store a secret in the Keychain and config/.env; prompts without echoing")
     secret_set.add_argument("name")
-    secret_delete = secrets_subcommands.add_parser("delete", help="remove a secret")
+    secret_delete = secrets_subcommands.add_parser("delete", help="remove a secret from both")
     secret_delete.add_argument("name")
+    secrets_subcommands.add_parser("sync", help="rewrite config/.env from the Keychain")
     secret_get = secrets_subcommands.add_parser("get", help="print a secret for a script (refuses to print to a terminal)")
     secret_get.add_argument("name")
-    import_env = secrets_subcommands.add_parser("import-env", help="move a .env file's secrets into the Keychain, then delete it")
-    import_env.add_argument("path", help="the .env file, for example config/.env")
 
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
@@ -150,56 +150,75 @@ def _build_parser() -> argparse.ArgumentParser:
 def _secrets_command(args: argparse.Namespace) -> int:
     import getpass
 
-    from victoria_voice_assistant.secret_store import KNOWN, delete_secret
+    from victoria_voice_assistant.secret_store import (
+        KNOWN,
+        SecretsError,
+        delete_secret,
+        keychain_available,
+        keychain_get,
+        read_env_file,
+        sync_env_file,
+    )
 
-    if args.secrets_command == "list":
-        for name, purpose in KNOWN.items():
-            print(f"  {'set    ' if get_secret(name) else 'not set'}  {name}: {purpose}")
-        return 0
-    if args.secrets_command == "set":
-        # Typed at a hidden prompt, or piped in; never taken as an argument (it would show in the process list).
-        value = getpass.getpass(f"{args.name}: ") if sys.stdin.isatty() else sys.stdin.readline()
-        value = value.strip()
-        if not value:
-            print("Nothing entered; unchanged.", file=sys.stderr)
-            return 1
-        set_secret(args.name, value)
-        print(f"Stored {args.name} in the Keychain. Restart the assistant to use it.")
-        return 0
-    if args.secrets_command == "delete":
-        print(f"Deleted {args.name}." if delete_secret(args.name) else f"{args.name} wasn't in the Keychain.")
-        return 0
-    if args.secrets_command == "get":
+    env_file = _config_dir(getattr(args, "config_dir", None)) / ".env"
+    try:
+        if args.secrets_command == "list":
+            in_file = read_env_file(env_file)
+            for name, purpose in KNOWN.items():
+                places = [p for p, present in (("Keychain", keychain_get(name)), ("config/.env", name in in_file)) if present]
+                print(f"  {', '.join(places) or 'not set':22}  {name}: {purpose}")
+            if keychain_available():
+                print("Services read config/.env; `assistant secrets sync` rewrites it from the Keychain.")
+            return 0
+        if args.secrets_command == "set":
+            # Typed at a hidden prompt, or piped in; never taken as an argument (it would show in the process list).
+            value = getpass.getpass(f"{args.name}: ") if sys.stdin.isatty() else sys.stdin.readline()
+            value = value.strip()
+            if not value:
+                print("Nothing entered; unchanged.", file=sys.stderr)
+                return 1
+            where = set_secret(args.name, value, env_file)
+            print(f"Stored {args.name} in {where}. Restart the assistant to use it.")
+            return 0
+        if args.secrets_command == "delete":
+            delete_secret(args.name, env_file)
+            print(f"Removed {args.name}.")
+            return 0
+        if args.secrets_command == "sync":
+            names = sync_env_file(env_file)
+            if not keychain_available():
+                print("No Keychain here; config/.env is the only store.")
+            else:
+                print(f"Wrote {len(names)} secret(s) from the Keychain to {env_file}: {', '.join(names) or 'none'}")
+            return 0
+        # get: for scripts (`$(assistant secrets get NAME)`), never a terminal.
         if sys.stdout.isatty():
             print("Refusing to print a secret to the terminal; this is for scripts (`$(assistant secrets get NAME)`).", file=sys.stderr)
             return 1
-        value = get_secret(args.name)
+        value = get_secret(args.name, env_file)
         if not value:
             print(f"{args.name} is not set.", file=sys.stderr)
             return 1
         sys.stdout.write(value)
         return 0
-    # import-env: move each NAME=value line into the Keychain, check it reads back, then delete the file.
-    path = Path(args.path).expanduser()
-    if not path.is_file():
-        print(f"{path} doesn't exist.", file=sys.stderr)
+    except SecretsError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
-    entries = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            name, value = line.split("=", 1)
-            if value.strip():
-                entries[name.strip()] = value.strip().strip("'\"")
-    for name, value in entries.items():
-        set_secret(name, value)
-        if get_secret(name) != value:
-            print(f"{name} didn't read back from the Keychain; {path} left in place.", file=sys.stderr)
-            return 1
-        print(f"Stored {name}")
-    path.unlink()
-    print(f"Deleted {path}; secrets now come from the Keychain.")
-    return 0
+
+
+def _sync_secrets_for_service() -> bool:
+    """Before installing a service: write config/.env from the Keychain, so it starts after a reboot (docs/secrets.md)."""
+    from victoria_voice_assistant.secret_store import SecretsError, keychain_available, sync_env_file
+
+    env_file = _config_dir(None) / ".env"
+    try:
+        names = sync_env_file(env_file)
+    except SecretsError as exc:
+        print(str(exc), file=sys.stderr)
+        return False
+    if keychain_available():
+        print(f"Secrets from the Keychain written to {env_file}: {', '.join(names) or 'none found'}")
+    return True
 
 
 def _push_command(args: argparse.Namespace) -> int:
@@ -211,8 +230,8 @@ def _push_command(args: argparse.Namespace) -> int:
             print("VAPID_PRIVATE_KEY is already set; left unchanged (a new key would cut off every subscribed browser).")
             return 0
         key = generate_private_key()
-        set_secret("VAPID_PRIVATE_KEY", key)
-        print(f"Stored VAPID_PRIVATE_KEY in the Keychain. Public key (safe to share): {public_key(key)}")
+        where = set_secret("VAPID_PRIVATE_KEY", key)
+        print(f"Stored VAPID_PRIVATE_KEY in {where}. Public key (safe to share): {public_key(key)}")
         print("Then set notifications.web_push: true and vapid_subject in tools.yaml, and restart the assistant.")
         return 0
     try:
@@ -279,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         for filename in filenames:
             shutil.copyfile(examples / filename, destination / filename)
         print(f"Example configuration copied to {destination}")
-        print("Store secrets in the Keychain: `uv run assistant secrets set LMS_API_KEY` (docs/secrets.md).")
+        print("Store secrets with `uv run assistant secrets set LMS_API_KEY` (Keychain and config/.env; docs/secrets.md).")
         return 0
 
     if args.command == "serve":
@@ -338,6 +357,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "launchd" and args.launchd_command == "install":
+        if not _sync_secrets_for_service():
+            return 1
         destination = install_launch_agent(args.output, load=args.load)
         print(f"LaunchAgent plist written: {destination}")
         return 0
@@ -379,6 +400,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "launchd" and args.launchd_command == "install-web":
+        if not _sync_secrets_for_service():
+            return 1
         destination = install_web_launch_agent(args.output, load=args.load)
         print(f"Web LaunchAgent plist written: {destination}")
         return 0

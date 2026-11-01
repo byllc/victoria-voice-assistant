@@ -210,7 +210,7 @@ def test_subscriptions_are_kept_and_checked(tmp_path: Path) -> None:
         ({"web_push": False}, "web_push is off"),
         ({"vapid_private_key": None}, "no VAPID key (run `assistant push keys`)"),
         ({"vapid_subject": None}, "no vapid_subject (a mailto: or https: contact)"),
-        ({"vapid_private_key": "not-a-key"}, "the VAPID key in the Keychain isn't valid"),
+        ({"vapid_private_key": "not-a-key"}, "the VAPID key isn't valid"),
     ],
 )
 def test_push_off_says_why(settings, problem) -> None:
@@ -241,7 +241,7 @@ def test_push_keys_command_stores_the_key_without_printing_it(monkeypatch: pytes
 
     store: dict[str, str] = {}
     monkeypatch.setattr(cli, "get_secret", store.get)
-    monkeypatch.setattr(cli, "set_secret", store.__setitem__)
+    monkeypatch.setattr(cli, "set_secret", lambda name, value: store.__setitem__(name, value) or "the Keychain and config/.env")
     assert main(["push", "keys"]) == 0
     key = store["VAPID_PRIVATE_KEY"]
     out = capsys.readouterr().out

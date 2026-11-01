@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run the test Hermes container in the foreground (so launchd or a terminal can supervise it).
-# Keys come from the macOS Keychain (docs/secrets.md): HERMES_API_KEY (the gateway's key) and LMS_API_KEY (LM Studio's).
+# Keys come from config/.env, kept in sync with the Keychain (docs/secrets.md): HERMES_API_KEY and LMS_API_KEY.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 project=$here/../..

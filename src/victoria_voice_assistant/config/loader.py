@@ -16,7 +16,7 @@ from victoria_voice_assistant.config.schema import (
     ToolsConfig,
     validate_references,
 )
-from victoria_voice_assistant.secret_store import get_secret
+from victoria_voice_assistant.secret_store import ENV_FILE, read_env_file
 
 T = TypeVar("T", bound=BaseModel)
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")  # ${NAME} or ${NAME:-default}
@@ -40,13 +40,15 @@ def default_config_dir() -> Path:
     return Path.cwd() / "config"
 
 
-def substitute_environment(value: Any, filename: str, field: str = "") -> Any:
+def substitute_environment(value: Any, filename: str, field: str = "", secrets: dict[str, str] | None = None) -> Any:
+    """Replace ${NAME} with the process environment's value, else the one from `config/.env` (`secrets`)."""
     if isinstance(value, dict):
         return {
             key: substitute_environment(
                 child,
                 filename,
                 f"{field}.{key}" if field else str(key),
+                secrets,
             )
             for key, child in value.items()
         }
@@ -56,6 +58,7 @@ def substitute_environment(value: Any, filename: str, field: str = "") -> Any:
                 child,
                 filename,
                 f"{field}.{index}" if field else str(index),
+                secrets,
             )
             for index, child in enumerate(value)
         ]
@@ -64,21 +67,21 @@ def substitute_environment(value: Any, filename: str, field: str = "") -> Any:
 
     def replace(match: re.Match[str]) -> str:
         name, default = match.group(1), match.group(2)
-        result = get_secret(name)  # the process environment, then the Keychain
+        result = os.environ.get(name) or (secrets or {}).get(name)
         if not result and default is not None:
             return default  # optional, e.g. a cloud provider's key that may not be set up yet
         if not result:
             raise ConfigError(
                 filename,
                 field or "$",
-                f"{name} is not set (store it with `assistant secrets set {name}`)",
+                f"{name} is not set (store it with `uv run assistant secrets set {name}`; docs/secrets.md)",
             )
         return result
 
     return ENV_PATTERN.sub(replace, value)
 
 
-def _read_yaml(config_dir: Path, filename: str, model: type[T]) -> T:
+def _read_yaml(config_dir: Path, filename: str, model: type[T], secrets: dict[str, str] | None = None) -> T:
     path = config_dir / filename
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -94,7 +97,7 @@ def _read_yaml(config_dir: Path, filename: str, model: type[T]) -> T:
 
     if raw is None:
         raw = {}
-    resolved = substitute_environment(raw, filename)
+    resolved = substitute_environment(raw, filename, secrets=secrets)
     try:
         return model.model_validate(resolved)
     except ValidationError as exc:
@@ -120,9 +123,11 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
     if not directory.is_dir():
         raise ConfigError(str(directory), "$", "configuration directory does not exist")
 
-    models = _read_yaml(directory, "models.yaml", ModelsConfig)
-    tools = _read_yaml(directory, "tools.yaml", ToolsConfig)
-    agents = _read_yaml(directory, "agents.yaml", AgentsConfig)
+    # Secrets from config/.env are read into memory for ${NAME}, not exported to the process environment.
+    secrets = read_env_file(directory / ENV_FILE)
+    models = _read_yaml(directory, "models.yaml", ModelsConfig, secrets)
+    tools = _read_yaml(directory, "tools.yaml", ToolsConfig, secrets)
+    agents = _read_yaml(directory, "agents.yaml", AgentsConfig, secrets)
 
     try:
         validate_references(models, tools, agents)

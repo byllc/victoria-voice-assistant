@@ -21,7 +21,7 @@ The example config (`config/examples/`) has everything except the key:
 ## Turning it on
 
 1. Get an API key from the Anthropic Console (console.anthropic.com), ideally in a workspace with its own spend limit.
-2. Store it in the Keychain ([secrets.md](secrets.md)); it prompts for the key without echoing it:
+2. Store it ([secrets.md](secrets.md)); it prompts for the key without echoing it, and goes in the Keychain and `config/.env`:
 
    ```sh
    uv run assistant secrets set ANTHROPIC_API_KEY

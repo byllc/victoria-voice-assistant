@@ -7,6 +7,8 @@ label=com.victoria.hermes
 plist="$HOME/Library/LaunchAgents/$label.plist"
 logs="${ASSISTANT_LOG_DIR:-$HOME/Library/Logs/Victoria Voice Assistant}"
 mkdir -p "$logs" "$(dirname "$plist")"
+# run.sh reads its keys from config/.env; refresh it from the Keychain first (docs/secrets.md).
+uv run --project "$here/../.." --quiet assistant secrets sync
 
 cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

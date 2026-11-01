@@ -1,20 +1,32 @@
 # Secrets
 
-Secrets live in the macOS login **Keychain**, never in the project or in `config/` (Bill, 2026-11-01). The configuration only *names* a secret, for example `api_key: ${LMS_API_KEY}` in `models.yaml`; the assistant reads the value from the Keychain into memory when it loads the configuration.
+API keys and tokens are **kept in the macOS Keychain** and **run from `config/.env`** (Bill, 2026-11-01). The configuration only names a secret, for example `api_key: ${LMS_API_KEY}` in `models.yaml`.
 
-Each secret is a Keychain item with service `victoria-voice-assistant` and the secret's name as the account. Keychain Access shows them under that name.
+- **Storing one** (`assistant secrets set NAME`) writes it to both: the login Keychain (service `victoria-voice-assistant`, the secret's name as the account) and `config/.env`.
+- **The services read only the process environment and `config/.env`**, never the Keychain, so they start after a reboot before anyone logs in (the login Keychain is locked until then). Values from `config/.env` are read into memory; they aren't exported to child processes.
+- **Installing a service** (`assistant launchd install`, `install-web`, and `services/hermes/install-launchd.sh`) first rewrites `config/.env` from the Keychain. `assistant secrets sync` does the same at any time, for example after restoring the Keychain on a new Mac.
+- **Without a Keychain** (not a Mac, or `ASSISTANT_KEYCHAIN=0`), `config/.env` is the only store.
+
+## `config/.env` is never committed
+
+- It's git-ignored, along with any `.env` or `.env.*` anywhere in the repository (`.env.example` files excepted).
+- The commands only write it after `git check-ignore` confirms git ignores it, and keep it at mode 600.
+- A pre-commit hook (`.githooks/pre-commit`) rejects any staged `.env` file, even one forced past `.gitignore`. Turn it on once per clone:
+
+  ```sh
+  git config core.hooksPath .githooks
+  ```
 
 ## Commands
 
 ```sh
-uv run assistant secrets list             # which are set (never their values)
+uv run assistant secrets list             # which are set, and where (never their values)
 uv run assistant secrets set HA_TOKEN     # prompts without echoing; or pipe the value in
-uv run assistant secrets delete HA_TOKEN
+uv run assistant secrets delete HA_TOKEN  # from both
+uv run assistant secrets sync             # rewrite config/.env from the Keychain
 ```
 
-Restart the assistant service after changing one (configuration is read at start and on YAML edits).
-
-`assistant secrets get NAME` prints a value for a script, as in `services/hermes/run.sh`; it refuses to print to a terminal.
+Restart the assistant (and the web process, for the web password) after changing one. `assistant secrets get NAME` prints a value for a script, as in `services/hermes/run.sh`; it refuses to print to a terminal.
 
 | Name | What it is | Where to get it | Needed |
 |---|---|---|---|
@@ -31,17 +43,8 @@ Not secrets you set:
 - `SEARXNG_SECRET`: SearXNG's internal key. `assistant searxng run` makes a new random one at each start unless the environment sets one; nothing depends on it staying the same.
 - The HTTPS certificate and key are files in `config/tls/` (git-ignored), not Keychain items ([https.md](https.md)).
 
-## Moving from `config/.env`
-
-Older setups kept secrets in `config/.env`, which is no longer read. Move them in one step; each value is checked as it's stored, then the file is deleted:
-
-```sh
-uv run assistant secrets import-env config/.env
-```
-
 ## Notes
 
-- **An environment variable with the same name wins** over the Keychain. Tests use this (with `ASSISTANT_KEYCHAIN=0` they never touch the Keychain), and so can a one-off run.
+- **An environment variable with the same name wins** over `config/.env`. Tests use this; they never touch the Keychain (`ASSISTANT_KEYCHAIN=0`).
 - **The household web password** (`ASSISTANT_WEB_PASSWORD`) is optional; with none set, the web interface is open (Bill: no password needed on the home network).
-- **Under launchd** the services read the login Keychain, which is unlocked while you're logged in. On a Mac mini that reboots unattended, turn on automatic login for the account that runs the assistant, or the services start without their secrets (they log `keychain_unavailable`).
-- The first time a new program reads an item, macOS may ask to allow it. Choose **Always Allow**.
+- The first time a new program reads a Keychain item, macOS may ask to allow it. Choose **Always Allow**.

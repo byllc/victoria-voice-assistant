@@ -15,7 +15,7 @@ The push goes through the browser maker's push service (Apple for Safari and hom
 ## Turn it on
 
 1. **HTTPS.** Push needs the web interface on HTTPS with a certificate the phone trusts ([https.md](https.md)). On a phone, `http://` won't work.
-2. **Create the signing key** (once). It's stored in the Keychain and never printed ([secrets.md](secrets.md)):
+2. **Create the signing key** (once). It's stored with the other secrets and never printed ([secrets.md](secrets.md)):
 
    ```sh
    uv run assistant push keys
