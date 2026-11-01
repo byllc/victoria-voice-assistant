@@ -46,6 +46,7 @@ class SessionState:
     awaiting_llm: bool = False
     busy_since: float | None = None
     requests: int = 0
+    client_id: str | None = None  # the browser's own id (sent in `hello`), for phone push
 
     def begin_request(self) -> None:
         self.requests += 1

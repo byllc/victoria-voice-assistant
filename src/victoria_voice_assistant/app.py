@@ -31,6 +31,7 @@ from victoria_voice_assistant.agents.runner import AgentRunner
 from victoria_voice_assistant.agents.spend import SpendLog
 from victoria_voice_assistant.agents.tasks import TaskService
 from victoria_voice_assistant.health import HealthMonitor
+from victoria_voice_assistant.notifications.push import PushService
 from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.search.service import PageReader, SearchService
 from victoria_voice_assistant.voice.monitor import monitor_loop_lag
@@ -106,7 +107,8 @@ def create_app(
             reader=reader,
         )
         await services.timers.start()
-        services.notifications = NotificationService(manager.current.tools.notifications, database)
+        settings = manager.current.tools.notifications
+        services.notifications = NotificationService(settings, database, push=PushService(settings, database))
         services.notifications.start()
         tasks = TaskService(database)
         tasks.start()

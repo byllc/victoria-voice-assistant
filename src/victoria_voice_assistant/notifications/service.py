@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Literal, Protocol
 
 from victoria_voice_assistant.config.schema import NotificationsConfig, NotifyStyle
+from victoria_voice_assistant.notifications.push import PushService
 from victoria_voice_assistant.tools.outcome import PendingQuestion
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class Outlet(Protocol):
 
     device: str
     speaks: bool
+    client_id: str | None  # the browser's id, for phone push (None: not a browser's chat)
 
     def busy(self) -> bool: ...
 
@@ -114,9 +116,11 @@ class NotificationService:
         config: NotificationsConfig | None = None,
         database_path: Path | None = None,
         clock: Callable[[], float] = time.time,
+        push: PushService | None = None,
     ) -> None:
         self.config = config or NotificationsConfig()
         self.database_path = database_path
+        self.push = push
         self._clock = clock
         self._items: dict[str, Notification] = {}
         self._outlets: list[Outlet] = []
@@ -158,6 +162,8 @@ class NotificationService:
 
     def update_settings(self, config: NotificationsConfig) -> None:
         self.config = config
+        if self.push is not None:
+            self.push.update_settings(config)
 
     # Outlets -------------------------------------------------------------
 
@@ -218,7 +224,25 @@ class NotificationService:
             # Wait a moment so notifications that arrive together are announced together.
             self._ready_at.setdefault(target, now + GROUP_WINDOW_S)
         self._refresh(target)
+        self._push(item)
         return item
+
+    def _push(self, item: Notification) -> None:
+        """Phone push to the device's browsers that aren't open right now. Never during quiet hours
+        (Bill: a question at night just waits on the dashboard), never for `low` items."""
+        if self.push is None or item.priority == "low" or self.quiet():
+            return
+        connected = {o.client_id for o in self.outlets(item.target) if getattr(o, "client_id", None)}
+        sent = self.push.push(
+            item.target,
+            title=item.headline,
+            body=item.summary or item.headline,
+            tag=item.id,
+            connected=connected,  # type: ignore[arg-type]
+            ttl_s=int(self.config.expire_after_h * 3600),
+        )
+        if sent:
+            logger.info("Notification pushed", extra={"event": "notification_pushed", "count": sent})
 
     def unread(self, device: str | None = None) -> list[Notification]:
         """Unread notifications, newest first."""

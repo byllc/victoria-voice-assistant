@@ -111,6 +111,7 @@ class VoiceOutlet:
     """The notification service's view of a voice session: a speaker. Screens get the badge from chat."""
 
     speaks = True
+    client_id = None
 
     def __init__(self, state: SessionState, activity: RoomActivity, context: LLMContext, task: PipelineTask) -> None:
         self.state = state

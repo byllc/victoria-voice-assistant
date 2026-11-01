@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Victoria</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <meta name="theme-color" content="#0f766e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -30,8 +34,10 @@
           <button id="inbox-toggle" type="button" aria-expanded="false" aria-controls="inbox">
             Notifications <span id="badge" class="badge" hidden>0</span>
           </button>
+          <button id="push-toggle" type="button" hidden>Phone alerts</button>
           <button id="logout" type="button">Sign out</button>
         </header>
+        <p id="push-hint" class="status" hidden></p>
         <div id="voice" class="voice">
           <button id="voice-toggle" type="button">Start voice</button>
           <select id="voice-mode" aria-label="Voice mode">

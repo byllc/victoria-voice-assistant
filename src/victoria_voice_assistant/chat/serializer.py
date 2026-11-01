@@ -47,7 +47,9 @@ class ChatJsonSerializer(FrameSerializer):
 
     Client -> server: ``{"type": "user_message", "text": "..."}``, ``{"type": "timer_stop"}``,
     ``{"type": "notification_ack", "ids": [...] | "all"}``, ``{"type": "agent_answer", "task_id": "...", "text": "..."}``,
-    ``{"type": "task_action", "action": "cancel" | "retry" | "resend" | "open", "task_id": "...", "agent"?, "model"?}``.
+    ``{"type": "task_action", "action": "cancel" | "retry" | "resend" | "open", "task_id": "...", "agent"?, "model"?}``,
+    ``{"type": "hello", "client_id": "..."}`` (the browser's id), ``{"type": "push_subscribe", "subscription": {...}}``
+    and ``{"type": "push_unsubscribe", "endpoint": "..."}``.
     Server -> client: ``{"type": "token", "text": "..."}`` per streamed chunk,
     ``{"type": "done"}`` when a reply ends, ``{"type": "error", "message": "..."}``
     on failure, ``{"type": "notice", "title": "...", "text": "..."}`` for text shown
@@ -55,7 +57,8 @@ class ChatJsonSerializer(FrameSerializer):
     timers change, ``{"type": "timer_ring", "names": [...], "text": "..."}`` and
     ``{"type": "timer_ring_stop", "names": [...]}``, ``{"type": "notifications", "items": [...]}`` (the unread
     list, for the badge), ``{"type": "announce", "text": "...", "sound": bool, "spoken": bool, "items": [...]}`` and
-    ``{"type": "dashboard", "tasks": [...], "summary": {...}}`` (the task dashboard, on every change).
+    ``{"type": "dashboard", "tasks": [...], "summary": {...}}`` (the task dashboard, on every change) and
+    ``{"type": "push_config", "public_key": "..." | null, "problem": "..." | null}`` (whether phone push is available).
     """
 
     async def serialize(self, frame: Frame) -> str | None:
@@ -75,6 +78,12 @@ class ChatJsonSerializer(FrameSerializer):
             ids = message.get("ids")
             if ids == "all" or (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):
                 return InputTransportMessageFrame(message={"type": "notification_ack", "ids": ids})
+        if isinstance(message, dict) and message.get("type") == "hello" and isinstance(message.get("client_id"), str):
+            return InputTransportMessageFrame(message={"type": "hello", "client_id": message["client_id"][:64]})
+        if isinstance(message, dict) and message.get("type") == "push_subscribe" and isinstance(message.get("subscription"), dict):
+            return InputTransportMessageFrame(message={"type": "push_subscribe", "subscription": message["subscription"]})
+        if isinstance(message, dict) and message.get("type") == "push_unsubscribe" and isinstance(message.get("endpoint"), str):
+            return InputTransportMessageFrame(message={"type": "push_unsubscribe", "endpoint": message["endpoint"]})
         if isinstance(message, dict) and message.get("type") == "task_action":
             action, task_id = message.get("action"), message.get("task_id")
             if action in ("cancel", "retry", "resend", "open") and isinstance(task_id, str):

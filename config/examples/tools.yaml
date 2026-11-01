@@ -173,7 +173,9 @@ notifications:                    # architecture §10.3
   mention_pending_after_reply: true
   question_timeout_min: 30
   expire_after_h: 24
-  web_push: false
+  web_push: false                 # phone alerts; needs HTTPS and `assistant push keys` (docs/push.md)
+  vapid_private_key: ${VAPID_PRIVATE_KEY:-}
+  vapid_subject: mailto:you@example.com   # a contact for the push services
 
 music:
   server: http://127.0.0.1:8095

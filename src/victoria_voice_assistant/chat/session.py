@@ -96,6 +96,10 @@ class ChatOutlet:
         self.session = session
         self.device = state.device
 
+    @property
+    def client_id(self) -> str | None:
+        return self.state.client_id
+
     def busy(self) -> bool:
         return not self.state.idle()
 
@@ -253,6 +257,14 @@ async def run_chat_session(
     async def on_client_connected(_transport, _client) -> None:
         await session.send({"type": "timers", "timers": services.timers.snapshot(state.device)})
         await session.send(dashboard(services))
+        push = services.notifications.push if services.notifications is not None else None
+        await session.send(
+            {
+                "type": "push_config",
+                "public_key": push.public_key if push is not None else None,
+                "problem": push.problem if push is not None else "no push service",
+            }
+        )
         ringing = [timer.name for timer in services.timers.ringing(state.device)]
         if ringing:
             await session.send({"type": "timer_ring", "names": ringing, "text": None})

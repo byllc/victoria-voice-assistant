@@ -95,6 +95,16 @@ class TurnPreprocessor(FrameProcessor):
                 unread = self.notifications.unread(self.state.device)
                 wanted = message.get("ids")
                 self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
+            elif message.get("type") == "hello":
+                self.state.client_id = message["client_id"]
+            elif message.get("type") == "push_subscribe" and self.notifications is not None and self.notifications.push:
+                saved = self.state.client_id is not None and self.notifications.push.subscribe(
+                    self.state.client_id, self.state.device, message["subscription"]
+                )
+                if not saved:
+                    await self.push_frame(OutputTransportMessageFrame(message={"type": "push_config", "public_key": None, "problem": "subscription rejected"}))
+            elif message.get("type") == "push_unsubscribe" and self.notifications is not None and self.notifications.push:
+                self.notifications.push.unsubscribe(message["endpoint"])
             elif message.get("type") == "task_action" and self.agents is not None:
                 await self._task_action(message)
             elif message.get("type") == "agent_answer" and self.agents is not None:

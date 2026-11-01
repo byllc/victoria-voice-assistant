@@ -57,6 +57,7 @@ type ServerMessage =
   | { type: "timer_ring_stop"; names: string[] }
   | { type: "notifications"; items: NotificationInfo[] }
   | ({ type: "dashboard" } & Dashboard)
+  | { type: "push_config"; public_key: string | null; problem: string | null }
   | { type: "announce"; text: string; sound: boolean; spoken: boolean; items: NotificationInfo[] };
 
 const loginSection = required<HTMLElement>("login");
@@ -92,6 +93,9 @@ const dashSummary = required<HTMLElement>("dash-summary");
 const dashHealth = required<HTMLUListElement>("dash-health");
 const dashSearch = required<HTMLInputElement>("dash-search");
 const dashTasks = required<HTMLUListElement>("dash-tasks");
+const pushToggle = required<HTMLButtonElement>("push-toggle");
+const pushHint = required<HTMLElement>("push-hint");
+let pushKey: string | null = null;
 let board: Dashboard | null = null;
 // Task cards the user expanded, kept open across live updates.
 const openDetails = new Set<string>();
@@ -150,7 +154,10 @@ function connect(): void {
   const ws = new WebSocket(`${scheme}://${location.host}/ws`);
   socket = ws;
   setStatus("connecting…");
-  ws.onopen = () => setStatus("connected");
+  ws.onopen = () => {
+    setStatus("connected");
+    ws.send(JSON.stringify({ type: "hello", client_id: clientId }));
+  };
   ws.onmessage = (event: MessageEvent<string>) => handleServerMessage(JSON.parse(event.data) as ServerMessage);
   ws.onclose = (event) => {
     if (socket !== ws) return;
@@ -188,6 +195,9 @@ function handleServerMessage(message: ServerMessage): void {
     renderTimers();
     // The server is the source of truth: nothing ringing there means stop here too.
     if (!timers.some((t) => t.state === "ringing")) stopRinging();
+  } else if (message.type === "push_config") {
+    pushKey = message.public_key;
+    void syncPush(message.problem);
   } else if (message.type === "dashboard") {
     board = { tasks: message.tasks, summary: message.summary };
     renderDashboard();
@@ -444,6 +454,83 @@ function tickElapsed(): void {
   }
 }
 
+// This browser's own id, so the assistant only pushes to browsers that aren't open (architecture §10.3).
+const clientId = (() => {
+  try {
+    const saved = localStorage.getItem("victoria-client-id");
+    if (saved) return saved;
+    const made = crypto.randomUUID();
+    localStorage.setItem("victoria-client-id", made);
+    return made;
+  } catch {
+    return crypto.randomUUID();
+  }
+})();
+
+const pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && window.isSecureContext;
+const iosNotInstalled = /iPhone|iPad/.test(navigator.userAgent) && !(navigator as Navigator & { standalone?: boolean }).standalone;
+
+function urlBase64ToBytes(value: string): Uint8Array<ArrayBuffer> {
+  const padded = (value + "=".repeat((4 - (value.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+
+// The service worker that shows pushes; null where it can't be registered (then no alerts are offered).
+const workerRegistration: Promise<ServiceWorkerRegistration | null> = pushSupported
+  ? navigator.serviceWorker.register("/sw.js").catch(() => null)
+  : Promise.resolve(null);
+
+async function currentSubscription(): Promise<PushSubscription | null> {
+  const registration = await workerRegistration;
+  return registration ? registration.pushManager.getSubscription() : null;
+}
+
+// Show the alerts button when the assistant has push on; keep the server's copy of our subscription fresh.
+async function syncPush(problem: string | null): Promise<void> {
+  pushToggle.hidden = true;
+  pushHint.hidden = true;
+  if (!pushKey) return; // push is off on the assistant (problem says why); nothing to offer
+  if (!pushSupported || !(await workerRegistration)) {
+    pushHint.hidden = false;
+    pushHint.textContent = window.isSecureContext ? "This browser can't receive alerts." : "Alerts need the HTTPS address.";
+    return;
+  }
+  if (iosNotInstalled) {
+    pushHint.hidden = false;
+    pushHint.textContent = "For alerts on iPhone: Share → Add to Home Screen, then open Victoria from there.";
+    return;
+  }
+  pushToggle.hidden = false;
+  const subscription = await currentSubscription();
+  pushToggle.textContent = subscription ? "Alerts on" : "Phone alerts";
+  pushToggle.classList.toggle("active", Boolean(subscription));
+  if (subscription) socket?.send(JSON.stringify({ type: "push_subscribe", subscription: subscription.toJSON() }));
+  void problem;
+}
+
+async function togglePush(): Promise<void> {
+  if (!pushKey) return;
+  const existing = await currentSubscription();
+  if (existing) {
+    socket?.send(JSON.stringify({ type: "push_unsubscribe", endpoint: existing.endpoint }));
+    await existing.unsubscribe();
+  } else {
+    if ((await Notification.requestPermission()) !== "granted") {
+      pushHint.hidden = false;
+      pushHint.textContent = "Alerts are blocked for this site in the browser's settings.";
+      return;
+    }
+    const registration = await workerRegistration;
+    if (!registration) return;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToBytes(pushKey),
+    });
+    socket?.send(JSON.stringify({ type: "push_subscribe", subscription: subscription.toJSON() }));
+  }
+  await syncPush(null);
+}
+
 function formatRemaining(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const hours = Math.floor(total / 3600);
@@ -626,6 +713,12 @@ tasksToggle.addEventListener("click", () => {
   tasksToggle.setAttribute("aria-expanded", String(!dashboardView.hidden));
 });
 dashSearch.addEventListener("input", renderDashboard);
+pushToggle.addEventListener("click", () => {
+  togglePush().catch(() => {
+    pushHint.hidden = false;
+    pushHint.textContent = "Couldn't turn on alerts in this browser.";
+  });
+});
 window.setInterval(tickElapsed, 1000);
 
 logoutButton.addEventListener("click", async () => {

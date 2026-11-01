@@ -50,17 +50,22 @@ def test_health_endpoint_and_config_file_watcher(
                 assert response.json() == {"status": "ok", "config_revision": 1, "speech": "off"}
                 manager: ConfigManager = app.state.config_manager
                 tools_file = example_config_dir / "tools.yaml"
-                tools_file.write_text(
-                    tools_file.read_text(encoding="utf-8") + "\n# valid edit\n",
-                    encoding="utf-8",
-                )
-                deadline = time.monotonic() + 3
+                # The watcher starts in the background, so an edit made in the first moments can land
+                # before it's watching: keep editing until it notices.
+                deadline = time.monotonic() + 5
                 while manager.revision == 1 and time.monotonic() < deadline:
-                    await asyncio.sleep(0.05)
+                    tools_file.write_text(
+                        tools_file.read_text(encoding="utf-8") + "\n# valid edit\n",
+                        encoding="utf-8",
+                    )
+                    for _ in range(10):
+                        if manager.revision != 1:
+                            break
+                        await asyncio.sleep(0.05)
 
-                assert manager.revision == 2
+                assert manager.revision >= 2
                 response = await client.get("/health")
-                assert response.json()["config_revision"] == 2
+                assert response.json()["config_revision"] == manager.revision
 
     asyncio.run(exercise_app())
 
@@ -84,7 +89,7 @@ def test_database_migrations_are_idempotent(tmp_path: Path) -> None:
             "SELECT version FROM schema_migrations"
         ).fetchall()
     assert {"service_state", "timers"} <= tables
-    assert sorted(migrations) == [("0001_initial.sql",), ("0002_timers.sql",), ("0003_tasks.sql",), ("0004_spend.sql",), ("0005_notifications.sql",), ("0006_task_questions.sql",), ("0007_task_progress.sql",)]
+    assert sorted(migrations) == [("0001_initial.sql",), ("0002_timers.sql",), ("0003_tasks.sql",), ("0004_spend.sql",), ("0005_notifications.sql",), ("0006_task_questions.sql",), ("0007_task_progress.sql",), ("0008_push_subscriptions.sql",)]
 
 
 def test_launch_agent_template_renders_a_valid_plist(tmp_path: Path) -> None:

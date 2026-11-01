@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 INTERVAL_S = 30.0
 TIMEOUT_S = 3.0
+# The first check waits for startup to finish: building the HTTP client briefly holds the event loop,
+# which delayed the config watcher's start enough to miss an edit made right after startup.
+FIRST_CHECK_AFTER_S = 2.0
 
 
 @dataclass
@@ -67,6 +70,7 @@ class HealthMonitor:
         return [asdict(result) for result in self.results]
 
     async def _run(self) -> None:
+        await asyncio.sleep(FIRST_CHECK_AFTER_S)
         while True:
             try:
                 await self.check()
