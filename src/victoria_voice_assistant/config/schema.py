@@ -235,6 +235,30 @@ class TimersConfig(Schema):
     sound: str = "chime.flac"
 
 
+NotifyStyle = Literal["ask_first", "speak_summary", "chime_only"]
+CLOCK_TIME = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class QuietHoursConfig(Schema):
+    start: str = Field(default="00:00", pattern=CLOCK_TIME)
+    end: str = Field(default="08:00", pattern=CLOCK_TIME)
+
+
+class NotificationsConfig(Schema):
+    """Architecture §10.3. Quiet hours default to midnight to 8am (Bill, 2026-10-31)."""
+
+    quiet_hours: QuietHoursConfig | None = Field(default_factory=QuietHoursConfig)
+    default_style: NotifyStyle = "ask_first"
+    mention_pending_after_reply: bool = True
+    question_timeout_min: float = Field(default=30, gt=0)
+    expire_after_h: float = Field(default=24, gt=0)
+    web_push: bool = False
+    # Web Push (VAPID): the private key comes from config/.env (`assistant push keys` creates it); push services
+    # require a contact for the sender, a mailto: or https: URL.
+    vapid_private_key: str | None = None
+    vapid_subject: str | None = Field(default=None, pattern=r"^(mailto:|https://)")
+
+
 class MusicRoomConfig(Schema):
     satellite: str | None = None
     player: str
@@ -297,6 +321,7 @@ class ToolsConfig(Schema):
     weather: WeatherConfig | None = None
     timers: TimersConfig | None = None
     music: MusicConfig | None = None
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     tests: list[ToolTestConfig] = Field(default_factory=list)
 
@@ -340,6 +365,7 @@ class AgentConfig(Schema):
     content_type: str | None = None
     targets: dict[str, str] = Field(default_factory=dict)
     reply: str | None = None
+    notify: NotifyStyle | None = None  # how a background result is announced; default_style if unset
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> AgentConfig:

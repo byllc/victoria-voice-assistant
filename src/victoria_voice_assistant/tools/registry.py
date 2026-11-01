@@ -18,6 +18,8 @@ from victoria_voice_assistant.tools.weather import WeatherService
 
 if TYPE_CHECKING:
     from victoria_voice_assistant.agents.runner import AgentRunner
+    from victoria_voice_assistant.health import HealthMonitor
+    from victoria_voice_assistant.notifications.service import NotificationService
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ DEFAULT_HTTP_TIMEOUT_S = 5.0
 HTTP_RESULT_CHARS = 2000
 # Kinds that exist in the architecture but are built in later stages.
 LATER_KINDS = {"mcp": "MCP tools", "ha_service": "Home Assistant service calls", "ha_script": "Home Assistant scripts"}
-BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent", "tasks")
+BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent", "tasks", "notifications")
 
 Status = Literal["ready", "stub", "auto_stub", "disabled"]
 ReplyMode = Literal["model", "template", "silent"]
@@ -38,6 +40,8 @@ class ToolContext:
     """Per-call information a handler may need."""
 
     device: str = "web"
+    # Reports a step to the dashboard, when a task is running the tool (an agent's tool loop).
+    progress: Callable[[str], None] | None = None
 
 
 ToolHandler = Callable[[dict[str, Any], ToolContext], Awaitable[ToolOutcome]]
@@ -53,6 +57,8 @@ class Services:
     search: SearchService | None = None
     reader: PageReader | None = None
     agents: AgentRunner | None = None
+    notifications: NotificationService | None = None
+    health: HealthMonitor | None = None
 
 
 @dataclass
@@ -214,6 +220,13 @@ def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> l
             return ToolOutcome(result={"error": "agents are not set up yet"}, speak="Agents aren't set up yet.")
         return await tasks_tool(services.agents.tasks, arguments)
 
+    async def notifications(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+        from victoria_voice_assistant.notifications.tool import notifications_tool
+
+        assert services is not None and services.notifications is not None
+        tasks_service = services.agents.tasks if services.agents is not None else None
+        return await notifications_tool(services.notifications, arguments, ctx.device, tasks_service)
+
     entries = [
         ToolEntry(
             name="clarify",
@@ -269,6 +282,31 @@ def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> l
                     "action": {"type": "string", "enum": ["list", "status", "cancel"]},
                     "agent": agent_param,
                     "about": {"type": "string", "description": "words from the task, for example 'meal plan'"},
+                },
+                required=["action"],
+                speaks_directly=True,
+            )
+        )
+    if services is not None and services.notifications is not None:
+        source_param: dict[str, Any] = {"type": "string", "description": "who it's from, for example an agent name"}
+        if names:
+            source_param["enum"] = names
+        entries.append(
+            ToolEntry(
+                name="notifications",
+                description=(
+                    "Messages waiting for the user: read them ('any notifications?', 'what did I miss', 'what did hermes "
+                    "say' with source), count them ('how many messages do I have'), clear them, or turn do-not-disturb "
+                    "on until a time or off."
+                ),
+                kind="builtin",
+                status="ready",
+                handler=notifications,
+                properties={
+                    "action": {"type": "string", "enum": ["list", "read", "dismiss", "do_not_disturb"]},
+                    "source": source_param,
+                    "until": {"type": "string", "description": "for do_not_disturb: a time like '8 a.m.', or 'off'"},
+                    "minutes": {"type": "number", "description": "for do_not_disturb: how long, instead of until"},
                 },
                 required=["action"],
                 speaks_directly=True,

@@ -1,191 +1,20 @@
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, sans-serif;
+@import "tailwindcss";
+@import "@pipecat-ai/voice-ui-kit/styles.css";
+
+/* The kit's components come pre-built; Tailwind scans our own sources for the layout classes. */
+@source "./";
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-height: 100vh;
-}
-
-main#app {
-  flex: 1;
-  width: min(44rem, 100%);
-  padding: 1rem;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-}
-
-section {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-
-section[hidden] {
-  display: none;
-}
-
-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-header h1 {
-  margin: 0;
-  font-size: 1.25rem;
-  flex: 1;
-}
-
-.status {
-  font-size: 0.85rem;
-  opacity: 0.7;
-}
-
-#login-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 20rem;
-}
-
-#log {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 50vh;
-  padding: 0.5rem 0;
-}
-
-#log p {
-  margin: 0.4rem 0;
-  white-space: pre-wrap;
-}
-
-#composer {
-  display: flex;
-  gap: 0.5rem;
-}
-
-#composer input {
-  flex: 1;
-}
-
-input {
-  font: inherit;
-  padding: 0.5rem;
-}
-
-button {
-  font: inherit;
-  padding: 0.5rem 0.9rem;
-}
-
-.error {
-  color: #b00020;
-  margin: 0;
-  min-height: 1.2em;
-}
-
-.site-header {
-  position: sticky;
-  top: 0;
-  width: 100%;
-  box-sizing: border-box;
-  z-index: 10;
-  background: #b00020;
-  color: #fff;
-  padding: 0.6rem 1rem;
-  text-align: center;
-  font-weight: 600;
-}
-
-.site-header[hidden] {
-  display: none;
-}
-
-.timers {
-  list-style: none;
-  margin: 0.5rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.timers[hidden],
-.ringing[hidden] {
-  display: none;
-}
-
-.timers li {
-  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-  border-radius: 999px;
-  padding: 0.2rem 0.7rem;
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.timers li.ringing-timer {
-  background: #f2a900;
-  color: #000;
-  border-color: #f2a900;
-}
-
-.ringing {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-  padding: 0.6rem 0.8rem;
-  border-radius: 0.5rem;
-  background: #f2a900;
-  color: #000;
-  font-weight: 600;
-}
-
-.ringing span {
-  flex: 1;
-}
-
-#log .notice {
-  border-left: 3px solid color-mix(in srgb, currentColor 40%, transparent);
-  padding: 0.3rem 0.7rem;
-  font-size: 0.9rem;
-  opacity: 0.85;
-}
-
-.voice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.voice select {
-  font: inherit;
-  padding: 0.45rem;
-}
-
-#talk {
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-#talk.active,
-#voice-toggle.active {
-  background: #1f7a4d;
-  color: #fff;
-  border-color: #1f7a4d;
-}
-
-#log p.heard span::before {
-  content: "🎙 ";
+  /* The kit's theme colours, so the page follows light and dark mode too. */
+  background: var(--color-background);
+  color: var(--color-foreground);
+  /* Room for the iPhone's notch and home bar when opened from the home screen. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }

@@ -19,6 +19,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime
 from victoria_voice_assistant.agents.runner import AgentRunner, match_agent_address
+from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.timers import TimerService
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class TurnPreprocessor(FrameProcessor):
         runtime: ToolRuntime,
         timers: TimerService,
         agents: AgentRunner | None = None,
+        notifications: NotificationService | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -79,13 +81,36 @@ class TurnPreprocessor(FrameProcessor):
         self.runtime = runtime
         self.timers = timers
         self.agents = agents
+        self.notifications = notifications
         self._waiting: deque[LLMMessagesAppendFrame] = deque()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, InputTransportMessageFrame):
-            if isinstance(frame.message, dict) and frame.message.get("type") == "timer_stop":
+            message = frame.message if isinstance(frame.message, dict) else {}
+            if message.get("type") == "timer_stop":
                 await self.timers.stop_ringing(self.state.device)
+            elif message.get("type") == "notification_ack" and self.notifications is not None:
+                # Opened or dismissed on the screen.
+                unread = self.notifications.unread(self.state.device)
+                wanted = message.get("ids")
+                self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
+            elif message.get("type") == "hello":
+                self.state.client_id = message["client_id"]
+            elif message.get("type") == "push_subscribe" and self.notifications is not None and self.notifications.push:
+                saved = self.state.client_id is not None and self.notifications.push.subscribe(
+                    self.state.client_id, self.state.device, message["subscription"]
+                )
+                if not saved:
+                    await self.push_frame(OutputTransportMessageFrame(message={"type": "push_config", "public_key": None, "problem": "subscription rejected"}))
+            elif message.get("type") == "push_unsubscribe" and self.notifications is not None and self.notifications.push:
+                self.notifications.push.unsubscribe(message["endpoint"])
+            elif message.get("type") == "task_action" and self.agents is not None:
+                await self._task_action(message)
+            elif message.get("type") == "agent_answer" and self.agents is not None:
+                # Answered from the notification on the screen.
+                outcome = self.agents.answer(str(message.get("task_id") or ""), str(message.get("text") or ""))
+                await self._deliver_note(outcome.speak or "Okay.")
             return
         if direction == FrameDirection.DOWNSTREAM and isinstance(frame, LLMMessagesAppendFrame) and frame.run_llm:
             text = _user_text(frame)
@@ -127,6 +152,12 @@ class TurnPreprocessor(FrameProcessor):
         if pending.kind == "clarify":
             self.state.answering_clarify = True
             return await self._agent_address(text, started)
+        if pending.kind == "answer" and self.agents is not None and pending.task_id:
+            outcome = self.agents.answer(pending.task_id, text)
+            if outcome.result and "answered" in outcome.result:
+                await self._reply(text, outcome.speak or "Okay.", "agent_answer", started)
+                return True
+            return await self._agent_address(text, started)  # the question closed: an ordinary request
         answer = match_yes_no(text)
         if answer is None:
             # not a yes/no: a new request, for an agent by name or for the model
@@ -165,6 +196,30 @@ class TurnPreprocessor(FrameProcessor):
                 run_llm=False,
             )
         )
+        await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
+        await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
+
+    async def _task_action(self, message: dict) -> None:
+        """The dashboard's buttons: cancel, retry, re-send (another agent or a stronger model), open."""
+        assert self.agents is not None
+        task_id, action = message["task_id"], message["action"]
+        task = self.agents.tasks.get(task_id)
+        if task is None:
+            return
+        if action == "cancel":
+            stopped = self.agents.tasks.cancel(task_id)
+            await self._deliver_note(f"Cancelled {task.agent.title()}'s task." if stopped else "That task isn't running.")
+        elif action in ("retry", "resend"):
+            outcome = await self.agents.retry(task_id, agent=message.get("agent"), model=message.get("model"))
+            await self._deliver_note(outcome.speak or "Okay.")
+            if outcome.chat and self.runtime is not None:  # setup steps for an agent that isn't set up
+                await self.runtime.notify({"type": "notice", "title": outcome.chat_title or "Note", "text": outcome.chat})
+        elif action == "open" and self.notifications is not None:
+            # The full result is on the screen now: its notification counts as read.
+            self.notifications.acknowledge([i for i in self.notifications.unread() if i.task_id == task_id])
+
+    async def _deliver_note(self, reply: str) -> None:
+        """A reply to something done on the screen (no user turn to pair it with)."""
         await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
         await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
 

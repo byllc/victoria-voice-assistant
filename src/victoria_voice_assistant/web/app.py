@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import os
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from victoria_voice_assistant.logging_config import configure_logging
 from victoria_voice_assistant.web.auth import COOKIE_NAME, SESSION_TTL_S, SessionSigner
 
 logger = logging.getLogger(__name__)
+
+# Browsers want the web app manifest (home-screen install) served with its own type.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 DEFAULT_SERVICE_URL = "ws://127.0.0.1:8765/ws"
 SIGNALING_TIMEOUT_S = 30.0

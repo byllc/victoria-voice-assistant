@@ -16,6 +16,7 @@ from victoria_voice_assistant.config.loader import (
     load_config,
 )
 from victoria_voice_assistant.config.schema import AppConfig
+from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.registry import Services, ToolRegistry, build_registry
 from victoria_voice_assistant.tools.testing import format_report, format_status, run_tool_tests
 from victoria_voice_assistant.tools.timers import TimerService
@@ -38,6 +39,7 @@ def _registry(config: AppConfig) -> ToolRegistry:
         weather=WeatherService(config.tools.weather),
         search=SearchService(config.tools.search),
         reader=PageReader(config.tools.search.read if config.tools.search else None),
+        notifications=NotificationService(config.tools.notifications),
     )
     return build_registry(config.tools, config.agents, services)
 
@@ -96,6 +98,13 @@ def _build_parser() -> argparse.ArgumentParser:
     tls_status.add_argument("--config-dir", help="configuration directory (default: config/)")
     web.add_argument("--port", type=int, default=int(os.environ.get("ASSISTANT_WEB_PORT", "8766")))
 
+    push = commands.add_parser("push", help="Web Push to installed web clients")
+    push_subcommands = push.add_subparsers(dest="push_command", required=True)
+    push_keys = push_subcommands.add_parser("keys", help="create the VAPID key in config/.env (never printed)")
+    push_keys.add_argument("--config-dir", help="configuration directory (default: config/)")
+    push_status = push_subcommands.add_parser("status", help="whether push is set up, and the subscribed browsers")
+    push_status.add_argument("--config-dir", help="configuration directory (default: config/)")
+
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
     install = launchd_subcommands.add_parser("install", help="write assistant LaunchAgent plist")
@@ -124,6 +133,37 @@ def _build_parser() -> argparse.ArgumentParser:
     searxng_run = searxng_subcommands.add_parser("run", help="run SearXNG on 127.0.0.1:8888")
     searxng_run.add_argument("--config-dir", help="configuration directory (default: config/)")
     return parser
+
+
+def _push_command(args: argparse.Namespace) -> int:
+    from victoria_voice_assistant.notifications.push import PushService, generate_private_key, public_key
+    from victoria_voice_assistant.storage.db import default_database_path, migrate
+
+    directory = _config_dir(args.config_dir)
+    env_file = directory / ".env"
+    if args.push_command == "keys":
+        existing = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+        if any(line.startswith("VAPID_PRIVATE_KEY=") for line in existing.splitlines()):
+            print(f"{env_file} already has VAPID_PRIVATE_KEY; left unchanged (a new key would cut off every subscribed browser).")
+            return 0
+        key = generate_private_key()
+        with env_file.open("a", encoding="utf-8") as handle:
+            handle.write(("" if not existing or existing.endswith("\n") else "\n") + f"VAPID_PRIVATE_KEY={key}\n")
+        env_file.chmod(0o600)
+        print(f"Added VAPID_PRIVATE_KEY to {env_file}. Public key (safe to share): {public_key(key)}")
+        print("Then set notifications.web_push: true and vapid_subject in tools.yaml, and restart the assistant.")
+        return 0
+    try:
+        config = load_config(directory)
+    except ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    service = PushService(config.tools.notifications, migrate(default_database_path()))
+    print("Web Push: on" if service.enabled else f"Web Push: off ({service.problem})")
+    for subscription in service.subscriptions():
+        host = subscription.endpoint.split("/")[2]
+        print(f"  {subscription.device}: browser {subscription.client_id[:8]} via {host}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -205,6 +245,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(describe(files, info))
         return 0
+
+    if args.command == "push":
+        return _push_command(args)
 
     if args.command == "web":
         try:

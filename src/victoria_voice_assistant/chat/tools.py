@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 3
 # Typing an answer takes longer than saying one (voice uses VOICE_PENDING_S).
 TEXT_PENDING_S = 60.0
+# An agent's question gets at least this long for its answer (it's not a quick yes/no).
+ANSWER_WINDOW_S = 30.0
 # A request that hasn't settled after this long no longer holds back the next one.
 BUSY_LIMIT_S = 60.0
 
@@ -45,8 +47,11 @@ class SessionState:
     tools_busy: int = 0
     awaiting_llm: bool = False
     busy_since: float | None = None
+    requests: int = 0
+    client_id: str | None = None  # the browser's own id (sent in `hello`), for phone push
 
     def begin_request(self) -> None:
+        self.requests += 1
         self.llm_calls = 0
         self.clarified = False
         self.answering_clarify = False
@@ -64,7 +69,10 @@ class SessionState:
         return False
 
     def set_pending(self, question: PendingQuestion) -> None:
-        question.expires_at = time.monotonic() + self.pending_window_s
+        window = question.window_s or self.pending_window_s
+        if question.kind == "answer":
+            window = max(window, ANSWER_WINDOW_S)
+        question.expires_at = time.monotonic() + window
         self.pending = question
 
     def take_pending(self) -> PendingQuestion | None:

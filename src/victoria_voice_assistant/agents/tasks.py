@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
 
@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 TaskState = Literal["queued", "running", "waiting", "finished", "failed", "cancelled", "timed_out"]
 ACTIVE_STATES = ("queued", "running", "waiting")
+# Finished tasks loaded at startup for the dashboard's history.
+HISTORY_SIZE = 200
 
 
 @dataclass
@@ -31,15 +33,20 @@ class Task:
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    question: str | None = None  # what the agent is waiting for an answer to (state `waiting`)
     created_at: float = 0.0
     updated_at: float = 0.0
+    # Progress events, oldest first: (time, text). Kept in their own table.
+    progress: list[tuple[float, str]] = field(default_factory=list)
 
     @property
     def active(self) -> bool:
         return self.state in ACTIVE_STATES
 
     def snapshot(self) -> dict[str, object]:
-        return asdict(self)
+        row = asdict(self)
+        row.pop("progress")
+        return row
 
 
 @dataclass
@@ -66,6 +73,7 @@ class TaskService:
         self._jobs: dict[str, asyncio.Task] = {}
         self._listeners: list[TaskListener] = []
         self._pending: set[asyncio.Task] = set()
+        self._answers: dict[str, asyncio.Future[str]] = {}
 
     def start(self) -> None:
         """Tasks left running when the service stopped can't be resumed: mark them failed."""
@@ -80,6 +88,19 @@ class TaskService:
             ).rowcount
         if stale:
             logger.warning("Tasks interrupted by a restart", extra={"event": "tasks_interrupted", "count": stale})
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            rows = connection.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (HISTORY_SIZE,)).fetchall()
+            for row in rows:
+                task = Task(**dict(row))
+                self._tasks[task.id] = task
+            if self._tasks:
+                marks = ", ".join("?" * len(self._tasks))
+                for task_id, at, text in connection.execute(
+                    f"SELECT task_id, at, text FROM task_progress WHERE task_id IN ({marks}) ORDER BY at",
+                    tuple(self._tasks),
+                ):
+                    self._tasks[task_id].progress.append((at, text))
 
     def add_listener(self, listener: TaskListener) -> None:
         self._listeners.append(listener)
@@ -131,8 +152,45 @@ class TaskService:
             )
         self._emit(TaskEvent("changed", task))
 
+    def progress(self, task: Task, text: str) -> None:
+        """A step worth showing on the dashboard ("Using web_search", "Waiting for your answer")."""
+        at = self._clock()
+        task.progress.append((at, text))
+        if self.database_path is not None:
+            with self._connect() as connection:
+                connection.execute("INSERT INTO task_progress (task_id, at, text) VALUES (?, ?, ?)", (task.id, at, text))
+        self._emit(TaskEvent("changed", task))
+
     def say(self, task: Task, text: str, full: str | None = None) -> None:
         self._emit(TaskEvent("say", task, text, full))
+
+    def ask(self, task: Task, question: str) -> asyncio.Future[str]:
+        """Put the task in `waiting` with its question; the future resolves with the answer."""
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._answers[task.id] = future
+        logger.info("Agent asked a question", extra={"event": "agent_question", "agent": task.agent, "task": task.id})
+        self.update(task, state="waiting", question=question)
+        return future
+
+    def resume(self, task: Task) -> None:
+        """The question was answered or timed out: back to running."""
+        self._answers.pop(task.id, None)
+        if task.state == "waiting":
+            self.update(task, state="running", question=None)
+
+    def answer(self, task_id: str, text: str) -> bool:
+        """Answer a waiting task's question. False if it isn't waiting."""
+        future = self._answers.get(task_id)
+        if future is None or future.done() or not text.strip():
+            return False
+        logger.info("Agent question answered", extra={"event": "agent_answered", "task": task_id})
+        future.set_result(text.strip())
+        return True
+
+    def waiting(self, agent: str | None = None) -> list[Task]:
+        """Tasks waiting for an answer, newest first."""
+        found = [t for t in self._tasks.values() if t.state == "waiting" and (agent is None or t.agent == agent)]
+        return sorted(found, key=lambda t: t.created_at, reverse=True)
 
     def cancel(self, task_id: str) -> bool:
         """Stop a running task. False if it isn't running."""

@@ -20,6 +20,7 @@ dependencies = [
     "watchfiles>=1,<2",
     "websockets>=15,<18",
     "lxml>=6,<7",
+    "pywebpush>=2,<3",
 ]
 
 [project.optional-dependencies]

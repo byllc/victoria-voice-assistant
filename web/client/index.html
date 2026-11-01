@@ -2,52 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Victoria</title>
-    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <meta name="theme-color" content="#0f766e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
   </head>
   <body>
-    <header id="insecure-banner" class="site-header" role="alert" hidden>
-      Insecure: please add an administrative password (set ASSISTANT_WEB_PASSWORD and restart the web process).
-    </header>
-    <main id="app">
-      <section id="login" hidden>
-        <h1>Victoria</h1>
-        <form id="login-form">
-          <label for="password">Household password</label>
-          <input id="password" type="password" autocomplete="current-password" required />
-          <button type="submit">Sign in</button>
-          <p id="login-error" class="error" role="alert"></p>
-        </form>
-      </section>
-      <section id="chat" hidden>
-        <header>
-          <h1>Victoria</h1>
-          <span id="status" class="status">connecting…</span>
-          <button id="logout" type="button">Sign out</button>
-        </header>
-        <div id="voice" class="voice">
-          <button id="voice-toggle" type="button">Start voice</button>
-          <select id="voice-mode" aria-label="Voice mode">
-            <option value="hands-free">Hands-free</option>
-            <option value="push-to-talk">Push to talk</option>
-          </select>
-          <button id="talk" type="button" hidden>Hold to talk</button>
-          <span id="voice-state" class="status"></span>
-          <audio id="bot-audio" autoplay></audio>
-        </div>
-        <div id="ringing" class="ringing" role="alert" hidden>
-          <span id="ringing-text"></span>
-          <button id="ringing-stop" type="button">Stop</button>
-        </div>
-        <ul id="timers" class="timers" aria-label="Timers" hidden></ul>
-        <div id="log" aria-live="polite"></div>
-        <form id="composer">
-          <input id="message" type="text" placeholder="Ask Victoria…" autocomplete="off" required />
-          <button type="submit">Send</button>
-        </form>
-      </section>
-    </main>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

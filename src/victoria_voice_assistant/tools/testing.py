@@ -14,6 +14,7 @@ from pipecat.services.openai.llm import OpenAILLMService
 
 from victoria_voice_assistant.chat.prompt import system_prompt
 from victoria_voice_assistant.config.schema import AppConfig, ToolTestGiven
+from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.registry import Services, ToolContext, ToolRegistry, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
@@ -106,6 +107,7 @@ async def _sandbox(config: AppConfig, given: ToolTestGiven | None) -> tuple[Tool
         weather=WeatherService(config.tools.weather),
         search=SearchService(config.tools.search),
         reader=PageReader(config.tools.search.read if config.tools.search else None),
+        notifications=NotificationService(config.tools.notifications),
     )
     for name in given.timers if given else []:
         await services.timers.start_seconds("test", name, 600)

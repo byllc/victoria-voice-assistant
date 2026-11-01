@@ -63,7 +63,11 @@ async def tasks_tool(tasks: TaskService, arguments: dict[str, Any]) -> ToolOutco
         if not active:
             who = f"{_label(agent)} isn't" if agent else "Nothing is"
             return ToolOutcome(result={"running": []}, speak=f"{who} working on anything right now.")
-        lines = [f"{_label(t.agent)} is working on {_gist(t.request)}." for t in active[:3]]
+        lines = [
+            f"{_label(t.agent)} is waiting for your answer: {t.question}" if t.state == "waiting" and t.question
+            else f"{_label(t.agent)} is working on {_gist(t.request)}."
+            for t in active[:3]
+        ]
         more = f" And {len(active) - 3} more." if len(active) > 3 else ""
         return ToolOutcome(result={"running": [t.snapshot() for t in active]}, speak=" ".join(lines) + more)
 
@@ -73,7 +77,9 @@ async def tasks_tool(tasks: TaskService, arguments: dict[str, Any]) -> ToolOutco
             return ToolOutcome(result={"found": None}, speak="I don't see a task like that.")
         task = found[0]
         name = _label(task.agent)
-        if task.active:
+        if task.state == "waiting" and task.question:
+            speak = f"{name} is waiting for your answer: {task.question}"
+        elif task.active:
             speak = f"{name} is still working on {_gist(task.request)}."
         elif task.state == "finished":
             speak = f"Yes, {name} finished. {first_sentences(plain_text(task.result or ''))}".strip()
