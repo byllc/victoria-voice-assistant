@@ -13,8 +13,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 6 | Local web search | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
 | 7 | Agents and model pools | approved | 2026-10-30 | 2026-10-31 | Bill / 2026-10-31 |
 | 8 | Notifications and task dashboard | approved | 2026-10-31 | 2026-11-01 | Bill / 2026-11-01 |
-| 9 | Home control | ready for review | 2026-11-01 | 2026-11-01 | |
-| 10 | Music | not started | | | |
+| 9 | Home control | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
+| 10 | Music | in progress | 2026-11-01 | | |
 | 11 | Hardening | not started | | | |
 | 12 | Satellites (optional) | not started | | | |
 
@@ -208,7 +208,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 8"). Carried over: the phone push criterion (Bill skipped alerts for now: needs `assistant push keys`, `web_push: true` and a `vapid_subject`, then a phone test, docs/push.md); a look in a real browser and voice on the phone with the new interface; the Hermes cancel proposal and the LM Studio key.
 
 ## Stage 9: Home control
-- Status: ready for review
+- Status: approved
 - Done criteria:
   - [x] Common light, climate, and scene commands work by voice with template replies. Lights live by voice (the bedroom light: on, off, state; Bill allowed only that one). Scenes and climate (Bill has no thermostat) unit-tested against a stand-in Home Assistant, per Bill.
   - [x] Locks require spoken confirmation. Unit-tested (both locks are unavailable and unlabelled, per Bill); live, an unlabelled lock is refused.
@@ -223,6 +223,17 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - By voice (recorded speech into Bill's own service): "Turn on the bedroom light." -> "Turned on the bedroom light."; "Turn off the bedroom light." -> "Turned off the bedroom light."; "Turn on the front porch outlet." -> refused as unlabelled; "Lock the front door." -> refused as unlabelled; "Is the bedroom light on?" -> "The bedroom light is off." Each `spoken_directly`, no second model call. In the first run the state question was spoken while the first command was still being handled (the first call opens the MCP connection) and got no reply; asked on its own it worked.
   - Demo for Bill: restart `assistant serve`, then by voice or text: "turn on the bedroom light", "is the bedroom light on", "set the piano light to 40 percent", "turn on bright kitchen", "turn off the kitchen lights", "turn on the front porch outlet" (refused), "lock the front door" (refused until a lock is labelled; with one labelled, it asks first). Change what voice can control with the `voice` label in Home Assistant (picked up within a minute).
   - Open for Bill: a look at the label set; live checks of scenes, brightness, climate and locks when he allows them or the devices exist.
+- Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 9"). Carried over: live checks of scenes, brightness, climate and locks when allowed or available; opening the Home Assistant connection at startup and overlapping voice turns (Stage 11).
+
+## Stage 10: Music
+- Status: in progress
+- Done criteria:
+  - [ ] "Play … from Plex" and "play … on Spotify" work in the room that heard the request; "in the kitchen" overrides.
+  - [ ] Pause, resume, skip, volume, and "what's playing" work.
+  - [ ] Music ducks while the assistant listens and speaks.
+  - [ ] An unreachable music server gives a clear spoken message.
+- Blocking decisions: which speaker plays music in each room; where Music Assistant runs.
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -305,3 +316,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 9 | Home control design: `home_control` keeps one action/target/value tool (the fast model routes it reliably) rather than exposing Home Assistant's 21 MCP tools, and maps it onto Home Assistant's intents. The `voice` label is enforced here: Home Assistant's MCP server only knows "exposed to Assist", so targets are resolved against labelled entities from Home Assistant's registries and named exactly in the intent call; labelled entities must also be exposed to Assist. Locks are `ha_service` calls with a spoken confirmation backed by a one-time code. A `voice` label was created in Bill's Home Assistant and applied to 25 entities with his go-ahead. | Bill / 2026-11-01: chose "Create it, label a starter set"; test device: bedroom light only; climate and locks unit-tested |
 | 2026-11-01 | 9 | Finding: gemma-4-12b returned broken output (`<|channel>::`) for "lock the front door" while `lock_door`'s description had a parenthesis ("Lock a door (asks for spoken confirmation first).") and routed correctly with "Lock a door at home, for example the front door." Adding `lock_door` also made "skip this" stop routing to `music` until its description named skipping ("skip this song (next)"). Tool descriptions for the small fast model stay short, plain and phrased like requests. | |
 | 2026-11-01 | 9 | Finding (voice, for Stage 11): a command spoken while the previous voice request is still being handled can be lost (no reply). Seen when the first Home Assistant call opened its MCP connection. Proposal: open the Home Assistant connection at startup, and look at overlapping voice turns in hardening. | |
+| 2026-11-01 | 9 | Approved by Bill. Carried over: live checks of scenes, brightness, climate and locks; the Home Assistant connection at startup and overlapping voice turns (Stage 11). | Bill / 2026-11-01: "approve stage 9" |
