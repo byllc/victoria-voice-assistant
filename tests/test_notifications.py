@@ -126,6 +126,7 @@ def test_a_speaker_asks_before_reading() -> None:
     [spoken] = speaker.announced
     assert spoken.text == "Hermes has finished. Want to hear it?" and spoken.spoken
     assert spoken.question is not None and spoken.question.on_yes == ("notifications", {"action": "read", "ids": [item.id]})
+    assert spoken.question.window_s == 20.0
     assert screen.announced == [spoken]  # the screen gets the full text and the chime
     assert item.state == "delivered"
 
@@ -640,3 +641,16 @@ def test_the_screen_can_acknowledge_and_answer() -> None:
         None,
         None,
     ]
+
+
+def test_an_agent_question_gets_a_longer_answer_window() -> None:
+    from victoria_voice_assistant.chat.tools import ANSWER_WINDOW_S, SessionState
+    from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S, PendingQuestion
+
+    state = SessionState(pending_window_s=VOICE_PENDING_S)
+    question = PendingQuestion(kind="answer", question="Which folder?", task_id="t1")
+    state.set_pending(question)
+    yes_no = PendingQuestion(kind="yes_no", question="Want to hear it?")
+    other = SessionState(pending_window_s=VOICE_PENDING_S)
+    other.set_pending(yes_no)
+    assert question.expires_at - yes_no.expires_at == pytest.approx(ANSWER_WINDOW_S - VOICE_PENDING_S, abs=0.5)

@@ -24,6 +24,8 @@ class PendingQuestion:
     on_yes: tuple[str, dict[str, Any]] | None = None
     # For answer: the agent task waiting for it; the next turn is passed to the agent as it is.
     task_id: str | None = None
+    # How long it stays open, when not the session's usual window (an unprompted announcement needs longer).
+    window_s: float | None = None
     expires_at: float = 0.0
 
     def expired(self, now: float | None = None) -> bool:

@@ -32,6 +32,8 @@ UNREAD = ("pending", "delivered")
 
 # Notifications posted this close together are announced as one group.
 GROUP_WINDOW_S = 1.5
+# "Want to hear it?" after an announcement stays open this long: it comes unprompted, often mid-thought.
+ANNOUNCEMENT_ANSWER_S = 20.0
 TICK_S = 0.5
 NUMBERS = {2: "Two", 3: "Three", 4: "Four", 5: "Five"}
 
@@ -373,7 +375,10 @@ class NotificationService:
             many = len(items) > 1
             text = f"{self._headlines(items)} Want to hear {'them' if many else 'it'}?"
             question = PendingQuestion(
-                kind="yes_no", question=text, on_yes=("notifications", {"action": "read", "ids": [i.id for i in items]})
+                kind="yes_no",
+                question=text,
+                on_yes=("notifications", {"action": "read", "ids": [i.id for i in items]}),
+                window_s=ANNOUNCEMENT_ANSWER_S,
             )
             announcement = Announcement(text=text, items=items, question=question, full=items)
             acknowledged = False
