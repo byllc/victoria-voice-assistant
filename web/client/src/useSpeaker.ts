@@ -26,6 +26,8 @@ export type Speaker = {
   commands: string[];
   error: string | null;
   toggle: () => Promise<void>;
+  /** Become a speaker (if not already) and start playing; for the play button. */
+  start: () => Promise<void>;
   command: (name: "play" | "pause" | "next" | "previous") => void;
   setVolume: (volume: number) => void;
 };
@@ -51,6 +53,9 @@ function artworkUrl(url: string | null | undefined): string | null {
  */
 export function useSpeaker(chat: Chat): Speaker {
   const player = useRef<SendspinPlayer | null>(null);
+  // Resolved once the server lists the commands this browser may send: until then the library drops them.
+  const ready = useRef<(() => void) | null>(null);
+  const wasPlaying = useRef(false);
   const [available, setAvailable] = useState(false);
   const [on, setOn] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -92,11 +97,26 @@ export function useSpeaker(chat: Chat): Speaker {
       productName: "Victoria",
       correctionMode: "quality-local",
       onStateChange: (state) => {
-        setPlaying(state.groupState?.playback_state === "playing" || state.isPlaying);
+        if (state.serverState?.controller?.supported_commands) {
+          ready.current?.();
+          ready.current = null;
+        }
+        const isPlaying = state.groupState?.playback_state === "playing" || state.isPlaying;
+        if (isPlaying !== wasPlaying.current) {
+          // Started or stopped: measure the running clock from where the track is now, not from the last report.
+          wasPlaying.current = isPlaying;
+          setNow((current) => {
+            if (!current || current.progressMs === null) return current;
+            const moved = isPlaying ? 0 : (Date.now() - current.progressAt) * current.speed;
+            const at = Math.min(current.progressMs + moved, current.durationMs ?? Infinity);
+            return { ...current, progressMs: at, progressAt: Date.now() };
+          });
+        }
+        setPlaying(isPlaying);
         if (state.serverState?.controller?.supported_commands) setCommands(state.serverState.controller.supported_commands);
         if (typeof state.serverState?.controller?.volume === "number") setVolumeState(state.serverState.controller.volume);
         const meta = state.serverState?.metadata;
-        if (meta) {
+        if (meta && (meta.progress || meta.title !== undefined)) {
           setNow({
             title: meta.title ?? null,
             artist: meta.artist ?? null,
@@ -105,7 +125,7 @@ export function useSpeaker(chat: Chat): Speaker {
             durationMs: meta.progress?.track_duration ?? null,
             progressMs: meta.progress?.track_progress ?? null,
             progressAt: Date.now(),
-            speed: meta.progress?.playback_speed ?? 1,
+            speed: (meta.progress?.playback_speed ?? 1000) / 1000, // reported in thousandths: 1000 is normal speed
           });
         }
       },
@@ -123,6 +143,19 @@ export function useSpeaker(chat: Chat): Speaker {
     chat.send({ type: "music_speaker", player_id: created.clientId });
   }, [chat.send]);
 
+  const start = useCallback(async () => {
+    if (!player.current) {
+      const settled = new Promise<void>((resolve) => {
+        ready.current = resolve;
+        window.setTimeout(resolve, 3000); // don't wait forever if no state comes
+      });
+      await toggle();
+      if (!player.current) return;
+      await settled;
+    }
+    player.current?.sendCommand("play", undefined);
+  }, [toggle]);
+
   const command = useCallback((name: "play" | "pause" | "next" | "previous") => {
     player.current?.sendCommand(name, undefined);
   }, []);
@@ -132,5 +165,5 @@ export function useSpeaker(chat: Chat): Speaker {
     player.current?.sendCommand("volume", { volume: value });
   }, []);
 
-  return { available, on, playing, volume, now, commands, error, toggle, command, setVolume };
+  return { available, on, playing, volume, now, commands, error, toggle, start, command, setVolume };
 }

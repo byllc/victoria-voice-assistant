@@ -304,3 +304,16 @@ def test_artwork_comes_only_from_the_music_server() -> None:
     assert open_app.get("/api/music/artwork", params={"url": "file:///etc/passwd"}).status_code == 400
     locked = TestClient(create_web_app(password="pw", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
     assert locked.get("/api/music/artwork", params={"url": "http://ma.test:8095/a.png"}).status_code == 401
+
+
+def test_the_page_is_never_served_stale(tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    from victoria_voice_assistant.web.app import create_web_app
+
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<html></html>")
+    (tmp_path / "assets" / "index-abc.js").write_text("x")
+    client = TestClient(create_web_app(password="", static_dir=tmp_path))
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert "immutable" in client.get("/assets/index-abc.js").headers["cache-control"]

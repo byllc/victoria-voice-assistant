@@ -18,8 +18,9 @@ function position(speaker: Speaker): number | null {
 }
 
 /**
- * The music player widget: this browser as a speaker, with what's playing, artwork, progress and controls.
- * Off: a single "Play music here" button. Above the tabs, so it stays put while you switch.
+ * The music player widget, always a full player: artwork, track, time, previous / play-pause / next, volume.
+ * Pressing play (or asking for music) makes this browser a speaker first; the speaker button turns that off.
+ * Above the tabs, so it stays put while you switch.
  */
 export function MusicPlayer({ speaker }: { speaker: Speaker }) {
   const [, tick] = useState(0);
@@ -30,21 +31,19 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
   }, [speaker.playing]);
 
   if (!speaker.available) return null;
-  if (!speaker.on) {
-    return (
-      <div className="flex items-center gap-2 text-sm">
-        <Button size="sm" variant="outline" onClick={() => void speaker.toggle()}>
-          ♪ Play music here
-        </Button>
-        <span className="opacity-60">{speaker.error ?? "Turn this browser into a speaker for music you ask for."}</span>
-      </div>
-    );
-  }
 
   const now = speaker.now;
   const at = position(speaker);
   const duration = now?.durationMs ?? null;
-  const can = (name: string) => speaker.commands.length === 0 || speaker.commands.includes(name);
+  const can = (name: string) => speaker.on && (speaker.commands.length === 0 || speaker.commands.includes(name));
+  // Play needs this browser to be a speaker; the first press (a tap, so audio is allowed) connects it.
+  const playPause = async () => {
+    if (!speaker.on) {
+      await speaker.start();
+      return;
+    }
+    speaker.command(speaker.playing ? "pause" : "play");
+  };
 
   return (
     <Card className="py-3">
@@ -57,22 +56,41 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
           )}
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="min-w-0">
-            <p className="truncate font-semibold">{now?.title ?? "Nothing playing"}</p>
-            <p className="truncate text-sm opacity-70">
-              {now?.title ? [now.artist, now.album].filter(Boolean).join(" · ") : "Ask for music and it plays here."}
-            </p>
-          </div>
-          {duration ? (
-            <div className="flex items-center gap-2 text-xs tabular-nums opacity-70">
-              <span>{clock(at ?? 0)}</span>
-              <div className="h-1 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/15" role="progressbar" aria-valuemin={0} aria-valuemax={duration} aria-valuenow={at ?? 0}>
-                <div className="h-full rounded-full bg-teal-600" style={{ width: `${Math.min(100, ((at ?? 0) / duration) * 100)}%` }} />
-              </div>
-              <span>{clock(duration)}</span>
+          <div className="flex min-w-0 items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-semibold" style={{ color: "var(--color-foreground)" }}>
+                {now?.title ?? "Nothing playing"}
+              </p>
+              <p className="truncate text-sm opacity-70">
+                {speaker.error ??
+                  (now?.title ? [now.artist, now.album].filter(Boolean).join(" · ") : "Ask for music, or press play, and it plays here.")}
+              </p>
             </div>
-          ) : null}
-          <div className="flex flex-wrap items-center gap-1">
+            <Button
+              size="sm"
+              variant={speaker.on ? "active" : "ghost"}
+              className="shrink-0"
+              onClick={() => void speaker.toggle()}
+              aria-pressed={speaker.on}
+              title={speaker.on ? "This browser is a speaker: tap to stop" : "Make this browser a speaker"}
+            >
+              {speaker.on ? "🔊 Here" : "🔈 Off"}
+            </Button>
+          </div>
+          <div className="flex items-center gap-2 text-xs tabular-nums opacity-70">
+            <span>{clock(at ?? 0)}</span>
+            <div
+              className="h-1 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/15"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={duration ?? 0}
+              aria-valuenow={at ?? 0}
+            >
+              <div className="h-full rounded-full bg-teal-600" style={{ width: duration ? `${Math.min(100, ((at ?? 0) / duration) * 100)}%` : "0%" }} />
+            </div>
+            <span>{duration ? clock(duration) : "-:--"}</span>
+          </div>
+          <div className="flex items-center gap-1">
             <Button size="sm" variant="ghost" isIcon aria-label="Previous" disabled={!can("previous")} onClick={() => speaker.command("previous")}>
               ⏮
             </Button>
@@ -81,20 +99,24 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
               variant="outline"
               isIcon
               aria-label={speaker.playing ? "Pause" : "Play"}
-              onClick={() => speaker.command(speaker.playing ? "pause" : "play")}
+              onClick={() => void playPause()}
             >
               {speaker.playing ? "⏸" : "▶"}
             </Button>
             <Button size="sm" variant="ghost" isIcon aria-label="Next" disabled={!can("next")} onClick={() => speaker.command("next")}>
               ⏭
             </Button>
-            <div className="ml-2 flex min-w-24 flex-1 items-center gap-2 sm:max-w-40" aria-label="Volume">
+            <div className="ml-2 flex min-w-0 flex-1 items-center gap-2 sm:max-w-48" aria-label="Volume">
               <span className="text-xs opacity-60">🔈</span>
-              <Slider value={[speaker.volume]} min={0} max={100} step={1} onValueChange={([value]) => speaker.setVolume(value)} />
+              <Slider
+                value={[speaker.volume]}
+                min={0}
+                max={100}
+                step={1}
+                disabled={!speaker.on}
+                onValueChange={([value]) => speaker.setVolume(value)}
+              />
             </div>
-            <Button size="sm" variant="ghost" className="ml-auto" onClick={() => void speaker.toggle()} title="Stop being a speaker">
-              Off
-            </Button>
           </div>
         </div>
       </CardContent>

@@ -182,7 +182,7 @@ def create_web_app(
             pass
 
     if static_dir is not None and static_dir.is_dir():
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="client")
+        app.mount("/", _ClientFiles(directory=static_dir, html=True), name="client")
     else:
         logger.warning(
             "Client build not found; run npm run build in web/client",
@@ -211,6 +211,19 @@ async def _relay_messages(websocket: WebSocket, upstream) -> None:
     finally:
         for task in tasks:
             task.cancel()
+
+
+class _ClientFiles(StaticFiles):
+    """The built client. The page itself (and the service worker and manifest) must be checked on every load,
+    or a browser keeps running an old build after an update; the hashed assets can be cached for good."""
+
+    async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def]
+        response = await super().get_response(path, scope)
+        if path.startswith("assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 async def _relay_frames(websocket: WebSocket, upstream) -> None:

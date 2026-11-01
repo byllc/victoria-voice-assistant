@@ -38,12 +38,12 @@ rooms:
 
 ## The web app as a speaker and player
 
-Above the tabs, the web app has a music player. **Play music here** turns that browser into a Music Assistant speaker ("Victoria (Safari on iPhone)") over Sendspin, Music Assistant's streaming protocol (`@sendspin/sendspin-js`). Music asked for from that browser with no place named then plays right there ("Playing Footprints by Miles Davis from Plex here."), and the player shows the artwork, title, artist and album, a progress bar, previous / play-pause / next, volume, and **Off**. Voice and chat commands (pause, skip, volume) and ducking act on it too, and it keeps playing while you switch tabs.
+Above the tabs, the web app has a music player: artwork, title, artist and album, the track time and a progress bar, previous / play-pause / next, and volume. Pressing play (or the speaker button, **🔈 Off** / **🔊 Here**) turns that browser into a Music Assistant speaker ("Victoria (Safari on iPhone)") over Sendspin, Music Assistant's streaming protocol (`@sendspin/sendspin-js`). Music asked for from that browser with no place named then plays right there ("Playing Footprints by Miles Davis from Plex here."). Voice and chat commands (pause, skip, volume) and ducking act on it too, and it keeps playing while you switch tabs.
 
 - The web interface relays the browser's `/sendspin` connection to Music Assistant's Sendspin listener (port 8927 on the `music.server` host; `music.sendspin_url` overrides it), behind the household login, so it works from the HTTPS page. Music Assistant's `/sendspin` on its API port isn't used: it wants Music Assistant's own login first ("First message must be auth").
 - Music Assistant shows the browser as a "universal player" with its own id; the browser's Sendspin id is that player's output id, which is how "here" finds it.
 - Artwork, which Music Assistant serves over plain HTTP, comes through the web interface (`/api/music/artwork`, images from the Music Assistant host only).
-- Browsers only allow audio after a tap, so tap **Play music here** again after reloading.
+- Browsers only allow audio after a tap, so after reloading press play (or the speaker button) again.
 
 ## What you can say
 
