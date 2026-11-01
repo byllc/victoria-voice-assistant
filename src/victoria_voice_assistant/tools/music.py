@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT_S = 10.0
 PLAY_CHECK_S = 5.0  # how long a player gets to report playing before it counts as not started
-SPEAKER_WAIT_S = 15.0  # how long a browser asked to turn its speaker on has, before its music is dropped
+SPEAKER_WAIT_S = 120.0  # how long music asked for in a browser waits for its speaker (Safari needs a tap first)
 POLL_S = 0.25
 FILLER = {"the", "a", "my", "our", "in", "on", "speaker", "speakers", "room", "music"}
 SOURCES = {"plex": "Plex", "spotify": "Spotify"}

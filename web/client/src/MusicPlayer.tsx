@@ -42,8 +42,19 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
       await speaker.start();
       return;
     }
+    if (speaker.locked) {
+      // Music may already be playing here, silently: this tap is what lets the browser play sound.
+      await speaker.unlock();
+      if (!speaker.playing) speaker.command("play");
+      return;
+    }
     speaker.command(speaker.playing ? "pause" : "play");
   };
+  const hint = speaker.locked
+    ? "Tap ▶ to hear it here."
+    : speaker.on && !now?.title
+      ? "Ask for music, like “play Ani DiFranco”, and it plays here."
+      : "Ask for music, or press play, and it plays here.";
 
   return (
     <Card className="py-3">
@@ -62,8 +73,7 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
                 {now?.title ?? "Nothing playing"}
               </p>
               <p className="truncate text-sm opacity-70">
-                {speaker.error ??
-                  (now?.title ? [now.artist, now.album].filter(Boolean).join(" · ") : "Ask for music, or press play, and it plays here.")}
+                {speaker.error ?? (speaker.locked || !now?.title ? hint : [now.artist, now.album].filter(Boolean).join(" · "))}
               </p>
             </div>
             <Button
@@ -98,10 +108,10 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
               size="sm"
               variant="outline"
               isIcon
-              aria-label={speaker.playing ? "Pause" : "Play"}
+              aria-label={speaker.locked ? "Play sound here" : speaker.playing ? "Pause" : "Play"}
               onClick={() => void playPause()}
             >
-              {speaker.playing ? "⏸" : "▶"}
+              {speaker.playing && !speaker.locked ? "⏸" : "▶"}
             </Button>
             <Button size="sm" variant="ghost" isIcon aria-label="Next" disabled={!can("next")} onClick={() => speaker.command("next")}>
               ⏭

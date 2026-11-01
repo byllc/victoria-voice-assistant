@@ -25,9 +25,13 @@ export type Speaker = {
   now: NowPlaying | null;
   commands: string[];
   error: string | null;
+  /** Connected, but the browser hasn't allowed sound yet (Safari waits for a tap): the play button allows it. */
+  locked: boolean;
   toggle: () => Promise<void>;
   /** Become a speaker (if not already) and start playing; for the play button. */
   start: () => Promise<void>;
+  /** Allow sound, from a tap. */
+  unlock: () => Promise<void>;
   command: (name: "play" | "pause" | "next" | "previous") => void;
   setVolume: (volume: number) => void;
 };
@@ -56,6 +60,7 @@ export function useSpeaker(chat: Chat): Speaker {
   // Resolved once the server lists the commands this browser may send: until then the library drops them.
   const ready = useRef<(() => void) | null>(null);
   const wasPlaying = useRef(false);
+  const connecting = useRef(false); // one player at a time, however many taps or requests arrive meanwhile
   const [available, setAvailable] = useState(false);
   const [on, setOn] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -63,6 +68,7 @@ export function useSpeaker(chat: Chat): Speaker {
   const [now, setNow] = useState<NowPlaying | null>(null);
   const [commands, setCommands] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     void fetch("/api/music", { credentials: "same-origin" })
@@ -82,12 +88,14 @@ export function useSpeaker(chat: Chat): Speaker {
 
   const toggle = useCallback(async () => {
     setError(null);
+    if (connecting.current) return;
     if (player.current) {
       player.current.disconnect("user_request");
       player.current = null;
       setOn(false);
       setPlaying(false);
       setNow(null);
+      setLocked(false);
       chat.send({ type: "music_speaker", player_id: null, can_play: true });
       return;
     }
@@ -130,13 +138,25 @@ export function useSpeaker(chat: Chat): Speaker {
         }
       },
     });
+    connecting.current = true;
     try {
-      await created.unlock(); // first, inside the tap, so the browser allows audio
+      // Allowing sound needs a tap; Safari leaves the promise waiting until one comes rather than failing.
+      // So connect without waiting for it: music can start, and the play button allows sound.
+      let unlocked = false;
+      const unlocking = created.unlock().then(() => {
+        unlocked = true;
+        setLocked(false);
+      });
+      unlocking.catch(() => undefined);
+      await Promise.race([unlocking, new Promise((resolve) => window.setTimeout(resolve, 500))]);
+      setLocked(!unlocked);
       await created.connect();
     } catch {
       setError("Couldn't reach the music server.");
       created.disconnect("shutdown");
       return;
+    } finally {
+      connecting.current = false;
     }
     player.current = created;
     setOn(true);
@@ -164,6 +184,11 @@ export function useSpeaker(chat: Chat): Speaker {
     if (!player.current) void toggle();
   }, [chat.musicStarts, toggle]);
 
+  const unlock = useCallback(async () => {
+    await player.current?.unlock();
+    setLocked(false);
+  }, []);
+
   const command = useCallback((name: "play" | "pause" | "next" | "previous") => {
     player.current?.sendCommand(name, undefined);
   }, []);
@@ -173,5 +198,5 @@ export function useSpeaker(chat: Chat): Speaker {
     player.current?.sendCommand("volume", { volume: value });
   }, []);
 
-  return { available, on, playing, volume, now, commands, error, toggle, start, command, setVolume };
+  return { available, on, playing, volume, now, commands, error, locked, toggle, start, unlock, command, setVolume };
 }

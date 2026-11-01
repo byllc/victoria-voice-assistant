@@ -43,7 +43,7 @@ Above the tabs, the web app has a music player: artwork, title, artist and album
 - The web interface relays the browser's `/sendspin` connection to Music Assistant's Sendspin listener (port 8927 on the `music.server` host; `music.sendspin_url` overrides it), behind the household login, so it works from the HTTPS page. Music Assistant's `/sendspin` on its API port isn't used: it wants Music Assistant's own login first ("First message must be auth").
 - Music Assistant shows the browser as a "universal player" with its own id; the browser's Sendspin id is that player's output id, which is how "here" finds it.
 - Artwork, which Music Assistant serves over plain HTTP, comes through the web interface (`/api/music/artwork`, images from the Music Assistant host only).
-- Browsers only allow audio after a tap. Turning the speaker on for a typed request relies on the tap that sent it; if the browser still refuses, press play.
+- Browsers only allow sound after a tap. The speaker connects (and music starts) without one; if the browser is still holding sound back (Safari does), the player says "Tap ▶ to hear it here." and ▶ lets it play. Music asked for while the speaker is off waits up to two minutes for it.
 
 ## What you can say
 
