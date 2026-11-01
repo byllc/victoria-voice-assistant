@@ -14,8 +14,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 7 | Agents and model pools | approved | 2026-10-30 | 2026-10-31 | Bill / 2026-10-31 |
 | 8 | Notifications and task dashboard | approved | 2026-10-31 | 2026-11-01 | Bill / 2026-11-01 |
 | 9 | Home control | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
-| 10 | Music | ready for review | 2026-11-01 | 2026-11-01 | |
-| 11 | Hardening | not started | | | |
+| 10 | Music | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
+| 11 | Hardening | in progress | 2026-11-01 | | |
 | 12 | Satellites (optional) | not started | | | |
 
 ## Stage 0: Tracker, instructions, repo
@@ -226,7 +226,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 9"). Carried over: live checks of scenes, brightness, climate and locks when allowed or available; opening the Home Assistant connection at startup and overlapping voice turns (Stage 11).
 
 ## Stage 10: Music
-- Status: ready for review
+- Status: approved
 - Done criteria:
   - [~] "Play … from Plex" and "play … on Spotify" work in the room that heard the request; "in the kitchen" overrides. Plex: built, routing and search checked live, playback unit-tested; music plays where asked or on the asking browser's own speaker (Bill's design). Spotify: skipped for now (Bill); it isn't in Music Assistant, and "on Spotify" says so. Needs Bill: playback on his device.
   - [~] Pause, resume, skip, volume, and "what's playing" work. Built and unit-tested; "what's playing" live. Needs Bill: with music playing.
@@ -251,6 +251,18 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Bill: "it should not wait for tapping play, it should just start playing." The page now allows sound on every tap or key press (Send, Enter, Start voice): a speaker is made and unlocked in that moment, not yet connected, and music asked for afterwards connects it and plays with no further tap; a connected speaker still holding sound back is unlocked by any tap too. "Tap ▶ to hear it here." remains only for a page nobody has touched since loading. Verified in the browser pane (test copy on 127.0.0.1:8767): speaker off, typed "play Imperfectly by Ani DiFranco" -> the speaker turned itself on and "In or Out" (Ani DiFranco · Imperfectly) was playing within 10 s, no prompt. The pane is Chromium; Safari's behavior needs Bill's check. Also seen: "play Little Plastic Castles" -> "I couldn't find Little Plastic Castles." because that album isn't in the Plex library (Music Assistant's search returns nothing for it); Bill's earlier "Little Plastic Castles by Ani DiFranco" played her music because it named the artist.
   - Bill: "the song doesn't even seem to load into the player, so it doesn't look like anything happened." The player now shows the request as soon as the assistant accepts it: `music_start` carries the title, artist and kind, and the widget shows "<title> · Starting… · <artist>" with a pulsing bar until Music Assistant's own track details arrive (or playback begins; 45 s at most), then the track, artist, album, artwork and running clock. A failure reaches the widget too (`music_error`: "It didn't start playing.", "The music server never saw this speaker."). Album art was refused (400) because Music Assistant reports it at its IP (192.168.1.101) while the config names homeassistant.local; the artwork relay now accepts the music server by any address its name resolves to. Verified in the pane (test copy), the player's text sampled every 0.5 s: "Nothing playing" until the reply (9.5 s, mostly the model), then "Imperfectly · Starting… · Ani DiFranco", then at 10.5 s "In or Out · Ani DiFranco · Imperfectly" playing; "play Ani DiFranco" showed "Fire Door" with its cover. `uv run pytest -q`: 289 passed, 3 skipped. Bill's running web interface serves the new page on reload; the artwork fix needs a restart of the web interface, which brings back the login while `ASSISTANT_WEB_PASSWORD` is stored.
   - Bill: "it looks like it's playing but there is no audio from the browser" (Safari on this Mac). Music Assistant was streaming to the Safari speaker within a second of the request, and the player showed the track, so the sound was lost inside Safari. Sound from Safari had never been confirmed (earlier checks were all in the Chromium pane). The Sendspin library asks Safari for Opus, decoded by Safari's WebCodecs or, without it, a bundled fallback decoder that never runs in Chromium. Change: Safari (Mac, iPhone, iPad) asks for uncompressed PCM, which needs no decoder (about 1.5 Mbit/s on the home network); other browsers keep Opus. Checked in the pane by counting the audio buffers the page schedules and their level: PCM forced, 939 buffers at full level (peak 1.0) with the audio engine running at 48 kHz; the normal Chromium path afterwards, 1,620 buffers, peak 1.0. Not confirmed: sound in Bill's Safari (the cause there is inferred, not observed).
+- Bill's review notes: Approved by Bill / 2026-11-01 ("approve, commit and push, stage 10"). Carried over: sound from Safari on his Mac after the switch to PCM (the cause was inferred, not observed); Spotify (skipped); the Alexa relay until Alexa Media Player is installed; ducking checked by voice with music playing; a new browser taking about 16 s to be listed by Music Assistant; the web interface reading `config/.env` from the default config folder even with `--config-dir`.
+
+## Stage 11: Hardening
+- Status: in progress
+- Done criteria:
+  - [ ] Killing any one service recovers automatically without losing timers, tasks, or notifications.
+  - [ ] One week of daily use with issues logged and fixed or accepted by Bill.
+  - [ ] An end-to-end benchmark of representative voice and text interactions reports overall success and per-stage latency.
+  - [ ] Runbook reviewed by Bill.
+- Blocking decisions: none in the plan. Latency figures come from the target Mac mini, at the end, not the M2 (Bill's standing instruction).
+- Carried in from earlier stages: overlapping voice turns can lose a command; open the Home Assistant connection at startup; a bare "yes" with no open question; the blank reply to "set a timer"; the Hermes process left running after a cancel; the web interface's `--config-dir` and `config/.env`.
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -338,3 +350,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 10 | Spotify skipped for now: not configured in Music Assistant. The music tool needs no change when it's added (sources are read from Music Assistant on each request). | Bill / 2026-11-01: "nevermind, skip spotify for now" |
 | 2026-11-01 | 10 | Music with no place named always plays on the device that heard the request, by chat or voice; it never asks "where should I play it?" and never falls back to the last player. The web app turns its browser speaker on (`music_start`) and plays there; a satellite plays in its room; a device with no speaker says "I can't play music on this device yet. Name a speaker, like the exercise room." A named place still wins. Found when Bill typed "play fall out boy" with the browser speaker off, was asked where, picked "Bill's MacBook Pro (2)" (this Mac's AirPlay receiver, unreachable), and heard nothing while the reply said "Playing". A play now counts only once the player reports playing within 5 s. | Bill / 2026-11-01: "the audio should always play on the device that heard the caht or voice request" |
 | 2026-11-01 | 10 | The stored `ASSISTANT_WEB_PASSWORD` stays: the next restart of the web interface asks for the household password (the running one started before it read `config/.env`, so it's open until then). The artwork fix takes effect at that restart. | Bill / 2026-11-01: "Keep it" |
+| 2026-11-01 | 10 | Approved by Bill. Carried over: sound from Safari after the switch to PCM; Spotify; the Alexa relay; ducking by voice; slow listing of a new browser; `--config-dir` and `config/.env`. | Bill / 2026-11-01: "ok approve, commit and push, stage 10 and continue to stage 11" |
