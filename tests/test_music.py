@@ -238,3 +238,54 @@ def test_relay_not_set_up(example_config_dir: Path, monkeypatch) -> None:
     for outcome in (no_targets, missing):
         assert outcome.speak == "Alexa isn't set up yet." and "Alexa Media Player" in (outcome.chat or "")
     assert home.services == []
+
+
+# The browser as a speaker ("play it here") ---------------------------------------------------------
+
+
+def test_a_browser_speaker_plays_its_own_requests() -> None:
+    music, backend = service()
+    backend.players_.append({"player_id": "browser-1", "name": "Victoria (Safari on iPhone)", "available": True, "volume": 80, "state": "idle", "now": None})
+    music.set_speaker("phone", "browser-1")
+    here = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="phone"))
+    other = run(music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="laptop"))  # no speaker: asks
+    named = run(music.handle("web", {"action": "play", "query": "Pangaea", "room": "exercise room"}, client_id="phone"))
+    paused = run(music.handle("web", {"action": "pause"}, client_id="phone"))
+    assert here.speak == "Playing Pangaea by Miles Davis from Plex here."
+    assert other.pending is not None  # "Where should I play it: ..."
+    assert named.speak.endswith("on the Exercise room speaker.")  # a named place still wins
+    assert paused.speak == "Paused here."  # its own speaker was playing
+    assert backend.played[0] == ("browser-1", "library://album/2")
+    music.set_speaker("phone", None)
+    assert music.speakers == {}
+
+
+def test_the_serializer_passes_the_speaker() -> None:
+    from victoria_voice_assistant.chat.serializer import ChatJsonSerializer
+
+    serializer = ChatJsonSerializer()
+
+    async def scenario():
+        return [
+            (await serializer.deserialize(text)).message
+            for text in ['{"type": "music_speaker", "player_id": "abc"}', '{"type": "music_speaker", "player_id": null}']
+        ]
+
+    assert run(scenario()) == [{"type": "music_speaker", "player_id": "abc"}, {"type": "music_speaker", "player_id": None}]
+
+
+def test_the_web_interface_relays_sendspin_only_when_signed_in() -> None:
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from victoria_voice_assistant.web.app import create_web_app
+
+    locked = TestClient(create_web_app(password="pw", static_dir=None, music_url="http://ma.test:8095"))
+    assert locked.get("/api/music").json() == {"speaker": False}  # not signed in
+    with pytest.raises(WebSocketDisconnect):
+        with locked.websocket_connect("/sendspin") as ws:
+            ws.receive_text()
+    no_music = TestClient(create_web_app(password="", static_dir=None, music_url=None))
+    assert no_music.get("/api/music").json() == {"speaker": False}
+    with_music = TestClient(create_web_app(password="", static_dir=None, music_url="http://ma.test:8095"))
+    assert with_music.get("/api/music").json() == {"speaker": True}

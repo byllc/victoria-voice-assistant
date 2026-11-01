@@ -24,6 +24,7 @@ import { ChatView } from "./ChatView";
 import { TasksView } from "./TasksView";
 import { Timers } from "./Timers";
 import { useChat } from "./useChat";
+import { clientId } from "./push";
 import { ACTIVE_STATES } from "./types";
 
 type Session = { authenticated: boolean; insecure: boolean };
@@ -45,7 +46,8 @@ export function App() {
     <PipecatAppBase
       transportType="smallwebrtc"
       // Signaling goes through the web interface; audio flows directly to the assistant service.
-      connectParams={{ webrtcRequestParams: { endpoint: "/api/offer" } }}
+      // client_id tells the assistant which browser is talking (for "play it here").
+      connectParams={{ webrtcRequestParams: { endpoint: "/api/offer", requestData: { client_id: clientId } } }}
       clientOptions={{ enableMic: true, enableCam: false }}
       initDevicesOnMount={false}
       themeProps={{ defaultTheme: "system" }}

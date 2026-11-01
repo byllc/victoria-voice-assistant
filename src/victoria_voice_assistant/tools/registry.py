@@ -42,6 +42,8 @@ class ToolContext:
     """Per-call information a handler may need."""
 
     device: str = "web"
+    # The browser's own id (chat `hello`, or the voice offer): which browser asked, for "play it here".
+    client_id: str | None = None
     # Reports a step to the dashboard, when a task is running the tool (an agent's tool loop).
     progress: Callable[[str], None] | None = None
 
@@ -411,7 +413,7 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
 
         async def music(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
             assert services.music is not None
-            return await services.music.handle(ctx.device, arguments)
+            return await services.music.handle(ctx.device, arguments, client_id=ctx.client_id)
 
         return music
     raise Unresolved(f"built-in service `{service}` isn't available yet")

@@ -208,8 +208,10 @@ def create_app(
             raise HTTPException(status_code=503, detail=speech.error if speech and speech.error else "voice is not ready")
         manager: ConfigManager = request.app.state.config_manager
         body = await request.json()
-        body.pop("request_data", None)
+        extra = body.pop("request_data", None) or body.pop("requestData", None) or {}
         body.pop("requestData", None)
+        # The browser's own id, so "play it here" reaches this browser's speaker (Stage 10).
+        client_id = str(extra.get("client_id"))[:64] if isinstance(extra, dict) and extra.get("client_id") else None
         sdp = body.get("sdp")
         is_renegotiation = bool(body.get("pc_id"))
         if not isinstance(sdp, str) or not sdp.startswith("v=0") or ("m=audio" not in sdp and not is_renegotiation):
@@ -219,7 +221,9 @@ def create_app(
             from victoria_voice_assistant.voice.session import run_voice_session
 
             task = asyncio.create_task(
-                run_voice_session(connection, manager.current, request.app.state.services, speech, request.app.state.chat_hub),
+                run_voice_session(
+                    connection, manager.current, request.app.state.services, speech, request.app.state.chat_hub, client_id=client_id
+                ),
                 name=f"voice-{connection.pc_id}",
             )
             request.app.state.voice_tasks.add(task)

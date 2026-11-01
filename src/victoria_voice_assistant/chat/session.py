@@ -176,7 +176,7 @@ async def run_chat_session(
     )
     pair = LLMContextAggregatorPair(context)
     preprocessor = TurnPreprocessor(
-        state, runtime, services.timers, agents=services.agents, notifications=services.notifications
+        state, runtime, services.timers, agents=services.agents, notifications=services.notifications, music=services.music
     )
     runtime.on_settled = preprocessor.release_next
     pipeline = Pipeline(

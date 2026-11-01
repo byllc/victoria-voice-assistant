@@ -22,6 +22,7 @@
     "@pipecat-ai/client-react": "1.11.0",
     "@pipecat-ai/small-webrtc-transport": "1.11.0",
     "@pipecat-ai/voice-ui-kit": "0.14.2",
+    "@sendspin/sendspin-js": "5.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   }

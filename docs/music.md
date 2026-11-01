@@ -36,6 +36,10 @@ rooms:
   office: { player: "Bill’s Mac mini", satellite: office-sat }
 ```
 
+## The web app as a speaker
+
+In the web app's Chat tab, **Play music here** turns that browser into a Music Assistant speaker ("Victoria (Safari on iPhone)") over Sendspin, Music Assistant's own streaming protocol (`@sendspin/sendspin-js`). The web interface relays it to Music Assistant at `/sendspin`, behind the household login, so it works from the HTTPS page. Music asked for from that browser with no place named then plays right there ("Playing Footprints by Miles Davis from Plex here."), and pause, skip, volume and ducking act on it. Tap it again to stop being a speaker. Browsers only allow audio after a tap, so turn it on again after reloading the page.
+
 ## What you can say
 
 - **Play**: an artist, album, track or playlist; "from Plex" / "on Spotify" picks the source. The reply says what was found and where: "Playing Footprints by Miles Davis from Plex on the Exercise room speaker." If the exact album isn't in the library, the closest match plays (often the artist), and the reply names it.

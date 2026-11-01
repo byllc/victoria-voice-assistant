@@ -20,6 +20,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime
 from victoria_voice_assistant.agents.runner import AgentRunner, match_agent_address
 from victoria_voice_assistant.notifications.service import NotificationService
+from victoria_voice_assistant.tools.music import MusicService
 from victoria_voice_assistant.tools.timers import TimerService
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class TurnPreprocessor(FrameProcessor):
         timers: TimerService,
         agents: AgentRunner | None = None,
         notifications: NotificationService | None = None,
+        music: MusicService | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -82,6 +84,7 @@ class TurnPreprocessor(FrameProcessor):
         self.timers = timers
         self.agents = agents
         self.notifications = notifications
+        self.music = music
         self._waiting: deque[LLMMessagesAppendFrame] = deque()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
@@ -97,6 +100,8 @@ class TurnPreprocessor(FrameProcessor):
                 self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
             elif message.get("type") == "hello":
                 self.state.client_id = message["client_id"]
+            elif message.get("type") == "music_speaker" and self.music is not None and self.state.client_id:
+                self.music.set_speaker(self.state.client_id, message["player_id"])
             elif message.get("type") == "push_subscribe" and self.notifications is not None and self.notifications.push:
                 saved = self.state.client_id is not None and self.notifications.push.subscribe(
                     self.state.client_id, self.state.device, message["subscription"]

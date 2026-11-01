@@ -346,6 +346,13 @@ def main(argv: list[str] | None = None) -> int:
             log_cert(files, info)
             os.environ["ASSISTANT_WEB_TLS"] = "1"  # read by the app factory (Secure cookies)
             tls_options = {"ssl_certfile": str(files.cert), "ssl_keyfile": str(files.key)}
+        try:
+            # The browser-as-speaker relay (/sendspin) goes to Music Assistant, if music is configured.
+            music = load_config(_config_dir(args.config_dir)).tools.music
+            if music is not None and music.server is not None:
+                os.environ["ASSISTANT_MUSIC_URL"] = str(music.server)
+        except ConfigError:
+            pass
         uvicorn.run(
             "victoria_voice_assistant.web.app:create_default_web_app",
             factory=True,

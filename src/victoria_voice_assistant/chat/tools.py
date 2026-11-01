@@ -123,7 +123,7 @@ class ToolRuntime:
         return offer.handler({"agent": self.registry.default_agent or "", "summary": summary}, self._context())
 
     def _context(self) -> ToolContext:
-        return ToolContext(device=self.state.device)
+        return ToolContext(device=self.state.device, client_id=self.state.client_id)
 
     async def run(self, entry: ToolEntry, arguments: dict[str, Any]) -> tuple[ToolOutcome, str | None]:
         """Run a tool with the session's guards. Returns the outcome and the text to speak directly, if any."""

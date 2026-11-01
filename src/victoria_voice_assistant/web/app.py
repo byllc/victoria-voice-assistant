@@ -38,6 +38,7 @@ def create_web_app(
     service_url: str = DEFAULT_SERVICE_URL,
     static_dir: Path | None = DEFAULT_STATIC_DIR,
     secure_cookies: bool = False,
+    music_url: str | None = None,
 ) -> FastAPI:
     # Without a password the app runs open (insecure) and the client shows a warning.
     insecure = not password
@@ -124,6 +125,32 @@ def create_web_app(
         except WebSocketDisconnect:
             pass
 
+    @app.get("/api/music")
+    async def music_info(request: Request) -> dict[str, bool]:
+        """Whether this browser can be a music speaker (Sendspin through /sendspin)."""
+        return {"speaker": bool(music_url) and authenticated(request.cookies.get(COOKIE_NAME))}
+
+    @app.websocket("/sendspin")
+    async def sendspin(websocket: WebSocket) -> None:
+        """The browser as a Music Assistant speaker: Sendspin relayed to Music Assistant (Stage 10).
+
+        Relayed rather than direct so it works from the HTTPS page (a browser won't open plain ws:// there)
+        and stays behind the household login. Audio frames are binary.
+        """
+        if not music_url or not authenticated(websocket.cookies.get(COOKIE_NAME)):
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        upstream_url = music_url.rstrip("/").replace("https://", "wss://").replace("http://", "ws://") + "/sendspin"
+        try:
+            async with connect(upstream_url, max_size=None) as upstream:
+                await _relay_frames(websocket, upstream)
+        except (OSError, WebSocketException):
+            logger.error("Music server unreachable", extra={"event": "sendspin_unreachable"})
+            await websocket.close(code=1011)
+        except WebSocketDisconnect:
+            pass
+
     if static_dir is not None and static_dir.is_dir():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="client")
     else:
@@ -156,6 +183,36 @@ async def _relay_messages(websocket: WebSocket, upstream) -> None:
             task.cancel()
 
 
+async def _relay_frames(websocket: WebSocket, upstream) -> None:
+    """Both directions, text and binary."""
+
+    async def browser_to_server() -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            if message.get("bytes") is not None:
+                await upstream.send(message["bytes"])
+            elif message.get("text") is not None:
+                await upstream.send(message["text"])
+
+    async def server_to_browser() -> None:
+        async for message in upstream:
+            if isinstance(message, bytes):
+                await websocket.send_bytes(message)
+            else:
+                await websocket.send_text(message)
+
+    tasks = [asyncio.create_task(browser_to_server()), asyncio.create_task(server_to_browser())]
+    try:
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+    finally:
+        for task in tasks:
+            task.cancel()
+
+
 def _http_url(service_url: str) -> str:
     """http://host:port of the assistant service, from its websocket URL."""
     base = service_url.removesuffix("/ws")
@@ -171,4 +228,5 @@ def create_default_web_app() -> FastAPI:
         password=get_secret("ASSISTANT_WEB_PASSWORD") or "",
         service_url=os.environ.get("ASSISTANT_SERVICE_URL", DEFAULT_SERVICE_URL),
         secure_cookies=os.environ.get("ASSISTANT_WEB_TLS") == "1",
+        music_url=os.environ.get("ASSISTANT_MUSIC_URL") or None,
     )

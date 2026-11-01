@@ -118,10 +118,11 @@ class MusicDucker:
     """Architecture §8: music for this device drops to `duck_level` while someone talks to the assistant,
     and comes back once the room is quiet again (after the reply, or when no reply comes)."""
 
-    def __init__(self, services: Services, device: str, activity: RoomActivity) -> None:
+    def __init__(self, services: Services, device: str, activity: RoomActivity, client_id: str | None = None) -> None:
         self.services = services
         self.device = device
         self.activity = activity
+        self.client_id = client_id
         self._restore: asyncio.TimerHandle | None = None
         self._tasks: set[asyncio.Task] = set()
 
@@ -131,7 +132,7 @@ class MusicDucker:
             return
         if kind == "user_started":
             self._cancel()
-            await music.duck(self.device)
+            await music.duck(self.device, self.client_id)
         else:
             self._schedule()
 
@@ -145,7 +146,7 @@ class MusicDucker:
             self._schedule()  # still talking, or a reply is on its way
             return
         assert self.services.music is not None
-        task = asyncio.get_running_loop().create_task(self.services.music.unduck(self.device))
+        task = asyncio.get_running_loop().create_task(self.services.music.unduck(self.device, self.client_id))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -157,7 +158,7 @@ class MusicDucker:
     async def close(self) -> None:
         self._cancel()
         if self.services.music is not None:
-            await self.services.music.unduck(self.device)
+            await self.services.music.unduck(self.device, self.client_id)
 
 
 class VoiceOutlet:
@@ -346,11 +347,12 @@ async def run_voice_session(
     services: Services,
     speech: SpeechModels,
     hub: ChatHub | None = None,
+    client_id: str | None = None,
 ) -> None:
     """Run one browser voice connection until it closes."""
     session_id = connection.pc_id
     router = build_router(config.models)
-    state = SessionState(pending_window_s=VOICE_PENDING_S)
+    state = SessionState(pending_window_s=VOICE_PENDING_S, client_id=client_id)
     session = ChatSession(state, config, services)
     runtime = session.runtime
 
@@ -401,7 +403,7 @@ async def run_voice_session(
             await ducker_ref[0].on_change(kind)
 
     activity = RoomActivity(on_change=on_activity)
-    ducker_ref.append(MusicDucker(services, state.device, activity))
+    ducker_ref.append(MusicDucker(services, state.device, activity, client_id))
     # RTVI stays on here: the browser's Pipecat client uses it for transcripts and state.
     task = PipelineTask(pipeline, params=PipelineParams(enable_metrics=True), observers=[latency, activity])
     session.task = task

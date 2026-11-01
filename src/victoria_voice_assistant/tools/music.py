@@ -240,7 +240,8 @@ class MusicService:
         self.backend = backend or (
             AssistantBackend(str(config.server).rstrip("/"), config.token or "") if config and config.server else None
         )
-        self.last_player: dict[str, str] = {}  # device -> the player its music last went to
+        self.last_player: dict[str, str] = {}  # device or browser -> the player its music last went to
+        self.speakers: dict[str, str] = {}  # browser (client id) -> its own Sendspin player ("play it here")
         self._ducked: dict[str, int] = {}  # player -> volume before ducking
 
     def update_settings(self, config: MusicConfig | None) -> None:
@@ -268,11 +269,27 @@ class MusicService:
         found = exact or partial
         return max(found, key=lambda p: len(_key(p["name"]))) if found else None
 
-    def _where(self, device: str, players: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def set_speaker(self, client_id: str, player_id: str | None) -> None:
+        """A browser turned "Play music here" on (its Sendspin player id) or off (None)."""
+        if player_id:
+            self.speakers[client_id] = player_id
+        else:
+            self.speakers.pop(client_id, None)
+        logger.info("Browser speaker", extra={"event": "music_speaker", "count": len(self.speakers)})
+
+    def _own(self, client_id: str | None, players: list[dict[str, Any]]) -> dict[str, Any] | None:
+        player_id = self.speakers.get(client_id or "")
+        return next((p for p in players if p["player_id"] == player_id and p["available"]), None)
+
+    def _where(self, device: str, players: list[dict[str, Any]], client_id: str | None = None) -> dict[str, Any] | None:
+        """No place named: this browser's own speaker, the device's room, or where its music last went."""
+        own = self._own(client_id, players)
+        if own is not None:
+            return own
         room = self._room_for_device(device)
         if room:
             return self._match_player(room, players)
-        last = self.last_player.get(device)
+        last = self.last_player.get(client_id or device)
         return next((p for p in players if p["player_id"] == last), None)
 
     def _ask_where(self, arguments: dict[str, Any], players: list[dict[str, Any]]) -> ToolOutcome:
@@ -286,7 +303,7 @@ class MusicService:
 
     # The tool -------------------------------------------------------------------------------
 
-    async def handle(self, device: str, arguments: dict[str, Any]) -> ToolOutcome:
+    async def handle(self, device: str, arguments: dict[str, Any], client_id: str | None = None) -> ToolOutcome:
         if self.backend is None:
             return ToolOutcome(result={"error": "not configured"}, speak="Music isn't set up yet.")
         action = str(arguments.get("action") or "play").lower().replace(" ", "_").replace("-", "_")
@@ -302,12 +319,13 @@ class MusicService:
             if player is None:
                 return ToolOutcome(result={"error": f"no speaker called {place!r}"}, speak=f"I don't know a speaker called {place}.")
         elif action == "play":
-            player = self._where(device, players)
+            player = self._where(device, players, client_id)
             if player is None:
                 return self._ask_where(arguments, players)
         else:
             playing = [p for p in players if p["state"] == "playing"]
-            player = self._where(device, players) if len(playing) != 1 else playing[0]
+            own = self._own(client_id, players)
+            player = own if own and own["state"] == "playing" else (self._where(device, players, client_id) if len(playing) != 1 else playing[0])
             if player is None:
                 if action == "now_playing":
                     return ToolOutcome(result={"playing": []}, speak="Nothing is playing.")
@@ -315,19 +333,22 @@ class MusicService:
         if not player["available"]:
             return ToolOutcome(result={"error": "speaker offline"}, speak=f"{_cap(_the(player['name']))} isn't available right now.")
         try:
+            here = self._own(client_id, players) is player
+            key = client_id or device
             if action == "play":
-                return await self._play(device, player, arguments)
-            return await self._control(device, player, action, arguments)
+                return await self._play(key, player, arguments, here)
+            return await self._control(key, player, action, arguments, here)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Music command failed", extra={"event": "music_failed", "action": action, "reason": str(exc) or type(exc).__name__})
             return ToolOutcome(result={"error": str(exc)}, speak="The music server couldn't do that.", error=True)
 
-    async def _play(self, device: str, player: dict[str, Any], arguments: dict[str, Any]) -> ToolOutcome:
+    async def _play(self, device: str, player: dict[str, Any], arguments: dict[str, Any], here: bool = False) -> ToolOutcome:
+        where = "here" if here else f"on {_the(player['name'])}"
         query = str(arguments.get("query") or "").strip()
         if not query:
             await self.backend.command(player["player_id"], "resume")  # type: ignore[union-attr]
             self.last_player[device] = player["player_id"]
-            return ToolOutcome(result={"resumed": player["player_id"]}, speak=f"Resuming on {_the(player['name'])}.")
+            return ToolOutcome(result={"resumed": player["player_id"]}, speak=f"Resuming {where}.")
         requested = str(arguments.get("source") or "").strip().lower() or None
         order = [requested] if requested else list(self.config.source_order if self.config else ["plex", "spotify"])
         available = await self.backend.sources()  # type: ignore[union-attr]
@@ -351,15 +372,18 @@ class MusicService:
         source = SOURCES.get(choice.source, choice.source.title())
         return ToolOutcome(
             result={"playing": choice.describe(), "source": choice.source, "player": player["name"]},
-            speak=f"Playing {choice.describe()} from {source} on {_the(player['name'])}.",
+            speak=f"Playing {choice.describe()} from {source} {where}.",
         )
 
-    async def _control(self, device: str, player: dict[str, Any], action: str, arguments: dict[str, Any]) -> ToolOutcome:
+    async def _control(
+        self, device: str, player: dict[str, Any], action: str, arguments: dict[str, Any], here: bool = False
+    ) -> ToolOutcome:
         name = player["name"]
+        where = "here" if here else f"on {_the(name)}"
         if action == "now_playing":
             if player["state"] == "playing" and player["now"]:
-                return ToolOutcome(result={"now": player["now"]}, speak=f"{player['now']}, on {_the(name)}.")
-            return ToolOutcome(result={"now": None}, speak=f"Nothing is playing on {_the(name)}.")
+                return ToolOutcome(result={"now": player["now"]}, speak=f"{player['now']}, {where}.")
+            return ToolOutcome(result={"now": None}, speak=f"Nothing is playing {where}.")
         if action not in ACTIONS:
             return ToolOutcome(result={"error": f"unknown action {action!r}"}, speak="I can play, pause, skip, or change the volume.")
         level = arguments.get("level")
@@ -370,25 +394,25 @@ class MusicService:
         await self.backend.command(player["player_id"], action, level)  # type: ignore[union-attr]
         self.last_player[device] = player["player_id"]
         speak = {
-            "pause": f"Paused on {_the(name)}.",
-            "stop": f"Stopped on {_the(name)}.",
-            "resume": f"Resuming on {_the(name)}.",
+            "pause": f"Paused {where}.",
+            "stop": f"Stopped {where}.",
+            "resume": f"Resuming {where}.",
             "next": "Skipping.",
             "previous": "Going back.",
-            "volume": f"Volume {level} on {_the(name)}.",
-            "volume_up": f"Turned up {_the(name)}.",
-            "volume_down": f"Turned down {_the(name)}.",
+            "volume": f"Volume {level} {where}.",
+            "volume_up": "Turned it up." if here else f"Turned up {_the(name)}.",
+            "volume_down": "Turned it down." if here else f"Turned down {_the(name)}.",
         }[action]
         return ToolOutcome(result={"done": action, "player": name}, speak=speak)
 
     # Ducking (architecture §8: music drops while someone talks to the assistant) -------------------
 
-    async def duck(self, device: str) -> None:
+    async def duck(self, device: str, client_id: str | None = None) -> None:
         if self.backend is None or self.config is None:
             return
         try:
             players = await self.backend.players()
-            player = self._where(device, players)
+            player = self._where(device, players, client_id)
             if player is None or player["state"] != "playing" or player["player_id"] in self._ducked:
                 return
             volume = player["volume"]
@@ -400,7 +424,7 @@ class MusicService:
         except Exception as exc:  # noqa: BLE001 - ducking is best-effort; never block a voice turn
             logger.warning("Ducking failed", extra={"event": "music_duck_failed", "reason": str(exc) or type(exc).__name__})
 
-    async def unduck(self, device: str) -> None:
+    async def unduck(self, device: str, client_id: str | None = None) -> None:
         if self.backend is None or not self._ducked:
             return
         for player_id, volume in list(self._ducked.items()):
