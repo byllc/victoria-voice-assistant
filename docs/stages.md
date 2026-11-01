@@ -14,7 +14,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 7 | Agents and model pools | approved | 2026-10-30 | 2026-10-31 | Bill / 2026-10-31 |
 | 8 | Notifications and task dashboard | approved | 2026-10-31 | 2026-11-01 | Bill / 2026-11-01 |
 | 9 | Home control | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
-| 10 | Music | in progress | 2026-11-01 | | |
+| 10 | Music | ready for review | 2026-11-01 | 2026-11-01 | |
 | 11 | Hardening | not started | | | |
 | 12 | Satellites (optional) | not started | | | |
 
@@ -226,12 +226,12 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 9"). Carried over: live checks of scenes, brightness, climate and locks when allowed or available; opening the Home Assistant connection at startup and overlapping voice turns (Stage 11).
 
 ## Stage 10: Music
-- Status: in progress
+- Status: ready for review
 - Done criteria:
-  - [ ] "Play … from Plex" and "play … on Spotify" work in the room that heard the request; "in the kitchen" overrides.
-  - [ ] Pause, resume, skip, volume, and "what's playing" work.
-  - [ ] Music ducks while the assistant listens and speaks.
-  - [ ] An unreachable music server gives a clear spoken message.
+  - [~] "Play … from Plex" and "play … on Spotify" work in the room that heard the request; "in the kitchen" overrides. Plex: built, routing and search checked live, playback unit-tested; music plays where asked or on the asking browser's own speaker (Bill's design). Spotify: skipped for now (Bill); it isn't in Music Assistant, and "on Spotify" says so. Needs Bill: playback on his device.
+  - [~] Pause, resume, skip, volume, and "what's playing" work. Built and unit-tested; "what's playing" live. Needs Bill: with music playing.
+  - [~] Music ducks while the assistant listens and speaks. Built and unit-tested. Needs Bill: by voice with music playing.
+  - [x] An unreachable music server gives a clear spoken message. "I can't reach the music server right now." (tested).
 - Blocking decisions: which speaker plays music in each room; where Music Assistant runs. Answered (decisions log): the Home Assistant add-on; music plays where the request says.
 - Evidence:
   - Music Assistant 2.10.9 (the add-on, `http://homeassistant.local:8095`), token stored as a secret. Providers include Plex; **Spotify is not connected** in Music Assistant. Players: Exercise room speaker, Bill's Mac mini, Bill's MacBook Pro (2), KMC's Mac (available), the LG TV and office satellite (offline), and Music Assistant's own web player.
@@ -240,6 +240,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - The web app as a speaker (Bill's request: play on the device asking): a **Play music here** switch makes the browser a Music Assistant player over Sendspin (`@sendspin/sendspin-js` 5.0.0); the web interface relays `/sendspin` to Music Assistant (binary frames, behind the login, so it works from HTTPS). The browser reports its player id over chat (`music_speaker`) and with the voice offer (`client_id`), so music asked for from that browser plays "here".
   - The Alexa relay (`agents/relay.py`, Bill wanted it): `kind: relay` agents send the words to an Echo through Home Assistant (`media_player.play_media`, `custom`), choosing the Echo by a room in the request (left off the command), the device's room, or the only one; "Asking Alexa." Home Assistant has no Alexa Media Player integration yet, so it answers "Alexa isn't set up yet." with setup steps.
   - Tests (`tests/test_music.py`, 19, against stand-ins for Music Assistant and Home Assistant): search phrases, picking (artist, track over artist, source order, playlists, source missing), asking where then remembering, rooms and aliases, a satellite's room, sources, controls, offline and unknown speakers, an unreachable server, ducking, wiring, the browser speaker ("here"), the `music_speaker` message, the relay (room choice, ambiguity, not set up), and the `/sendspin` relay refusing when not signed in. `uv run pytest -q`: 284 passed, 3 skipped. `assistant tools test`: 38/39 with "play Footprints from Plex in the exercise room" (`source='plex', room='exercise room'`), "turn the music down", "what song is this" and "ask alexa to play some jazz" routing correctly; the miss is the known "set a timer".
+  - Spotify: after Bill connected it, Music Assistant still had no Spotify provider configured (only Plex; `spotify` was available to add). Bill: "skip spotify for now".
+  - Demo for Bill: open the web app, Chat tab, tap **Play music here**, then say or type "play some Miles Davis", "pause", "resume", "skip", "turn it down", "what's playing?"; by voice, check the music dips while you talk. "Play Pangaea in the exercise room" plays on that speaker instead. "Ask Alexa to play some jazz" answers "Alexa isn't set up yet."
   - Live, read-only against Bill's Music Assistant: "what's playing" -> "Nothing is playing."; "play Miles Davis" -> "Where should I play it: Bill's MacBook Pro (2), KMC's Mac, Bill's Mac mini, Exercise room speaker or Web (Safari on Mac)?"; "in the garage" -> "I don't know a speaker called garage."; "on Spotify" -> "Spotify isn't connected in Music Assistant."; picks: "some Miles Davis" -> the artist, "Pangaea" -> the album, "Footprints by Miles Davis" -> the track. The `/sendspin` relay opened through to Music Assistant over HTTPS. Nothing was played (Bill will try playback on his own device).
 - Bill's review notes:
 
@@ -325,3 +327,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 9 | Finding (voice, for Stage 11): a command spoken while the previous voice request is still being handled can be lost (no reply). Seen when the first Home Assistant call opened its MCP connection. Proposal: open the Home Assistant connection at startup, and look at overlapping voice turns in hardening. | |
 | 2026-11-01 | 9 | Approved by Bill. Carried over: live checks of scenes, brightness, climate and locks; the Home Assistant connection at startup and overlapping voice turns (Stage 11). | Bill / 2026-11-01: "approve stage 9" |
 | 2026-11-01 | 10 | Blocking decisions: Music Assistant is the existing Home Assistant add-on (2.9.11, `http://homeassistant.local:8095`; players: Exercise room speaker, Bill's Mac mini, Bill's MacBook Pro (2), KMC's Mac). Music plays where the request says ("in the exercise room", "on the Mac mini"); the web client has no default room until the room picker exists, so a request without a place asks where. Satellites (Stage 12) will use their room. The Alexa relay is wanted too; Home Assistant doesn't have the Alexa Media Player integration installed yet, so the relay is built against config and stays "not set up" until it is. | Bill / 2026-11-01: "Its already installed"; "It should play music wherever I asked it to play"; "Yes, add the relay" |
+| 2026-11-01 | 10 | Spotify skipped for now: not configured in Music Assistant. The music tool needs no change when it's added (sources are read from Music Assistant on each request). | Bill / 2026-11-01: "nevermind, skip spotify for now" |
