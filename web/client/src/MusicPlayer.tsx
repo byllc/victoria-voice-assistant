@@ -50,6 +50,7 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
     }
     speaker.command(speaker.playing ? "pause" : "play");
   };
+  const starting = speaker.starting;
   const hint = speaker.locked
     ? "Tap ▶ to hear it here."
     : speaker.on && !now?.title
@@ -60,7 +61,9 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
     <Card className="py-3">
       <CardContent className="flex items-center gap-3 px-3">
         <div className="size-16 shrink-0 overflow-hidden rounded-md bg-black/10 dark:bg-white/10">
-          {now?.artwork ? (
+          {starting ? (
+            <div className="flex size-full animate-pulse items-center justify-center text-2xl opacity-40">♪</div>
+          ) : now?.artwork ? (
             <img src={now.artwork} alt="" className="size-full object-cover" />
           ) : (
             <div className="flex size-full items-center justify-center text-2xl opacity-40">♪</div>
@@ -70,10 +73,15 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
           <div className="flex min-w-0 items-start gap-2">
             <div className="min-w-0 flex-1">
               <p className="truncate font-semibold" style={{ color: "var(--color-foreground)" }}>
-                {now?.title ?? "Nothing playing"}
+                {starting?.title ?? now?.title ?? "Nothing playing"}
               </p>
               <p className="truncate text-sm opacity-70">
-                {speaker.error ?? (speaker.locked || !now?.title ? hint : [now.artist, now.album].filter(Boolean).join(" · "))}
+                {speaker.error ??
+                  (starting
+                    ? [speaker.locked ? "Starting… tap ▶ to hear it" : "Starting…", starting.artist].filter(Boolean).join(" · ")
+                    : speaker.locked || !now?.title
+                      ? hint
+                      : [now.artist, now.album].filter(Boolean).join(" · "))}
               </p>
             </div>
             <Button
@@ -88,7 +96,7 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
             </Button>
           </div>
           <div className="flex items-center gap-2 text-xs tabular-nums opacity-70">
-            <span>{clock(at ?? 0)}</span>
+            <span>{starting ? "0:00" : clock(at ?? 0)}</span>
             <div
               className="h-1 flex-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/15"
               role="progressbar"
@@ -96,9 +104,13 @@ export function MusicPlayer({ speaker }: { speaker: Speaker }) {
               aria-valuemax={duration ?? 0}
               aria-valuenow={at ?? 0}
             >
-              <div className="h-full rounded-full bg-teal-600" style={{ width: duration ? `${Math.min(100, ((at ?? 0) / duration) * 100)}%` : "0%" }} />
+              {starting ? (
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-teal-600/60" />
+              ) : (
+                <div className="h-full rounded-full bg-teal-600" style={{ width: duration ? `${Math.min(100, ((at ?? 0) / duration) * 100)}%` : "0%" }} />
+              )}
             </div>
-            <span>{duration ? clock(duration) : "-:--"}</span>
+            <span>{!starting && duration ? clock(duration) : "-:--"}</span>
           </div>
           <div className="flex items-center gap-1">
             <Button size="sm" variant="ghost" isIcon aria-label="Previous" disabled={!can("previous")} onClick={() => speaker.command("previous")}>

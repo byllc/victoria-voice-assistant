@@ -16,6 +16,9 @@ export type NowPlaying = {
   speed: number;
 };
 
+/** Music the assistant is starting here, shown until the music server's own track details arrive. */
+export type Starting = { title: string; artist: string | null };
+
 export type Speaker = {
   /** The web interface can relay Sendspin to Music Assistant (music is configured, signed in). */
   available: boolean;
@@ -23,6 +26,7 @@ export type Speaker = {
   playing: boolean;
   volume: number;
   now: NowPlaying | null;
+  starting: Starting | null;
   commands: string[];
   error: string | null;
   /** Connected, but the browser hasn't allowed sound yet (Safari waits for a tap): the play button allows it. */
@@ -69,6 +73,14 @@ export function useSpeaker(chat: Chat): Speaker {
   const [commands, setCommands] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [locked, setLockedState] = useState(false);
+  const [starting, setStartingState] = useState<Starting | null>(null);
+  // The same, for the player's state handler, with the title showing when it began (to tell the new track's apart).
+  const startingRef = useRef<{ previous: string | null } | null>(null);
+  const nowTitle = useRef<string | null>(null);
+  const setStarting = useCallback((value: Starting | null) => {
+    startingRef.current = value ? { previous: nowTitle.current } : null;
+    setStartingState(value);
+  }, []);
   const isLocked = useRef(false); // the same, for the tap handler
   const setLocked = useCallback((value: boolean) => {
     isLocked.current = value;
@@ -108,6 +120,7 @@ export function useSpeaker(chat: Chat): Speaker {
             ready.current = null;
           }
           const isPlaying = state.groupState?.playback_state === "playing" || state.isPlaying;
+          const began = isPlaying && !wasPlaying.current;
           if (isPlaying !== wasPlaying.current) {
             // Started or stopped: measure the running clock from where the track is now, not from the last report.
             wasPlaying.current = isPlaying;
@@ -122,6 +135,12 @@ export function useSpeaker(chat: Chat): Speaker {
           if (state.serverState?.controller?.supported_commands) setCommands(state.serverState.controller.supported_commands);
           if (typeof state.serverState?.controller?.volume === "number") setVolumeState(state.serverState.controller.volume);
           const meta = state.serverState?.metadata;
+          // What was starting has arrived: the music server's details for a new track, or playback began.
+          if (startingRef.current && ((meta?.title && meta.title !== startingRef.current.previous) || began)) {
+            startingRef.current = null;
+            setStartingState(null);
+          }
+          if (meta?.title !== undefined) nowTitle.current = meta.title ?? null;
           if (meta && (meta.progress || meta.title !== undefined)) {
             setNow({
               title: meta.title ?? null,
@@ -164,6 +183,7 @@ export function useSpeaker(chat: Chat): Speaker {
       setOn(false);
       setPlaying(false);
       setNow(null);
+      setStarting(null);
       setLocked(false);
       chat.send({ type: "music_speaker", player_id: null, can_play: true });
       return;
@@ -208,13 +228,27 @@ export function useSpeaker(chat: Chat): Speaker {
     player.current?.sendCommand("play", undefined);
   }, [toggle]);
 
-  // Music asked for here while the speaker is off: turn it on, and the assistant plays it once it is listed.
-  const starts = useRef(chat.musicStarts);
+  // Music asked for here: show it at once, and turn the speaker on if it's off (the assistant plays it once
+  // Music Assistant lists this browser). A failure replaces it with the reason.
+  const handled = useRef(chat.music?.n ?? 0);
   useEffect(() => {
-    if (chat.musicStarts === starts.current) return;
-    starts.current = chat.musicStarts;
+    if (!chat.music || chat.music.n === handled.current) return;
+    handled.current = chat.music.n;
+    const message = chat.music.message;
+    if (message.type === "music_error") {
+      setStarting(null);
+      setError(message.text);
+      return;
+    }
+    setError(null);
+    setStarting({ title: message.title, artist: message.artist });
     if (!player.current) void toggle();
-  }, [chat.musicStarts, toggle]);
+    // Never stuck on "Starting": the same track asked for again brings no new details, and a failure says so itself.
+    const n = chat.music.n;
+    window.setTimeout(() => {
+      if (handled.current === n && startingRef.current) setStarting(null);
+    }, 45_000);
+  }, [chat.music, toggle, setStarting]);
 
   const unlock = useCallback(async () => {
     await player.current?.unlock();
@@ -230,5 +264,5 @@ export function useSpeaker(chat: Chat): Speaker {
     player.current?.sendCommand("volume", { volume: value });
   }, []);
 
-  return { available, on, playing, volume, now, commands, error, locked, toggle, start, unlock, command, setVolume };
+  return { available, on, playing, volume, now, starting, commands, error, locked, toggle, start, unlock, command, setVolume };
 }

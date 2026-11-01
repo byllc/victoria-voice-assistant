@@ -300,7 +300,8 @@ def test_asked_from_a_browser_with_its_speaker_off_it_turns_on_and_plays_there()
     async def scenario():
         music.set_speaker("laptop", None, send)  # the page has the player, its speaker off
         outcome = await music.handle("web", {"action": "play", "query": "Pangaea"}, client_id="laptop")
-        assert sent == [{"type": "music_start"}] and backend.played == []
+        assert sent == [{"type": "music_start", "title": "Pangaea", "artist": "Miles Davis", "kind": "album"}]
+        assert backend.played == []
         # The browser connects; Music Assistant lists it a moment later.
         music.set_speaker("laptop", "sendspin-laptop", send)
         await asyncio.sleep(0.05)
@@ -355,6 +356,9 @@ def test_artwork_comes_only_from_the_music_server() -> None:
     open_app = TestClient(create_web_app(password="", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
     assert open_app.get("/api/music/artwork", params={"url": "http://evil.test/x.png"}).status_code == 400
     assert open_app.get("/api/music/artwork", params={"url": "file:///etc/passwd"}).status_code == 400
+    # By address too: Music Assistant reports artwork at its IP while the config names it.
+    by_ip = TestClient(create_web_app(password="", static_dir=None, sendspin_url="ws://localhost:8927/sendspin"))
+    assert by_ip.get("/api/music/artwork", params={"url": "http://127.0.0.1:1/a.png"}).status_code == 502  # allowed, nothing there
     locked = TestClient(create_web_app(password="pw", static_dir=None, sendspin_url="ws://ma.test:8927/sendspin"))
     assert locked.get("/api/music/artwork", params={"url": "http://ma.test:8095/a.png"}).status_code == 401
 

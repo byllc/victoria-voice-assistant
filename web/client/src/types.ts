@@ -61,7 +61,12 @@ export type ServerMessage =
   | { type: "announce"; text: string; sound: boolean; spoken: boolean; items: NotificationInfo[] }
   | ({ type: "dashboard" } & Dashboard)
   | { type: "push_config"; public_key: string | null; problem: string | null }
-  | { type: "music_start" };
+  | MusicMessage;
+
+/** From the assistant to this browser's player: music asked for here is starting, or it failed. */
+export type MusicMessage =
+  | { type: "music_start"; title: string; artist: string | null; kind: string }
+  | { type: "music_error"; text: string };
 
 // One line in the conversation: typed or spoken by you, said by Victoria, a notice, or a notification card.
 export type LogEntry =

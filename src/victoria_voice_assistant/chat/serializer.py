@@ -60,7 +60,8 @@ class ChatJsonSerializer(FrameSerializer):
     list, for the badge), ``{"type": "announce", "text": "...", "sound": bool, "spoken": bool, "items": [...]}`` and
     ``{"type": "dashboard", "tasks": [...], "summary": {...}}`` (the task dashboard, on every change) and
     ``{"type": "push_config", "public_key": "..." | null, "problem": "..." | null}`` (whether phone push is available) and
-    ``{"type": "music_start"}`` (music asked for here: turn this browser's speaker on).
+    ``{"type": "music_start", "title": "...", "artist": "..." | null, "kind": "..."}`` (music asked for here: turn this
+    browser's speaker on if it's off, and show what's starting) and ``{"type": "music_error", "text": "..."}``.
     """
 
     async def serialize(self, frame: Frame) -> str | None:

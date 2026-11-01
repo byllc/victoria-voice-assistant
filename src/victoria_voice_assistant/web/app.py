@@ -33,6 +33,25 @@ class LoginRequest(BaseModel):
     password: str
 
 
+async def _addresses(host: str) -> set[str]:
+    try:
+        found = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except OSError:
+        return set()
+    return {entry[4][0] for entry in found}
+
+
+async def _same_host(host: str | None, music_host: str) -> bool:
+    """The music server, by its name or by an address that name resolves to (Music Assistant reports
+    artwork at its IP address, e.g. 192.168.1.101, while the config names homeassistant.local)."""
+    if not host:
+        return False
+    if host == music_host:
+        return True
+    wanted = await _addresses(music_host)
+    return bool(wanted) and bool(await _addresses(host) & wanted)
+
+
 def create_web_app(
     *,
     password: str = "",
@@ -140,7 +159,7 @@ def create_web_app(
         if not authenticated(request.cookies.get(COOKIE_NAME)):
             raise HTTPException(status_code=401, detail="not signed in")
         target = urlsplit(url)
-        if not music_host or target.scheme not in ("http", "https") or target.hostname != music_host:
+        if not music_host or target.scheme not in ("http", "https") or not await _same_host(target.hostname, music_host):
             raise HTTPException(status_code=400, detail="not the music server")
         try:
             async with httpx.AsyncClient(timeout=10) as client:

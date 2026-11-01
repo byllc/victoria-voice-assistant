@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clientId } from "./push";
 import { beep } from "./sound";
-import type { Dashboard, LogEntry, NewLogEntry, NotificationInfo, ServerMessage, TimerInfo } from "./types";
+import type { Dashboard, LogEntry, MusicMessage, NewLogEntry, NotificationInfo, ServerMessage, TimerInfo } from "./types";
 
 export type Timer = { name: string; endsAt: number; state: TimerInfo["state"] };
 export type Ringing = { names: string[]; text: string } | null;
@@ -27,8 +27,8 @@ export function useChat(onSignedOut: () => void) {
   const [notifications, setNotifications] = useState<NotificationInfo[]>([]);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [pushKey, setPushKey] = useState<string | null>(null);
-  // Counts "music_start" messages (music asked for here while the speaker is off); the speaker turns on for each.
-  const [musicStarts, setMusicStarts] = useState(0);
+  // The latest message for the music player (numbered, so the same one twice still counts twice).
+  const [music, setMusic] = useState<{ n: number; message: MusicMessage } | null>(null);
 
   const append = useCallback((entry: NewLogEntry): number => {
     const id = nextId++;
@@ -114,7 +114,8 @@ export function useChat(onSignedOut: () => void) {
           setPushKey(message.public_key);
           break;
         case "music_start":
-          setMusicStarts((n) => n + 1);
+        case "music_error":
+          setMusic((current) => ({ n: (current?.n ?? 0) + 1, message }));
           break;
       }
     },
@@ -187,7 +188,7 @@ export function useChat(onSignedOut: () => void) {
     notifications,
     dashboard,
     pushKey,
-    musicStarts,
+    music,
     send,
     sendMessage,
     addHeard,

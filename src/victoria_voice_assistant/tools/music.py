@@ -310,13 +310,17 @@ class MusicService:
                     self.last_player[key] = player["player_id"]
                     started = await self._started(player["player_id"])
                     logger.info("Music playing here", extra={"event": "music_play", "kind": "browser", "started": started})
+                    if not started:
+                        await self._tell(client_id, {"type": "music_error", "text": "It didn't start playing."})
                     return
                 if time.monotonic() >= deadline:
                     logger.warning("Browser speaker never appeared", extra={"event": "music_failed", "action": "play"})
+                    await self._tell(client_id, {"type": "music_error", "text": "The music server never saw this speaker."})
                     return
                 await asyncio.sleep(POLL_S)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Music command failed", extra={"event": "music_failed", "action": "play", "reason": str(exc) or type(exc).__name__})
+            await self._tell(client_id, {"type": "music_error", "text": "The music server couldn't play it."})
 
     async def _started(self, player_id: str) -> bool:
         """Whether the player reports playing within PLAY_CHECK_S (Music Assistant queues even when it can't play)."""
@@ -416,10 +420,7 @@ class MusicService:
         found = await self._find(arguments)
         if isinstance(found, ToolOutcome):
             return found
-        try:
-            await self.browsers[client_id]({"type": "music_start"})
-        except Exception:  # noqa: BLE001 - the page went away
-            self.browsers.pop(client_id, None)
+        if not await self._tell(client_id, self._starting(found)):
             return ToolOutcome(result={"error": "browser gone"}, speak="I couldn't reach this browser's speaker.", error=True)
         self._waiting[client_id] = (found.uri, client_id, time.monotonic())
         source = SOURCES.get(found.source, found.source.title())
@@ -427,6 +428,22 @@ class MusicService:
             result={"playing": found.describe(), "source": found.source, "player": "this browser"},
             speak=f"Playing {found.describe()} from {source} here.",
         )
+
+    @staticmethod
+    def _starting(choice: Choice) -> dict[str, Any]:
+        """For the browser's player: turn the speaker on if it's off, and show what's coming until it plays."""
+        return {"type": "music_start", "title": choice.name, "artist": choice.artist or None, "kind": choice.kind}
+
+    async def _tell(self, client_id: str | None, message: dict[str, Any]) -> bool:
+        send = self.browsers.get(client_id or "")
+        if send is None:
+            return False
+        try:
+            await send(message)
+        except Exception:  # noqa: BLE001 - the page went away
+            self.browsers.pop(client_id or "", None)
+            return False
+        return True
 
     async def _find(self, arguments: dict[str, Any]) -> Choice | ToolOutcome:
         query = str(arguments.get("query") or "").strip()
@@ -458,9 +475,13 @@ class MusicService:
         choice = await self._find(arguments)
         if isinstance(choice, ToolOutcome):
             return choice
+        if here:
+            await self._tell(device, self._starting(choice))  # `device` is the browser's id when it's here
         await self.backend.play(player["player_id"], choice.uri)  # type: ignore[union-attr]
         self.last_player[device] = player["player_id"]
         started = await self._started(player["player_id"])
+        if here and not started:
+            await self._tell(device, {"type": "music_error", "text": "It didn't start playing."})
         logger.info("Music playing", extra={"event": "music_play", "kind": choice.kind, "source": choice.source, "started": started})
         if not started:
             return ToolOutcome(
