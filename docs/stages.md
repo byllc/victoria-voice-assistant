@@ -12,8 +12,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 5 | Voice in the browser | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
 | 6 | Local web search | approved | 2026-10-30 | 2026-10-30 | Bill / 2026-10-30 |
 | 7 | Agents and model pools | approved | 2026-10-30 | 2026-10-31 | Bill / 2026-10-31 |
-| 8 | Notifications and task dashboard | in progress | 2026-10-31 | | |
-| 9 | Home control | not started | | | |
+| 8 | Notifications and task dashboard | approved | 2026-10-31 | 2026-11-01 | Bill / 2026-11-01 |
+| 9 | Home control | in progress | 2026-11-01 | | |
 | 10 | Music | not started | | | |
 | 11 | Hardening | not started | | | |
 | 12 | Satellites (optional) | not started | | | |
@@ -175,7 +175,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-10-31 ("accept stage 7"). Carried over: Claude stays a stub until Bill adds a key; the LM Studio key Hermes holds; loading the Hermes and decider LaunchAgents; speaking into a real browser.
 
 ## Stage 8: Notifications and task dashboard
-- Status: in progress (back from ready for review: Bill asked for the interface cleanup first, 2026-11-01)
+- Status: approved
 - Done criteria:
   - [x] A background task finishing while the web client's room is idle announces itself; while the room is busy, it waits; during quiet hours, it is silent. Live in text chat and by voice (evidence below). The web client is one device (`web`) until the room picker exists.
   - [x] Pending notifications show a badge in the web client and are read on request. Live in text chat; badge and inbox in the client (built, `tsc` clean). Needs Bill: a look in a real browser.
@@ -205,6 +205,16 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Interface rebuilt with Pipecat's Voice UI Kit (Bill's choice): React 19.3.1, `@pipecat-ai/voice-ui-kit` 0.14.2, `@pipecat-ai/client-react` 1.11.0, Tailwind 4.3.3 (Vite plugin). `PipecatAppBase` (SmallWebRTC through `/api/offer`) provides the voice client and theme. Header: status badge, light/dark toggle, sign out (hidden in open mode). Timers as badges with live countdowns; a ringing timer as a red banner with Stop. Three tabs with counts: **Chat** (one conversation of typed and spoken turns, notices and notification cards; voice bar with the kit's ConnectButton and UserAudioControl (mic, level meter, device picker), hands-free / push-to-talk, hold-to-talk button and space bar; the kit's text input), **Tasks** (summary, health badges, search, task cards with status, progress history, tokens and cost, answer box, Cancel, Retry, a Re-send menu, Open result) and **Alerts** (unread list with Mark read, Clear all, Phone alerts switch or the reason it isn't offered). Same chat websocket protocol; no server changes. The old `main.ts`/`voice.ts` are gone.
   - Checked in the browser pane against a temporary service (phone size, desktop, dark mode): chat, a Helper task with its notification card, the Tasks and Alerts tabs. Fixed on the way: the kit renders its children once before its client exists, outside the client's context, so the app now waits for the client; a one-line `useEffect` returned `scrollIntoView()`'s promise, which React treated as a cleanup function and crashed the page after the first message; a bubble repeating a card's headline is no longer shown; opening a message in Alerts no longer marks it read at once (it vanished as it opened), it has Mark read; the page background follows the kit's theme in dark mode. The bundle is about 1.2 MB (350 KB compressed). Voice in the new interface isn't checked (the pane blocks the microphone). `uv run pytest -q`: 236 passed, 3 skipped.
   - Open for Bill: a look in a real browser, and voice on the phone, with the new interface; the phone push (needs his certificate on the phone, a VAPID key and a `vapid_subject` contact); the Hermes cancel proposal and the LM Studio key carried from Stage 7.
+- Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 8"). Carried over: the phone push criterion (Bill skipped alerts for now: needs `assistant push keys`, `web_push: true` and a `vapid_subject`, then a phone test, docs/push.md); a look in a real browser and voice on the phone with the new interface; the Hermes cancel proposal and the LM Studio key.
+
+## Stage 9: Home control
+- Status: in progress
+- Done criteria:
+  - [ ] Common light, climate, and scene commands work by voice with template replies.
+  - [ ] Locks require spoken confirmation.
+  - [ ] Only entities labelled `voice` can be controlled.
+- Blocking decisions: none.
+- Evidence:
 - Bill's review notes:
 
 ## Decisions log
@@ -280,3 +290,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 8 | Answer windows: an agent's question stays open 30 s for its spoken or typed answer (not the 10 s voice yes/no window), and "Want to hear it?" after an announcement 20 s, since both arrive unprompted. Replaces the 10 s noted on 2026-10-31. Finding: with a late "Yes." the fast model once called `ask_agent` for Helper again; for Stage 11, consider having bare "yes"/"no" with no open question answered "Sorry, yes to what?" instead of going to the model. | |
 | 2026-11-01 | 8 | Test HTTPS for trying the phone (Bill asked for one, in place of supplying his own for now): a local test CA ("Victoria Home Test CA", P-256, 10 years) and a server certificate (820 days, under iOS's 825-day limit) for bcmbpm2pro.local, localhost, 192.168.1.159 and 127.0.0.1, written to `config/tls/` (git-ignored: `cert.pem` with the chain, `key.pem` and `ca-key.pem` mode 600, `ca.pem`). The phone trusts it by installing `ca.pem` as a profile and turning it on under Certificate Trust Settings. The web interface runs on HTTPS on all interfaces with no password (Bill: none needed on the home network). Bill's own certificate can replace it at any time (docs/https.md). If the Mac's address changes, the certificate needs remaking. | Bill / 2026-11-01: "Yes, make one"; "I don't need a password by default on my home network" |
 | 2026-11-01 | 8 | Architecture change (client): the example web client is rebuilt in React with Pipecat's Voice UI Kit (`@pipecat-ai/voice-ui-kit` 0.14.2, with `@pipecat-ai/client-react`) instead of plain TypeScript. The kit is built on Tailwind v4 and Radix; the client adds Tailwind v4 (Vite plugin) for its own layout. Still a Vite app served by the web interface, with SmallWebRTC voice, the same chat websocket protocol and no server changes. Layout: tabs for Chat, Tasks and Alerts with counts, voice controls by the message box, timers and alarms as banners. The architecture document still says "a small TypeScript app (Vite) using Pipecat's JavaScript client SDK"; not edited (not asked). | Bill / 2026-11-01: "lets do the pipecat voice ui kit" |
+| 2026-11-01 | 8 | Approved by Bill. Carried over: the phone push test (alerts skipped for now), a real-browser and phone voice check of the new interface, the Hermes cancel proposal and the LM Studio key. | Bill / 2026-11-01: "approve stage 8" |
