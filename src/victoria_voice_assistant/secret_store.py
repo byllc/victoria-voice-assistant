@@ -18,6 +18,7 @@ SERVICE = "victoria-voice-assistant"
 # Secrets the assistant knows about, for `assistant secrets list` (others can be stored too).
 KNOWN = {
     "LMS_API_KEY": "LM Studio's API key (LM Studio > Developer)",
+    "ASSISTANT_WEB_PASSWORD": "household web login (optional; open without it)",
     "HERMES_API_KEY": "the Hermes gateway's key (docs/hermes.md)",
     "ANTHROPIC_API_KEY": "Claude, when turned on (docs/claude-setup.md)",
     "HA_TOKEN": "Home Assistant long-lived access token",

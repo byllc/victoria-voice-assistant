@@ -16,14 +16,20 @@ Restart the assistant service after changing one (configuration is read at start
 
 `assistant secrets get NAME` prints a value for a script, as in `services/hermes/run.sh`; it refuses to print to a terminal.
 
-| Name | What it is |
-|---|---|
-| `LMS_API_KEY` | LM Studio's API key (LM Studio > Developer) |
-| `HERMES_API_KEY` | The Hermes gateway's key ([hermes.md](hermes.md)) |
-| `ANTHROPIC_API_KEY` | Claude, when turned on ([claude-setup.md](claude-setup.md)) |
-| `HA_TOKEN` | Home Assistant long-lived access token |
-| `VAPID_PRIVATE_KEY` | Web Push signing key, created by `assistant push keys` ([push.md](push.md)) |
-| `MUSIC_ASSISTANT_TOKEN` | Music Assistant token |
+| Name | What it is | Where to get it | Needed |
+|---|---|---|---|
+| `LMS_API_KEY` | LM Studio's API key | LM Studio > Developer > API key (turn on "Require API key") | Always |
+| `ASSISTANT_WEB_PASSWORD` | The household login for the web interface | Choose one. Read by the web process at start | Only if you want a login; without it the web interface is open with a red banner |
+| `HERMES_API_KEY` | The Hermes gateway's key; the same value goes in Hermes's `API_SERVER_KEY` | Make one: `openssl rand -hex 32 \| uv run assistant secrets set HERMES_API_KEY` ([hermes.md](hermes.md)) | With a `harness` agent (Hermes) |
+| `ANTHROPIC_API_KEY` | Claude | Anthropic Console > API keys ([claude-setup.md](claude-setup.md)) | Only to turn Claude on |
+| `HA_TOKEN` | Home Assistant long-lived access token | Home Assistant > your profile > Security > Long-lived access tokens > Create token | For home control (Stage 9) |
+| `VAPID_PRIVATE_KEY` | Web Push signing key | Made for you: `uv run assistant push keys` ([push.md](push.md)) | Only for phone alerts |
+| `MUSIC_ASSISTANT_TOKEN` | Music Assistant token | Music Assistant settings (Stage 10) | For music, once built |
+
+Not secrets you set:
+
+- `SEARXNG_SECRET`: SearXNG's internal key. `assistant searxng run` makes a new random one at each start unless the environment sets one; nothing depends on it staying the same.
+- The HTTPS certificate and key are files in `config/tls/` (git-ignored), not Keychain items ([https.md](https.md)).
 
 ## Moving from `config/.env`
 
@@ -36,6 +42,6 @@ uv run assistant secrets import-env config/.env
 ## Notes
 
 - **An environment variable with the same name wins** over the Keychain. Tests use this (with `ASSISTANT_KEYCHAIN=0` they never touch the Keychain), and so can a one-off run.
-- **The household web password** (`ASSISTANT_WEB_PASSWORD`) still comes only from the web process's environment; with none set, the web interface is open (Bill: no password needed on the home network).
+- **The household web password** (`ASSISTANT_WEB_PASSWORD`) is optional; with none set, the web interface is open (Bill: no password needed on the home network).
 - **Under launchd** the services read the login Keychain, which is unlocked while you're logged in. On a Mac mini that reboots unattended, turn on automatic login for the account that runs the assistant, or the services start without their secrets (they log `keychain_unavailable`).
 - The first time a new program reads an item, macOS may ask to allow it. Choose **Always Allow**.

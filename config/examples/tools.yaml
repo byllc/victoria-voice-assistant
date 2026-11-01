@@ -100,7 +100,8 @@ tools:
     setup: >
       Pick an implementation and change `kind`: `mcp` with server `homeassistant`
       (Home Assistant's MCP Server integration), or `ha_service` for direct calls.
-      Add the Home Assistant URL under mcp_servers and set HA_TOKEN in the environment.
+      Add the Home Assistant URL under mcp_servers and store a long-lived access token with
+      `uv run assistant secrets set HA_TOKEN` (docs/secrets.md).
     examples:
       - turn off the kitchen lights
       - is the heat on upstairs

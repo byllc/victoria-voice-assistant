@@ -163,10 +163,12 @@ def _http_url(service_url: str) -> str:
 
 
 def create_default_web_app() -> FastAPI:
-    """Factory for uvicorn: the password comes only from the process environment."""
+    """Factory for uvicorn: the password comes from the Keychain (or the process environment), never a file."""
+    from victoria_voice_assistant.secret_store import get_secret
+
     configure_logging()
     return create_web_app(
-        password=os.environ.get("ASSISTANT_WEB_PASSWORD", ""),
+        password=get_secret("ASSISTANT_WEB_PASSWORD") or "",
         service_url=os.environ.get("ASSISTANT_SERVICE_URL", DEFAULT_SERVICE_URL),
         secure_cookies=os.environ.get("ASSISTANT_WEB_TLS") == "1",
     )

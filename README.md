@@ -113,13 +113,13 @@ Things to try: "set a pasta timer for ten minutes", "what timers do I have", "ca
 
 ### Login
 
-The web interface reads the household password from `ASSISTANT_WEB_PASSWORD` in its own environment, never from a file:
+The web interface reads the household password from the Keychain, never from a file:
 
 ```sh
-ASSISTANT_WEB_PASSWORD='…' uv run assistant web
+uv run assistant secrets set ASSISTANT_WEB_PASSWORD
 ```
 
-Without it, the web interface runs open and shows a red "Insecure" banner.
+Then restart the web process. Without it, the web interface runs open and shows a red "Insecure" banner.
 
 ### Voice from a phone or another computer
 
