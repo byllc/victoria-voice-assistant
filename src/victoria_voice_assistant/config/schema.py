@@ -260,8 +260,9 @@ class NotificationsConfig(Schema):
 
 
 class MusicRoomConfig(Schema):
-    satellite: str | None = None
-    player: str
+    satellite: str | None = None  # the device in this room (its requests play here)
+    player: str  # Music Assistant player id or name
+    aliases: list[str] = Field(default_factory=list)  # other ways to say the room
 
 
 class MusicConfig(Schema):

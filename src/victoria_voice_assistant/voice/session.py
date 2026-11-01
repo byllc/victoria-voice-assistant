@@ -76,9 +76,10 @@ class RoomActivity(BaseObserver):
     This tracks the same speaking frames, plus a grace period after anyone stops.
     """
 
-    def __init__(self, clock=time.monotonic, **kwargs) -> None:
+    def __init__(self, clock=time.monotonic, on_change=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._clock = clock
+        self._on_change = on_change  # async callback(kind): "user_started", "user_stopped", "bot_stopped"
         self.user_speaking = False
         self.bot_speaking = False
         self.awaiting_reply_since: float | None = None
@@ -86,25 +87,77 @@ class RoomActivity(BaseObserver):
 
     async def on_push_frame(self, data: FramePushed) -> None:
         frame = data.frame
+        change = None
         if isinstance(frame, UserStartedSpeakingFrame):
+            change = None if self.user_speaking else "user_started"
             self.user_speaking = True
         elif isinstance(frame, UserStoppedSpeakingFrame):
+            change = "user_stopped" if self.user_speaking else None
             self.user_speaking = False
             self.awaiting_reply_since = self._clock()
         elif isinstance(frame, BotStartedSpeakingFrame):
             self.bot_speaking = True
             self.awaiting_reply_since = None
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            change = "bot_stopped" if self.bot_speaking else None
             self.bot_speaking = False
         else:
             return
         self.last_activity = self._clock()
+        if change and self._on_change is not None:
+            await self._on_change(change)
 
     def busy(self) -> bool:
         now = self._clock()
         if self.user_speaking or self.bot_speaking or now - self.last_activity < CONVERSATION_GRACE_S:
             return True
         return self.awaiting_reply_since is not None and now - self.awaiting_reply_since < REPLY_WAIT_S
+
+
+class MusicDucker:
+    """Architecture §8: music for this device drops to `duck_level` while someone talks to the assistant,
+    and comes back once the room is quiet again (after the reply, or when no reply comes)."""
+
+    def __init__(self, services: Services, device: str, activity: RoomActivity) -> None:
+        self.services = services
+        self.device = device
+        self.activity = activity
+        self._restore: asyncio.TimerHandle | None = None
+        self._tasks: set[asyncio.Task] = set()
+
+    async def on_change(self, kind: str) -> None:
+        music = self.services.music
+        if music is None:
+            return
+        if kind == "user_started":
+            self._cancel()
+            await music.duck(self.device)
+        else:
+            self._schedule()
+
+    def _schedule(self) -> None:
+        self._cancel()
+        self._restore = asyncio.get_running_loop().call_later(CONVERSATION_GRACE_S, self._check)
+
+    def _check(self) -> None:
+        self._restore = None
+        if self.activity.busy():
+            self._schedule()  # still talking, or a reply is on its way
+            return
+        assert self.services.music is not None
+        task = asyncio.get_running_loop().create_task(self.services.music.unduck(self.device))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _cancel(self) -> None:
+        if self._restore is not None:
+            self._restore.cancel()
+            self._restore = None
+
+    async def close(self) -> None:
+        self._cancel()
+        if self.services.music is not None:
+            await self.services.music.unduck(self.device)
 
 
 class VoiceOutlet:
@@ -341,7 +394,14 @@ async def run_voice_session(
         ]
     )
     latency = UserBotLatencyObserver()
-    activity = RoomActivity()
+    ducker_ref: list[MusicDucker] = []
+
+    async def on_activity(kind: str) -> None:
+        if ducker_ref:
+            await ducker_ref[0].on_change(kind)
+
+    activity = RoomActivity(on_change=on_activity)
+    ducker_ref.append(MusicDucker(services, state.device, activity))
     # RTVI stays on here: the browser's Pipecat client uses it for transcripts and state.
     task = PipelineTask(pipeline, params=PipelineParams(enable_metrics=True), observers=[latency, activity])
     session.task = task
@@ -398,6 +458,7 @@ async def run_voice_session(
         await PipelineRunner(handle_sigint=False).run(task)
     finally:
         watchdog.cancel()
+        await ducker_ref[0].close()
         if services.notifications is not None:
             services.notifications.detach(outlet)
         services.timers.remove_listener(on_timer_event)

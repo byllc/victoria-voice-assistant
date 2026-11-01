@@ -244,7 +244,8 @@ def test_registry_builds_schemas_and_builtins() -> None:
     ("tool", "reason"),
     [
         ({"kind": "python", "service": "nowhere.module:missing"}, "handler `nowhere.module:missing` not found"),
-        ({"kind": "builtin", "service": "music"}, "built-in service `music` isn't available yet"),
+        ({"kind": "builtin", "service": "sports"}, "built-in service `sports` isn't available yet"),
+        ({"kind": "builtin", "service": "music"}, "the `music:` section has no `server` (the Music Assistant URL)"),
         ({"kind": "mcp", "mcp_server": None}, "only Home Assistant MCP tools (`service: home_assistant`) are supported so far"),
         ({"kind": "mcp", "service": "home_assistant", "mcp_server": None}, "no `homeassistant` server under mcp_servers in tools.yaml"),
         ({"kind": "http"}, "http tool has no `http:` section with a url"),
@@ -653,11 +654,12 @@ def test_tools_status_lists_stubs_and_reasons(example_config_dir: Path, capsys: 
     path = example_config_dir / "tools.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["tools"].append({"name": "groceries", "description": "list", "kind": "python", "service": "nope:add"})
+    data["tools"].append({"name": "garage", "description": "open the garage", "kind": "stub"})
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
     assert main(["tools", "status", "--config-dir", str(example_config_dir)]) == 0
     status = capsys.readouterr().out
-    assert "home_control" in status and "planned (kind: stub)" in status
+    assert "garage" in status and "planned (kind: stub)" in status
     assert "groceries" in status and "auto_stub" in status and "handler `nope:add` not found" in status
 
     assert main(["config", "check", "--config-dir", str(example_config_dir)]) == 0

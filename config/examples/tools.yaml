@@ -127,25 +127,30 @@ tools:
 
   - name: music
     description: "Music and what's playing: play, pause, resume, skip this song (next), go back, change the volume, or say what's playing."
-    kind: stub
+    kind: builtin
+    service: music                   # Music Assistant (Stage 10)
+    reply: { template: true }        # "Playing Kind of Blue by Miles Davis from Plex on the Exercise room speaker."
     params:
       action:
         type: string
-        description: play, pause, resume, next, previous, volume, now_playing
+        description: play, pause, resume, next, previous, volume, volume_up, volume_down, now_playing, stop
       query:
         type: string
         description: artist, album, track, playlist, or genre
+      source:
+        type: string
+        description: plex or spotify, only if the user names one
       room:
         type: string
-        description: optional; defaults to the room of the device
+        description: where to play, only if the user says (a room or speaker name)
       level:
         type: integer
         description: volume 0-100, for action volume
     notice: "Music isn't set up yet. I've sent the setup steps to the chat."
     setup: >
-      Music arrives in Stage 10: run a Music Assistant server, set `music.server`
-      and MUSIC_ASSISTANT_TOKEN, then change this tool to `kind: builtin` with
-      `service: music`.
+      Point `music.server` in tools.yaml at Music Assistant (for example the Home Assistant add-on on
+      port 8095) and store a Music Assistant long-lived token with
+      `uv run assistant secrets set MUSIC_ASSISTANT_TOKEN` (docs/music.md).
     examples:
       - play some Miles Davis
       - skip this
@@ -197,11 +202,14 @@ notifications:                    # architecture §10.3
   vapid_private_key: ${VAPID_PRIVATE_KEY:-}
   vapid_subject: mailto:you@example.com   # a contact for the push services
 
-music:
-  server: http://127.0.0.1:8095
-  source_order: [plex, spotify]
-  rooms: {}
-  duck_level: 20
+music:                             # Music Assistant (docs/music.md)
+  server: http://homeassistant.local:8095
+  token: "${MUSIC_ASSISTANT_TOKEN:-}"
+  source_order: [plex, spotify]    # searched in this order unless the request names a source
+  rooms: {}                        # optional: room names and aliases for players, and a satellite's room
+  #  exercise room: { player: Exercise room speaker, aliases: [gym] }
+  #  office: { player: Bill's Mac mini, satellite: office-sat }
+  duck_level: 20                   # music volume while someone talks to the assistant
 
 mcp_servers:
   homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration
@@ -215,6 +223,10 @@ tests:
   - { say: "is the bedroom light on", expect: "tool:home_control" }
   - { say: "set the piano light to 40 percent", expect: "tool:home_control" }
   - { say: "lock the front door", expect: "tool:lock_door" }
+  - { say: "play Footprints from Plex in the exercise room", expect: "tool:music" }
+  - { say: "turn the music down", expect: "tool:music" }
+  - { say: "what song is this", expect: "tool:music" }
+  - { say: "ask alexa to play some jazz", expect: "agent:alexa" }
   - { say: "ask helper what to make with leeks", expect: "agent:helper" }
   - { say: "book me a flight to Denver", expect: offer_agent }
   - { say: "what is helper working on", expect: "tool:tasks" }

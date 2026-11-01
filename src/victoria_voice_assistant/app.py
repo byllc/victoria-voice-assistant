@@ -128,6 +128,8 @@ def create_app(
             services.agents.update_config(config)
             services.notifications.update_settings(config.tools.notifications)
             services.health.update_config(config)
+            if services.music is not None:
+                services.music.update_settings(config.tools.music)
             _log_tool_status(config, services)
             hub.reload(config, services)
 
@@ -181,6 +183,8 @@ def create_app(
             await services.health.close()
             if services.home is not None:
                 await services.home.close()
+            if services.music is not None:
+                await services.music.close()
             await services.reader.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 
