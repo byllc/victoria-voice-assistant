@@ -1,6 +1,11 @@
-# --- Secrets (ground rule: secrets come only from config/.env, never committed) ---
+# --- Secrets: the Keychain and config/.env, which is never committed (docs/secrets.md; .githooks/pre-commit) ---
 config/.env
 .env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+*.env.tmp
 config/models.yaml
 config/tools.yaml
 config/agents.yaml

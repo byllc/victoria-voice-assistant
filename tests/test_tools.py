@@ -245,7 +245,8 @@ def test_registry_builds_schemas_and_builtins() -> None:
     [
         ({"kind": "python", "service": "nowhere.module:missing"}, "handler `nowhere.module:missing` not found"),
         ({"kind": "builtin", "service": "music"}, "built-in service `music` isn't available yet"),
-        ({"kind": "mcp", "mcp_server": None}, "MCP tools (kind `mcp`) aren't supported yet"),
+        ({"kind": "mcp", "mcp_server": None}, "only Home Assistant MCP tools (`service: home_assistant`) are supported so far"),
+        ({"kind": "mcp", "service": "home_assistant", "mcp_server": None}, "no `homeassistant` server under mcp_servers in tools.yaml"),
         ({"kind": "http"}, "http tool has no `http:` section with a url"),
         ({"kind": "python", "params": {"x": {"type": "banana"}}}, "invalid params: param 'x' has unknown type 'banana'"),
     ],

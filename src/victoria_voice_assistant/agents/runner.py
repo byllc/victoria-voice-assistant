@@ -129,11 +129,11 @@ class AgentRunner:
         if missing:
             logger.warning("Agent model has no API key", extra={"event": "agent_unsupported", "agent": agent.name, "reason": missing})
             kind = "harness" if agent.kind == "harness" else self.config.models.servers[missing].type
-            guide = SETUP_DOCS.get(kind, "config/examples/.env.example")
+            guide = SETUP_DOCS.get(kind, "docs/secrets.md")
             return ToolOutcome(
                 result={"error": f"no API key for server {missing!r}"},
                 speak=f"{label(agent.name)} isn't set up yet.",
-                chat=f"Add the API key for the `{missing}` server to config/.env and restart the assistant. Setup steps: {guide}.",
+                chat=f"Store the API key for the `{missing}` server in the Keychain (`uv run assistant secrets set <NAME>`, with the name its `api_key` uses in models.yaml) and restart the assistant. Setup steps: {guide}.",
                 chat_title=f"{agent.name}: setup",
             )
         override = None

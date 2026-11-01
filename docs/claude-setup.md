@@ -21,15 +21,15 @@ The example config (`config/examples/`) has everything except the key:
 ## Turning it on
 
 1. Get an API key from the Anthropic Console (console.anthropic.com), ideally in a workspace with its own spend limit.
-2. Add it to `config/.env` (git-ignored):
+2. Store it ([secrets.md](secrets.md)); it prompts for the key without echoing it, and goes in the Keychain and `config/.env`:
 
    ```sh
-   ANTHROPIC_API_KEY=sk-ant-...
+   uv run assistant secrets set ANTHROPIC_API_KEY
    ```
 
 3. If your `config/models.yaml` and `config/agents.yaml` predate this, copy the `anthropic` server, the three `claude-*` models, the `claude` pool and the `claude` agent from `config/examples/`. `uv run assistant config check` validates them.
 4. Start the decider, so requests go to the cheapest suitable model rather than always the default: `uv run assistant decider run` (or `uv run assistant launchd install-decider --load`). Without it, every request uses Sonnet.
-5. Restart the assistant service so it reads the new key (`config/.env` is read at start).
+5. Restart the assistant service so it reads the new key.
 
 Then try, by text or voice: "Ask Claude how many ounces are in a cup" (expect Haiku), "Ask Claude for a leek soup recipe" (Sonnet), "Ask Claude Opus to review this paragraph" (Opus by override).
 
@@ -46,4 +46,4 @@ Change the limits under `pools.claude.budget` in `models.yaml`; edits reload wit
 
 ## Turning it off
 
-Remove `ANTHROPIC_API_KEY` from `config/.env` and restart: the agent goes back to being a stub. To remove it entirely, delete the `claude` agent from `agents.yaml`.
+Run `uv run assistant secrets delete ANTHROPIC_API_KEY` and restart: the agent goes back to being a stub. To remove it entirely, delete the `claude` agent from `agents.yaml`.

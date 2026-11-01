@@ -19,7 +19,7 @@ def test_example_config_validates_and_uses_same_model_for_roles(
     assert config.models.models["fast"].model == "google/gemma-4-12b"
     assert config.models.models["fast-small"].model == "google/gemma-4-12b"
     assert config.models.roles.router == "fast"
-    assert {tool.name: tool.kind for tool in config.tools.tools}["home_control"] == "stub"
+    assert {tool.name: tool.kind for tool in config.tools.tools}["home_control"] == "mcp"  # Stage 9: Home Assistant
     assert config.agents.default == "helper"
     assert config.agents.agents[0].model == "fast"
 

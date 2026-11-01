@@ -253,7 +253,7 @@ class NotificationsConfig(Schema):
     question_timeout_min: float = Field(default=30, gt=0)
     expire_after_h: float = Field(default=24, gt=0)
     web_push: bool = False
-    # Web Push (VAPID): the private key comes from config/.env (`assistant push keys` creates it); push services
+    # Web Push (VAPID): the private key is a secret (`assistant push keys` creates it; docs/secrets.md); push services
     # require a contact for the sender, a mailto: or https: URL.
     vapid_private_key: str | None = None
     vapid_subject: str | None = Field(default=None, pattern=r"^(mailto:|https://)")

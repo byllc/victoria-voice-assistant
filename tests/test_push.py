@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import socket
-import stat
 import threading
 import time
 from datetime import datetime
@@ -211,7 +210,7 @@ def test_subscriptions_are_kept_and_checked(tmp_path: Path) -> None:
         ({"web_push": False}, "web_push is off"),
         ({"vapid_private_key": None}, "no VAPID key (run `assistant push keys`)"),
         ({"vapid_subject": None}, "no vapid_subject (a mailto: or https: contact)"),
-        ({"vapid_private_key": "not-a-key"}, "the VAPID key in config/.env isn't valid"),
+        ({"vapid_private_key": "not-a-key"}, "the VAPID key isn't valid"),
     ],
 )
 def test_push_off_says_why(settings, problem) -> None:
@@ -237,13 +236,15 @@ def test_the_serializer_passes_push_messages() -> None:
     assert [m["type"] for m in asyncio.run(scenario())] == ["hello", "push_subscribe", "push_unsubscribe"]
 
 
-def test_push_keys_command_writes_env_without_printing_the_key(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    (tmp_path / ".env").write_text("LMS_API_KEY=x")
-    assert main(["push", "keys", "--config-dir", str(tmp_path)]) == 0
-    env = (tmp_path / ".env").read_text()
-    key = next(line.split("=", 1)[1] for line in env.splitlines() if line.startswith("VAPID_PRIVATE_KEY="))
+def test_push_keys_command_stores_the_key_without_printing_it(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    import victoria_voice_assistant.cli as cli
+
+    store: dict[str, str] = {}
+    monkeypatch.setattr(cli, "get_secret", store.get)
+    monkeypatch.setattr(cli, "set_secret", lambda name, value: store.__setitem__(name, value) or "the Keychain and config/.env")
+    assert main(["push", "keys"]) == 0
+    key = store["VAPID_PRIVATE_KEY"]
     out = capsys.readouterr().out
-    assert env.startswith("LMS_API_KEY=x\nVAPID_PRIVATE_KEY=") and key not in out and public_key(key) in out
-    assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
-    assert main(["push", "keys", "--config-dir", str(tmp_path)]) == 0
-    assert (tmp_path / ".env").read_text() == env  # never replaced
+    assert key not in out and public_key(key) in out
+    assert main(["push", "keys"]) == 0
+    assert store["VAPID_PRIVATE_KEY"] == key  # never replaced

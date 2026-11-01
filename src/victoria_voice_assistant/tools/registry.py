@@ -19,6 +19,7 @@ from victoria_voice_assistant.tools.weather import WeatherService
 if TYPE_CHECKING:
     from victoria_voice_assistant.agents.runner import AgentRunner
     from victoria_voice_assistant.health import HealthMonitor
+    from victoria_voice_assistant.tools.home import HomeAssistantHub
     from victoria_voice_assistant.notifications.service import NotificationService
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
@@ -28,7 +29,7 @@ JSON_TYPES = {"string", "integer", "number", "boolean", "array", "object"}
 DEFAULT_HTTP_TIMEOUT_S = 5.0
 HTTP_RESULT_CHARS = 2000
 # Kinds that exist in the architecture but are built in later stages.
-LATER_KINDS = {"mcp": "MCP tools", "ha_service": "Home Assistant service calls", "ha_script": "Home Assistant scripts"}
+LATER_KINDS = {"ha_script": "Home Assistant scripts"}
 BUILTIN_TOOLS = ("clarify", "offer_agent", "ask_agent", "tasks", "notifications")
 
 Status = Literal["ready", "stub", "auto_stub", "disabled"]
@@ -59,6 +60,7 @@ class Services:
     agents: AgentRunner | None = None
     notifications: NotificationService | None = None
     health: HealthMonitor | None = None
+    home: HomeAssistantHub | None = None
 
 
 @dataclass
@@ -469,11 +471,49 @@ def _http_handler(tool: ToolConfig, services: Services) -> ToolHandler:
     return handler
 
 
+def _home_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -> ToolHandler:
+    """Home Assistant tools (Stage 9): `mcp` with `service: home_assistant` is home_control through Home
+    Assistant's MCP Server intents; `ha_service` is one direct service call. Both act only on entities
+    with the `entities.label` label (default `voice`)."""
+    from victoria_voice_assistant.tools.home import HomeAssistantHub, HomeControl, ServiceTool
+
+    server_name = tool.mcp_server or "homeassistant"
+    server = tools.mcp_servers.get(server_name)
+    if tool.kind == "mcp" and tool.service != "home_assistant":
+        raise Unresolved("only Home Assistant MCP tools (`service: home_assistant`) are supported so far")
+    if server is None:
+        raise Unresolved(f"no `{server_name}` server under mcp_servers in tools.yaml")
+    if not server.token:
+        raise Unresolved("HA_TOKEN is not set (uv run assistant secrets set HA_TOKEN)")
+    if services.home is None:
+        services.home = HomeAssistantHub()
+    label = (tool.entities.label if tool.entities and tool.entities.label else None) or "voice"
+    home = services.home.get(server, label)
+    if tool.kind == "mcp":
+        control = HomeControl(home, tool.entities.domains if tool.entities else None)
+
+        async def home_control(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            return await control.handle(arguments)
+
+        return home_control
+    try:
+        service_tool = ServiceTool(tool, home, services.home.confirmations)
+    except ValueError as exc:
+        raise Unresolved(str(exc)) from exc
+
+    async def ha_service(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+        return await service_tool.handle(arguments)
+
+    return ha_service
+
+
 def _resolve(tool: ToolConfig, tools: ToolsConfig, services: Services) -> ToolHandler:
     if tool.broken:
         raise Unresolved(tool.broken)
     if tool.kind in LATER_KINDS:
         raise Unresolved(f"{LATER_KINDS[tool.kind]} (kind `{tool.kind}`) aren't supported yet")
+    if tool.kind in ("mcp", "ha_service"):
+        return _home_handler(tool, tools, services)
     if tool.kind == "builtin":
         return _builtin_handler(tool, tools, services)
     if tool.kind == "python":
@@ -538,7 +578,8 @@ def build_registry(
                 template=template,
                 timeout_s=tool.timeout_s,
                 reason=reason,
-                speaks_directly=status in ("stub", "auto_stub"),
+                # Home Assistant tools phrase their own replies (templates filled with the resolved entity names).
+                speaks_directly=status in ("stub", "auto_stub") or (status == "ready" and tool.kind in ("mcp", "ha_service")),
             )
         )
     return ToolRegistry(

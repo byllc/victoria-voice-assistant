@@ -28,7 +28,7 @@ Hermes needs a model with at least 64K tokens of context. With LM Studio, load a
 
 ## On the assistant side
 
-1. `config/.env`: `HERMES_API_KEY=<the same key>`.
+1. Store the same key: `uv run assistant secrets set HERMES_API_KEY` ([secrets.md](secrets.md)).
 2. `config/models.yaml`:
 
    ```yaml

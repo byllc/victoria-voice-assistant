@@ -24,7 +24,7 @@ Statuses: `not started` → `in progress` → `ready for review` → `approved` 
 - **Target:** Mac mini, M4 Pro, 64 GB, macOS 26. **Development happens on an M2 Mac** (32 GB, local test LLMs in LM Studio); M2 measurements validate design, they are not the target's numbers.
 - **Python 3.12+, always in a uv-managed virtualenv.** Every Python environment (services, one-off scripts) is a `.venv` created by uv from a `pyproject.toml`, interpreter pinned to 3.12, all dependencies in the lock file. Never install into the system Python; run everything with `uv run`.
 - **Pipecat built-ins first.** Use Pipecat's own features wherever one exists (architecture §11). Replace a built-in only with measured evidence, recorded in the decisions log.
-- **Secrets** come from environment variables (`config/.env`, git-ignored), never from config files committed to the repo or from code.
+- **Secrets** are kept in the macOS Keychain and run from `config/.env`: `assistant secrets set NAME` writes both, installing a service rewrites `config/.env` from the Keychain, and the services read only the environment and `config/.env` (so they start after a reboot). `config/.env` is never committed: git-ignored, refused by `.githooks/pre-commit` (`git config core.hooksPath .githooks`). Never put secrets in YAML or code; config names them as `${NAME}`. See `docs/secrets.md`. (Bill, 2026-11-01.)
 - **All configuration lives in `config/`**, never in the repository root:
 
   ```
@@ -33,7 +33,6 @@ Statuses: `not started` → `in progress` → `ready for review` → `approved` 
     tools.yaml         tools, built-in service settings, MCP servers, tests
     agents.yaml        agents and relays
     searxng/           SearXNG's settings.yml
-    .env               secrets (git-ignored; never committed)
   ```
 
   The service reads `config/` by default; `ASSISTANT_CONFIG_DIR` overrides it. Committed example files go in `config/examples/`.

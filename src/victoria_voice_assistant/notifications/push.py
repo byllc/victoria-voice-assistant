@@ -57,7 +57,7 @@ async def send_webpush(info: dict[str, Any], data: str, key: Vapid, claims: dict
 
 
 def generate_private_key() -> str:
-    """A new VAPID private key, as the raw base64url string kept in config/.env."""
+    """A new VAPID private key, as the raw base64url string kept with the other secrets."""
     vapid = Vapid()
     vapid.generate_keys()
     number = vapid.private_key.private_numbers().private_value
@@ -109,7 +109,7 @@ class PushService:
                 self._key = Vapid.from_raw(config.vapid_private_key.encode())
                 self.public_key = public_key(config.vapid_private_key)
             except Exception:  # noqa: BLE001 - a bad key turns push off, it doesn't stop the service
-                self.problem = "the VAPID key in config/.env isn't valid"
+                self.problem = "the VAPID key isn't valid"
         if self.problem and config.web_push:
             logger.warning("Web Push is off", extra={"event": "push_unavailable", "reason": self.problem})
 
