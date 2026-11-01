@@ -82,3 +82,17 @@ def test_the_backup_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ca
     assert main(["backup", "--config-dir", str(config), "restore", name]) == 0
     assert main(["backup", "--config-dir", str(config), "restore", "victoria-nope.tar.gz"]) == 1
     assert (database.parent / "backups").is_dir()
+
+
+def test_the_daily_backup_launch_agent(tmp_path: Path) -> None:
+    import plistlib
+
+    from victoria_voice_assistant.launchd import install_backup_launch_agent, render_backup_launch_agent
+
+    document = render_backup_launch_agent(Path("/py"), Path("/proj"), Path("/cfg"), Path("/logs"), Path("/data"))
+    assert document["Label"] == "com.victoria.backup"
+    assert document["ProgramArguments"][-2:] == ["backup", "create"]
+    assert document["StartCalendarInterval"] == {"Hour": 3, "Minute": 30}
+    assert "KeepAlive" not in document  # runs once a day, not kept alive
+    written = install_backup_launch_agent(tmp_path / "backup.plist")
+    assert plistlib.loads(written.read_bytes())["EnvironmentVariables"]["ASSISTANT_DATA_DIR"]

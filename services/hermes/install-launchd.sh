@@ -7,6 +7,8 @@ label=com.victoria.hermes
 plist="$HOME/Library/LaunchAgents/$label.plist"
 logs="${ASSISTANT_LOG_DIR:-$HOME/Library/Logs/Victoria Voice Assistant}"
 mkdir -p "$logs" "$(dirname "$plist")"
+# run.sh needs uv (to read the keys) and Apple's `container`; launchd's PATH has neither by default.
+uv_dir=$(dirname "$(command -v uv)")
 # run.sh reads its keys from config/.env; refresh it from the Keychain first (docs/secrets.md).
 uv run --project "$here/../.." --quiet assistant secrets sync
 
@@ -19,7 +21,7 @@ cat > "$plist" <<EOF
     <key>ProgramArguments</key>
     <array><string>/bin/sh</string><string>$here/run.sh</string></array>
     <key>EnvironmentVariables</key>
-    <dict><key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string></dict>
+    <dict><key>PATH</key><string>$uv_dir:/usr/local/bin:/usr/bin:/bin</string></dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
     <key>ThrottleInterval</key><integer>10</integer>

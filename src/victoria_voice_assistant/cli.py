@@ -24,6 +24,7 @@ from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.web.tls import TlsError, describe, find_tls_files, log_cert, validate
 from victoria_voice_assistant.launchd import (
+    install_backup_launch_agent,
     install_decider_launch_agent,
     install_launch_agent,
     install_searxng_launch_agent,
@@ -142,6 +143,10 @@ def _build_parser() -> argparse.ArgumentParser:
     install_decider = launchd_subcommands.add_parser("install-decider", help="write decider (mlx-lm) LaunchAgent plist")
     install_decider.add_argument("--output", type=Path)
     install_decider.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+
+    install_backup = launchd_subcommands.add_parser("install-backup", help="write the daily backup LaunchAgent plist (03:30)")
+    install_backup.add_argument("--output", type=Path, help="plist path (default: ~/Library/LaunchAgents)")
+    install_backup.add_argument("--load", action="store_true", help="load it with launchctl now")
 
     decider = commands.add_parser("decider", help="the local decision model (mlx-lm)")
     decider_subcommands = decider.add_subparsers(dest="decider_command", required=True)
@@ -447,6 +452,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "launchd" and args.launchd_command == "install-searxng":
         destination = install_searxng_launch_agent(args.output, load=args.load)
         print(f"SearXNG LaunchAgent plist written: {destination}")
+        return 0
+
+    if args.command == "launchd" and args.launchd_command == "install-backup":
+        destination = install_backup_launch_agent(args.output, load=args.load)
+        print(f"LaunchAgent plist written: {destination}")
         return 0
 
     if args.command == "launchd" and args.launchd_command == "install-web":

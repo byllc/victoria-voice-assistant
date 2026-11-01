@@ -14,10 +14,13 @@ LABEL = "com.victoria.voice-assistant"
 WEB_LABEL = "com.victoria.voice-assistant-web"
 SEARXNG_LABEL = "com.victoria.searxng"
 DECIDER_LABEL = "com.victoria.decider"
+BACKUP_LABEL = "com.victoria.backup"
 TEMPLATE = Path(__file__).with_name("launchd_template.plist")
 WEB_TEMPLATE = Path(__file__).with_name("launchd_web_template.plist")
 SEARXNG_TEMPLATE = Path(__file__).with_name("launchd_searxng_template.plist")
 DECIDER_TEMPLATE = Path(__file__).with_name("launchd_decider_template.plist")
+BACKUP_TEMPLATE = Path(__file__).with_name("launchd_backup_template.plist")
+BACKUP_TIME = (3, 30)  # daily, while the house sleeps
 
 
 def _render(template_path: Path, substitutions: dict[str, str]) -> dict[str, object]:
@@ -109,6 +112,9 @@ def _write_plist(document: dict[str, object], destination: Path, load: bool) -> 
     with destination.open("wb") as stream:
         plistlib.dump(document, stream, sort_keys=True)
     if load:
+        # Reinstalling replaces the running agent: unload the old one first (fine if it wasn't loaded).
+        label = str(document["Label"])
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True, check=False)
         subprocess.run(
             ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(destination)],
             check=True,
@@ -172,4 +178,36 @@ def install_decider_launch_agent(output: Path | None = None, load: bool = False)
     destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{DECIDER_LABEL}.plist")
     log_dir.mkdir(parents=True, exist_ok=True)
     document = render_decider_launch_agent(Path(sys.executable), project_dir, config_dir, log_dir)
+    return _write_plist(document, destination, load)
+
+
+def render_backup_launch_agent(
+    python_executable: Path,
+    project_dir: Path,
+    config_dir: Path,
+    log_dir: Path,
+    data_dir: Path,
+    at: tuple[int, int] = BACKUP_TIME,
+) -> dict[str, object]:
+    return _render(
+        BACKUP_TEMPLATE,
+        {
+            "@PYTHON_EXECUTABLE@": escape(str(python_executable)),
+            "@PROJECT_DIR@": escape(str(project_dir)),
+            "@CONFIG_DIR@": escape(str(config_dir)),
+            "@LOG_DIR@": escape(str(log_dir)),
+            "@DATA_DIR@": escape(str(data_dir)),
+            "@HOUR@": str(at[0]),
+            "@MINUTE@": str(at[1]),
+        },
+    )
+
+
+def install_backup_launch_agent(output: Path | None = None, load: bool = False) -> Path:
+    """A daily `assistant backup create` (Stage 11)."""
+    project_dir, config_dir, log_dir = _shared_paths()
+    data_dir = Path(os.environ.get("ASSISTANT_DATA_DIR", default_database_path().parent)).expanduser()
+    destination = output or (Path.home() / "Library" / "LaunchAgents" / f"{BACKUP_LABEL}.plist")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    document = render_backup_launch_agent(Path(sys.executable), project_dir, config_dir, log_dir, data_dir.resolve())
     return _write_plist(document, destination, load)
