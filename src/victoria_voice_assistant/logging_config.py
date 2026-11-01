@@ -22,6 +22,7 @@ LOGGED_FIELDS = (
     "duration_ms",
     "arguments",
     "reason",
+    "status",
     "handled_by",
     "agent",
     "timer",

@@ -139,6 +139,15 @@ wheels = [
 ]
 
 [[package]]
+name = "anyascii"
+version = "0.3.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/ba/edebda727008390936da4a9bf677c19cd63b32d51e864656d2cbd1028e25/anyascii-0.3.3.tar.gz", hash = "sha256:c94e9dd9d47b3d9494eca305fef9447d00b4bf1a32aff85aa746fa3ec7fb95c3", size = 264680, upload-time = "2025-06-29T03:33:30.427Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/76/783b75a21ce3563b8709050de030ae253853b147bd52e141edc1025aa268/anyascii-0.3.3-py3-none-any.whl", hash = "sha256:f5ab5e53c8781a36b5a40e1296a0eeda2f48c649ef10c3921c1381b1d00dee7a", size = 345090, upload-time = "2025-06-29T03:33:28.356Z" },
+]
+
+[[package]]
 name = "anyio"
 version = "4.15.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1103,6 +1112,18 @@ wheels = [
 ]
 
 [[package]]
+name = "mashumaro"
+version = "3.23"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/18/6383ce957a0551d8704936ffef1ecf0b0c620543999a44f9adf6c5f30888/mashumaro-3.23.tar.gz", hash = "sha256:ed69d5bc548c76efbb5286cc0e541a6b8796e621385f986e25b750364011abf5", size = 141901, upload-time = "2026-09-30T20:21:40.905Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/eb/2c5e2b0df54c9c979d45bfa4820687ab24797fe1ad42d4fdfc0c8ece59f1/mashumaro-3.23-py3-none-any.whl", hash = "sha256:a671279ce93119d41c54adcd767753ae68adb32b9473de2f9d5d1720d2376231", size = 78621, upload-time = "2026-09-30T20:21:39.403Z" },
+]
+
+[[package]]
 name = "mcp"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1246,6 +1267,34 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/68/d5/64108a33c21bde81454b5a400d16baa1378a7d01599de64b131c3e3e3114/multidict-7.2.1-cp312-cp312-win_amd64.whl", hash = "sha256:781ca5dfc2f1d58e47f52216a0c1c7e1ba91ce8aa235459e20de2d402af77fb3", size = 95372, upload-time = "2026-10-24T20:40:19.679Z" },
     { url = "https://files.pythonhosted.org/packages/e0/00/b746ff0f4f70589be9eca08d37a211c3257d602e0ba95224dd0ee0577801/multidict-7.2.1-cp312-cp312-win_arm64.whl", hash = "sha256:9306e0c5595f91874e685be0a9eb743d48ba069c888eea051bec3c67c08b5b8d", size = 92629, upload-time = "2026-10-24T20:40:55.897Z" },
     { url = "https://files.pythonhosted.org/packages/9d/96/1aaad0e5df33f1f5af21775c411349c0234a6edd581ea403bc81919a6eab/multidict-7.2.1-py3-none-any.whl", hash = "sha256:08ea94663d9e7c25d14d78222f7aee906c472d4837766bec62477c38f6e419dc", size = 28145, upload-time = "2026-10-24T20:40:59.159Z" },
+]
+
+[[package]]
+name = "music-assistant-client"
+version = "1.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "music-assistant-models" },
+    { name = "orjson" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/7e/1b975b4d1f3dc4a3554da325ee0578ec534ec5119ea01e2ea2e744517c79/music_assistant_client-1.5.1.tar.gz", hash = "sha256:e92630cf3cdd7830cb27f65daeea8bd8bce8c8f9daec0478fd221e1cf642e511", size = 38448, upload-time = "2026-08-17T13:06:38.404Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/73/36d17c82e522c2ec0bf33bc67d3228e6515773f11cfda87e9ebb93af9b96/music_assistant_client-1.5.1-py3-none-any.whl", hash = "sha256:0e3d795357032aeac88d33a15be200c61707206e2f42f5ccc66fc94bbc7640a0", size = 42719, upload-time = "2026-08-17T13:06:37.253Z" },
+]
+
+[[package]]
+name = "music-assistant-models"
+version = "1.1.189"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyascii" },
+    { name = "mashumaro" },
+    { name = "orjson" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/54/ae/7587be3700d24ccee0198efebf77fc1f915d0fa7683951035ca539e57e12/music_assistant_models-1.1.189.tar.gz", hash = "sha256:fca60921ad4cb06ccbfb7ec6c20023ebec1395bff675e371f336942551e68f7a", size = 91319, upload-time = "2026-08-17T11:57:54.483Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/81/df9269b5c92e17876f10628d39f26cc30f4f99f974ec3b178347183c4bc7/music_assistant_models-1.1.189-py3-none-any.whl", hash = "sha256:6a59e8cef4a3d616847bbf67845ea0fc7990749b7c76ded0457956ee22d85ac3", size = 77705, upload-time = "2026-08-17T11:57:53.368Z" },
 ]
 
 [[package]]
@@ -1524,6 +1573,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/14/cf3a6b6448849656e1e5f4e2101f3988dc6789724050096aba1bc5ccf592/opentelemetry_api-1.45.2.tar.gz", hash = "sha256:d7b0008e21e5fd61cbe7a7f34ca3b6905a78ab677d9bc395e299359c75cda6b4", size = 73277, upload-time = "2026-10-29T17:29:37.888Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/2d/610db864d7513158cebb8f36cc88e67e73bd6c7aa1905ef18d89e1281c81/opentelemetry_api-1.45.2-py3-none-any.whl", hash = "sha256:2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34", size = 60335, upload-time = "2026-10-29T17:29:06.955Z" },
+]
+
+[[package]]
+name = "orjson"
+version = "3.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/72/380b97dc45bd162d23afe5194721ef678d9eac7cfaa549fe2873f7f0a518/orjson-3.13.0.tar.gz", hash = "sha256:d1de5eb04485110c5da4c657e49168995d55e076b1ce60f1a042e254f4186c4f", size = 2732604, upload-time = "2026-10-07T14:09:25.719Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/17/ed65f84ed5ed6a1e06eb628611b4172e7480fc4ad92594856751a6363cac/orjson-3.13.0-cp312-cp312-macosx_10_15_x86_64.macosx_11_0_arm64.macosx_10_15_universal2.whl", hash = "sha256:fb8644dc6d705e1269ed2842bf4dbe2b4e50d670de503bf79d5cef3a5148a4c7", size = 223063, upload-time = "2026-10-07T14:08:21.979Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/4d/9332eb96d2e379384be0f211f543835eebc81f460c9403b84abe1294c431/orjson-3.13.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:6ff2a2c67f35202f7d823753d38ad371a9b7fc297567cdfff4420e763cb9f6f8", size = 123364, upload-time = "2026-10-07T14:08:24.026Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/06/558456b7da27e974a8c9ea09117b07119f6fa131cd62b8b9ecad9eea94e1/orjson-3.13.0-cp312-cp312-manylinux2014_armv7l.manylinux_2_17_armv7l.whl", hash = "sha256:65c4e0e106ccc7265b488385659117a6805c37d042f737558ecd68aa0c67ad8f", size = 113199, upload-time = "2026-10-07T14:08:25.476Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/f2/1187a9c09965620348262ec0f406868f6d7c234b2e9b5ee51020bdde5748/orjson-3.13.0-cp312-cp312-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:fbbad6b9b1da43f25c1f5b20cd5a268e028a2fc95d5a8d1ade6059973bc71584", size = 130329, upload-time = "2026-10-07T14:08:26.877Z" },
+    { url = "https://files.pythonhosted.org/packages/46/07/5d1a151bc11600434fe799e73abfc6a4d463d02e149a20e47c59d3a985ae/orjson-3.13.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ae1d895cf7bbfd50ef34bb63bb727b14514f259f3e3f8dd010783bd38e864c6e", size = 129072, upload-time = "2026-10-07T14:08:28.355Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/8c/bb07c368abbf4021c4cd01c12edb526e00090f7f750ff1b88da6e6b6c7a6/orjson-3.13.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bceadfd314bd238f584fc229a4bbaf0e573597e7a026dec5429fbf29fd66c641", size = 130612, upload-time = "2026-10-07T14:08:30.041Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/8d/4b66d19619ed344ac000ffea7c006477d0061d580646e736ef0e203759e8/orjson-3.13.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:b74c30e56346aad067937d766846ee74c231d1d18aad3f324e9b9261de3b2d5e", size = 134632, upload-time = "2026-10-07T14:08:31.474Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/88/f8221f6593e37eb26ec4706e185b9ac6f38ff0c8f7bad5459844031ffd2d/orjson-3.13.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:4329c19b8a25693f60a77b867c9d2a3ab637b20e36f5b7bea7f5acb492b44b15", size = 126807, upload-time = "2026-10-07T14:08:32.914Z" },
+    { url = "https://files.pythonhosted.org/packages/58/9d/a1ca7321eeafd7d72e174cdc388cc96301f41516d863e7b1f64f0a1735be/orjson-3.13.0-cp312-cp312-win_amd64.whl", hash = "sha256:b571236d8393edcd3236e07423f762bfcf571f852aad667a3bce9e7b755e0790", size = 121538, upload-time = "2026-10-07T14:08:34.325Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/a0/1f19b4779c910104370932fceb9ed436b47ac077f297db74008062525c04/orjson-3.13.0-cp312-cp312-win_arm64.whl", hash = "sha256:8594956a75223f657e1e68c568c0eeb3dd145f02cd6b78a47fd9a8095dbc4eae", size = 126259, upload-time = "2026-10-07T14:08:35.765Z" },
 ]
 
 [[package]]
@@ -2435,6 +2502,7 @@ dependencies = [
     { name = "httpx" },
     { name = "keyring" },
     { name = "lxml" },
+    { name = "music-assistant-client" },
     { name = "pipecat-ai", extra = ["anthropic", "kokoro", "mcp", "mlx-whisper", "openai", "webrtc", "websocket", "whisper"] },
     { name = "playwright" },
     { name = "pydantic" },
@@ -2458,6 +2526,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "keyring", specifier = ">=25,<26" },
     { name = "lxml", specifier = ">=6,<7" },
+    { name = "music-assistant-client", specifier = "==1.5.1" },
     { name = "pipecat-ai", extras = ["anthropic", "kokoro", "mcp", "mlx-whisper", "openai", "webrtc", "websocket", "whisper"], specifier = "==1.15.0" },
     { name = "playwright", specifier = ">=1.50,<2" },
     { name = "pydantic", specifier = ">=2.11,<3" },

@@ -128,6 +128,8 @@ def create_app(
             services.agents.update_config(config)
             services.notifications.update_settings(config.tools.notifications)
             services.health.update_config(config)
+            if services.music is not None:
+                services.music.update_settings(config.tools.music)
             _log_tool_status(config, services)
             hub.reload(config, services)
 
@@ -181,6 +183,8 @@ def create_app(
             await services.health.close()
             if services.home is not None:
                 await services.home.close()
+            if services.music is not None:
+                await services.music.close()
             await services.reader.close()
             logger.info("Assistant service stopped", extra={"event": "service_stopped"})
 
@@ -204,8 +208,10 @@ def create_app(
             raise HTTPException(status_code=503, detail=speech.error if speech and speech.error else "voice is not ready")
         manager: ConfigManager = request.app.state.config_manager
         body = await request.json()
-        body.pop("request_data", None)
+        extra = body.pop("request_data", None) or body.pop("requestData", None) or {}
         body.pop("requestData", None)
+        # The browser's own id, so "play it here" reaches this browser's speaker (Stage 10).
+        client_id = str(extra.get("client_id"))[:64] if isinstance(extra, dict) and extra.get("client_id") else None
         sdp = body.get("sdp")
         is_renegotiation = bool(body.get("pc_id"))
         if not isinstance(sdp, str) or not sdp.startswith("v=0") or ("m=audio" not in sdp and not is_renegotiation):
@@ -215,7 +221,9 @@ def create_app(
             from victoria_voice_assistant.voice.session import run_voice_session
 
             task = asyncio.create_task(
-                run_voice_session(connection, manager.current, request.app.state.services, speech, request.app.state.chat_hub),
+                run_voice_session(
+                    connection, manager.current, request.app.state.services, speech, request.app.state.chat_hub, client_id=client_id
+                ),
                 name=f"voice-{connection.pc_id}",
             )
             request.app.state.voice_tasks.add(task)

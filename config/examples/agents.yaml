@@ -28,3 +28,14 @@ agents:
     share_context: minimal
     mode: auto
     wait_s: 8
+
+  # "Ask Alexa to ...": the words go to an Echo through Home Assistant's Alexa Media Player integration.
+  # The Echo answers or plays on its own; we only say "Asking Alexa." "Isn't set up yet" until it exists.
+  - name: alexa
+    aliases: [alexis]
+    kind: relay
+    via: ha_service                  # the Home Assistant connection: mcp_servers.homeassistant in tools.yaml
+    service: media_player.play_media
+    content_type: custom             # "run this as if spoken"
+    targets: { kitchen: media_player.kitchen_echo }   # room → Echo (Alexa Media Player entity)
+    reply: "Asking Alexa."

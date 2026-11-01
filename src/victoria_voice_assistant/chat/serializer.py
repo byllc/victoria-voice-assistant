@@ -48,7 +48,8 @@ class ChatJsonSerializer(FrameSerializer):
     Client -> server: ``{"type": "user_message", "text": "..."}``, ``{"type": "timer_stop"}``,
     ``{"type": "notification_ack", "ids": [...] | "all"}``, ``{"type": "agent_answer", "task_id": "...", "text": "..."}``,
     ``{"type": "task_action", "action": "cancel" | "retry" | "resend" | "open", "task_id": "...", "agent"?, "model"?}``,
-    ``{"type": "hello", "client_id": "..."}`` (the browser's id), ``{"type": "push_subscribe", "subscription": {...}}``
+    ``{"type": "hello", "client_id": "..."}`` (the browser's id), ``{"type": "music_speaker", "player_id": "..." | null, "can_play": bool}``
+    (this browser's Sendspin speaker, and whether it has a player that can turn it on), ``{"type": "push_subscribe", "subscription": {...}}``
     and ``{"type": "push_unsubscribe", "endpoint": "..."}``.
     Server -> client: ``{"type": "token", "text": "..."}`` per streamed chunk,
     ``{"type": "done"}`` when a reply ends, ``{"type": "error", "message": "..."}``
@@ -58,7 +59,9 @@ class ChatJsonSerializer(FrameSerializer):
     ``{"type": "timer_ring_stop", "names": [...]}``, ``{"type": "notifications", "items": [...]}`` (the unread
     list, for the badge), ``{"type": "announce", "text": "...", "sound": bool, "spoken": bool, "items": [...]}`` and
     ``{"type": "dashboard", "tasks": [...], "summary": {...}}`` (the task dashboard, on every change) and
-    ``{"type": "push_config", "public_key": "..." | null, "problem": "..." | null}`` (whether phone push is available).
+    ``{"type": "push_config", "public_key": "..." | null, "problem": "..." | null}`` (whether phone push is available) and
+    ``{"type": "music_start", "title": "...", "artist": "..." | null, "kind": "..."}`` (music asked for here: turn this
+    browser's speaker on if it's off, and show what's starting) and ``{"type": "music_error", "text": "..."}``.
     """
 
     async def serialize(self, frame: Frame) -> str | None:
@@ -80,6 +83,11 @@ class ChatJsonSerializer(FrameSerializer):
                 return InputTransportMessageFrame(message={"type": "notification_ack", "ids": ids})
         if isinstance(message, dict) and message.get("type") == "hello" and isinstance(message.get("client_id"), str):
             return InputTransportMessageFrame(message={"type": "hello", "client_id": message["client_id"][:64]})
+        if isinstance(message, dict) and message.get("type") == "music_speaker":
+            player_id = message.get("player_id")
+            if player_id is None or isinstance(player_id, str):
+                speaker = {"type": "music_speaker", "player_id": (player_id or "")[:64] or None, "can_play": message.get("can_play") is True}
+                return InputTransportMessageFrame(message=speaker)
         if isinstance(message, dict) and message.get("type") == "push_subscribe" and isinstance(message.get("subscription"), dict):
             return InputTransportMessageFrame(message={"type": "push_subscribe", "subscription": message["subscription"]})
         if isinstance(message, dict) and message.get("type") == "push_unsubscribe" and isinstance(message.get("endpoint"), str):

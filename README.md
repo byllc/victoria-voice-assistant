@@ -192,6 +192,7 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/implementation_plan.md](docs/implementation_plan.md): the stages, their order and what "done" means.
 - [docs/stages.md](docs/stages.md): the live tracker, with evidence and the decisions log.
 - [docs/https.md](docs/https.md): installing and renewing the HTTPS certificate.
+- [docs/music.md](docs/music.md): music through Music Assistant (where it plays, what you can say) and the Alexa relay.
 - [docs/home-assistant.md](docs/home-assistant.md): home control through Home Assistant: setup, the `voice` label, what you can say.
 - [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens): kept in the macOS Keychain, run from `config/.env`, which is never committed.
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.

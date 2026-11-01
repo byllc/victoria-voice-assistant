@@ -20,10 +20,13 @@ import {
 } from "@pipecat-ai/voice-ui-kit";
 
 import { AlertsView } from "./AlertsView";
+import { MusicPlayer } from "./MusicPlayer";
+import { useSpeaker } from "./useSpeaker";
 import { ChatView } from "./ChatView";
 import { TasksView } from "./TasksView";
 import { Timers } from "./Timers";
 import { useChat } from "./useChat";
+import { clientId } from "./push";
 import { ACTIVE_STATES } from "./types";
 
 type Session = { authenticated: boolean; insecure: boolean };
@@ -45,7 +48,8 @@ export function App() {
     <PipecatAppBase
       transportType="smallwebrtc"
       // Signaling goes through the web interface; audio flows directly to the assistant service.
-      connectParams={{ webrtcRequestParams: { endpoint: "/api/offer" } }}
+      // client_id tells the assistant which browser is talking (for "play it here").
+      connectParams={{ webrtcRequestParams: { endpoint: "/api/offer", requestData: { client_id: clientId } } }}
       clientOptions={{ enableMic: true, enableCam: false }}
       initDevicesOnMount={false}
       themeProps={{ defaultTheme: "system" }}
@@ -74,6 +78,7 @@ export type VoiceHandlers = {
 
 function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut: () => void; voice: VoiceHandlers }) {
   const chat = useChat(onSignedOut);
+  const speaker = useSpeaker(chat); // here, not in a tab: switching tabs mustn't cut the music off
   const [tab, setTab] = useState("chat");
   const active = chat.dashboard?.tasks.filter((t) => ACTIVE_STATES.includes(t.state)).length ?? 0;
   const waiting = chat.dashboard?.summary.waiting ?? 0;
@@ -119,6 +124,7 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
         </Banner>
       )}
       <Timers timers={chat.timers} />
+      <MusicPlayer speaker={speaker} />
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
         <TabsList className="w-full">
           <TabsTrigger value="chat" className="flex-1">

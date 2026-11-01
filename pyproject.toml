@@ -22,6 +22,7 @@ dependencies = [
     "pywebpush>=2,<3",
     "keyring>=25,<26",
     "python-dotenv>=1,<2",
+    "music-assistant-client==1.5.1",
 ]
 
 [project.optional-dependencies]

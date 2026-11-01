@@ -120,9 +120,14 @@ class AgentRunner:
         if waiting and model is None:
             # "Tell Hermes the blue folder": the agent asked something, so this is the answer.
             return self.answer(waiting[0].id, request)
+        if agent.kind == "relay":
+            # Another voice assistant answers on its own device; nothing comes back, so no task.
+            from victoria_voice_assistant.agents.relay import relay
+
+            return await relay(agent, request, device, self.config, self.services)
         supported = (agent.kind == "model" and (agent.model or agent.pool)) or (agent.kind == "harness" and agent.model)
         if not supported:
-            # A2A and relay agents come in later stages.
+            # A2A agents come in a later stage.
             logger.info("Agent kind not supported yet", extra={"event": "agent_unsupported", "agent": agent.name, "kind": agent.kind})
             return ToolOutcome(result={"error": "agent not set up yet"}, speak=f"{label(agent.name)} isn't set up yet.")
         missing = self._missing_key(agent)

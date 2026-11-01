@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from victoria_voice_assistant.agents.runner import AgentRunner
     from victoria_voice_assistant.health import HealthMonitor
     from victoria_voice_assistant.tools.home import HomeAssistantHub
+    from victoria_voice_assistant.tools.music import MusicService
     from victoria_voice_assistant.notifications.service import NotificationService
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
@@ -41,6 +42,8 @@ class ToolContext:
     """Per-call information a handler may need."""
 
     device: str = "web"
+    # The browser's own id (chat `hello`, or the voice offer): which browser asked, for "play it here".
+    client_id: str | None = None
     # Reports a step to the dashboard, when a task is running the tool (an agent's tool loop).
     progress: Callable[[str], None] | None = None
 
@@ -61,6 +64,7 @@ class Services:
     notifications: NotificationService | None = None
     health: HealthMonitor | None = None
     home: HomeAssistantHub | None = None
+    music: MusicService | None = None
 
 
 @dataclass
@@ -396,6 +400,22 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
         return web_read
     if service is None:
         raise Unresolved("built-in tool has no `service`")
+    if service == "music":
+        settings = tools.music
+        if settings is None or settings.server is None:
+            raise Unresolved("the `music:` section has no `server` (the Music Assistant URL)")
+        if not settings.token:
+            raise Unresolved("MUSIC_ASSISTANT_TOKEN is not set (uv run assistant secrets set MUSIC_ASSISTANT_TOKEN)")
+        if services.music is None:
+            from victoria_voice_assistant.tools.music import MusicService
+
+            services.music = MusicService(settings)
+
+        async def music(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            assert services.music is not None
+            return await services.music.handle(ctx.device, arguments, client_id=ctx.client_id)
+
+        return music
     raise Unresolved(f"built-in service `{service}` isn't available yet")
 
 

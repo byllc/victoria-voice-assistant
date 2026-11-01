@@ -260,8 +260,9 @@ class NotificationsConfig(Schema):
 
 
 class MusicRoomConfig(Schema):
-    satellite: str | None = None
-    player: str
+    satellite: str | None = None  # the device in this room (its requests play here)
+    player: str  # Music Assistant player id or name
+    aliases: list[str] = Field(default_factory=list)  # other ways to say the room
 
 
 class MusicConfig(Schema):
@@ -270,6 +271,16 @@ class MusicConfig(Schema):
     source_order: list[str] = Field(default_factory=list)
     rooms: dict[str, MusicRoomConfig] = Field(default_factory=dict)
     duck_level: int = Field(default=20, ge=0, le=100)
+    # Music Assistant's Sendspin listener, for the web app as a speaker. Default: the server's host, port 8927
+    # (its /sendspin on the API port wants Music Assistant's own login first).
+    sendspin_url: str | None = None
+
+    def sendspin(self) -> str | None:
+        if self.sendspin_url:
+            return self.sendspin_url
+        if self.server is None:
+            return None
+        return f"ws://{self.server.host}:8927/sendspin"
 
 
 class McpServerConfig(Schema):
