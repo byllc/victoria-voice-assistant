@@ -288,6 +288,18 @@ class McpServerConfig(Schema):
     token: str | None = None
 
 
+class SatelliteConfig(Schema):
+    """An ESPHome voice satellite (Stage 12): the assistant connects to it with its API key."""
+
+    host: str
+    port: int = Field(default=6053, gt=0, lt=65536)
+    key: str | None = None  # the device's API encryption key, e.g. "${SATELLITE1_API_KEY}"
+    # Its microphone level is raised by this factor before speech detection: the Satellite1's clean
+    # (unclipped) channel is quiet (Stage 12 findings).
+    gain: float = Field(default=8.0, gt=0, le=64)
+    audio_port: int = Field(default=8767, gt=0, lt=65536)  # where the satellite fetches replies (LAN, HTTP)
+
+
 class ToolTestGiven(Schema):
     timers: list[str] = Field(default_factory=list)
 
@@ -334,6 +346,7 @@ class ToolsConfig(Schema):
     music: MusicConfig | None = None
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    satellites: dict[str, SatelliteConfig] = Field(default_factory=dict)  # device name (as in music.rooms) -> satellite
     tests: list[ToolTestConfig] = Field(default_factory=list)
 
     @field_validator("tools", mode="before")

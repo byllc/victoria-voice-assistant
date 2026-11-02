@@ -10,6 +10,7 @@ from typing import Any
 
 LOGGED_FIELDS = (
     "config_revision",
+    "device",
     "config_dir",
     "database_path",
     "model",

@@ -23,6 +23,7 @@ dependencies = [
     "keyring>=25,<26",
     "python-dotenv>=1,<2",
     "music-assistant-client==1.5.1",
+    "aioesphomeapi>=46,<47",
 ]
 
 [project.optional-dependencies]
@@ -41,3 +42,8 @@ victoria_voice_assistant = ["py.typed", "*.plist", "storage/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Raised inside Pipecat itself, not by our code; ours (e.g. PipelineTask) stay visible.
+    "ignore:'audioop' is deprecated:DeprecationWarning",
+    "ignore:`AudioContextTTSService` is deprecated:DeprecationWarning",
+]
