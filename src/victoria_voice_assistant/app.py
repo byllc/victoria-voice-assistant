@@ -152,6 +152,9 @@ def create_app(
         background = [asyncio.create_task(monitor_loop_lag(), name="loop-lag")]
         if search_settings is not None and browser_enabled:
             background.append(asyncio.create_task(services.reader.warm(), name="browser-warm"))
+        if services.home is not None and os.environ.get("ASSISTANT_HEALTH", "1") != "0":
+            # Like the health checks, it reaches out on the network, so tests turn both off.
+            background.append(asyncio.create_task(services.home.warm(), name="home-warm"))
         app.state.speech = None
         app.state.voice_tasks = set()
         app.state.webrtc = SmallWebRTCRequestHandler()  # no ICE servers: LAN only, nothing leaves the house

@@ -230,3 +230,28 @@ def test_registry_wiring(example_config_dir: Path, monkeypatch: pytest.MonkeyPat
         entry = registry.get(name)
         assert entry.status == "ready" and entry.speaks_directly, name
     assert services.home is not None and len(services.home.instances) == 1  # one shared connection
+
+
+def test_the_hub_connects_ahead_of_the_first_request() -> None:
+    import asyncio
+
+    from victoria_voice_assistant.tools.home import HomeAssistantHub
+
+    calls: list[str] = []
+
+    class Instance:
+        def __init__(self, fail: bool) -> None:
+            self.fail = fail
+
+        async def entities(self):
+            calls.append("entities")
+            if self.fail:
+                raise ConnectionError("down")
+
+        async def _intent_handlers(self):
+            calls.append("mcp")
+
+    hub = HomeAssistantHub()
+    hub.instances = {("a", "", "voice"): Instance(fail=True), ("b", "", "voice"): Instance(fail=False)}
+    asyncio.run(hub.warm())  # one down doesn't stop the other, and nothing raises
+    assert calls == ["entities", "entities", "mcp"]
