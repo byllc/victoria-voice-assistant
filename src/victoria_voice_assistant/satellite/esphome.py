@@ -373,6 +373,13 @@ class SatelliteSession:
         except Exception as exc:  # noqa: BLE001 - the connection dropped; the link reconnects
             logger.warning("Satellite event not sent", extra={"event": "satellite_send_failed", "device": self.name, "reason": str(exc)})
 
+    def reconfigure(self, settings: SatelliteConfig, config: AppConfig) -> None:
+        """A config reload while connected: new settings (gain, room, light colour) and the reloaded tools."""
+        if settings.pending_color != self.settings.pending_color:
+            self._ring_on = None  # the next update re-lights it in the new colour
+        self.settings = settings
+        self.chat.reload(config, self.services)
+
     def set_pending_light(self, on: bool) -> None:
         """Light the LED ring while notifications are unread here. The firmware shows it whenever the
         satellite is idle; its voice animations take over during a turn."""
@@ -614,6 +621,13 @@ class SatelliteLink:
         self.speech = speech
         self.audio = audio
         self.connected = False
+        self.session: SatelliteSession | None = None
+
+    def reconfigure(self, settings: SatelliteConfig, config: AppConfig) -> None:
+        """Settings that don't need a new connection; the next connection uses them too."""
+        self.settings, self.config = settings, config
+        if self.session is not None:
+            self.session.reconfigure(settings, config)
 
     async def run(self) -> None:
         from aioesphomeapi import APIClient
@@ -639,6 +653,7 @@ class SatelliteLink:
                     self.name, self.settings, client, self.config, self.services, self.speech, self.audio,
                     await asyncio.to_thread(local_address, self.settings.host), ring_key=ring,
                 )
+                self.session = session
                 await session.run_until_disconnected(disconnected)
                 logger.warning("Satellite disconnected", extra={"event": "satellite_disconnected", "device": self.name})
             except asyncio.CancelledError:
@@ -647,6 +662,7 @@ class SatelliteLink:
                 logger.warning("Satellite unreachable", extra={"event": "satellite_unreachable", "device": self.name, "reason": str(exc) or type(exc).__name__})
             finally:
                 self.connected = False
+                self.session = None
                 try:
                     await client.disconnect()
                 except Exception:  # noqa: BLE001
@@ -655,29 +671,67 @@ class SatelliteLink:
             delay = min(delay * 2, RECONNECT_MAX_S)
 
 
+def _connection(settings: SatelliteConfig) -> tuple[str, int, str | None]:
+    """What a satellite's connection depends on: a change here means reconnecting."""
+    return settings.host, settings.port, settings.key
+
+
 class SatelliteManager:
-    """Every satellite in `tools.yaml`, and the audio server they fetch replies from."""
+    """Every satellite in `tools.yaml`, and the audio server they fetch replies from.
+
+    Follows config reloads (Stage 13): a satellite added to `satellites:` connects, one removed
+    disconnects, one whose host, port or key changed reconnects, and other changes reach the connected
+    session. The audio server starts with the first satellite; changing its port needs a restart.
+    """
 
     def __init__(self, config: AppConfig, services: Services, speech: SpeechModels) -> None:
         self.config = config
         self.services = services
         self.speech = speech
         self.audio = AudioServer(config.tools.satellite_audio_port)
-        self.links = [SatelliteLink(name, s, config, services, speech, self.audio) for name, s in config.tools.satellites.items()]
-        self._tasks: list[asyncio.Task] = []
+        self.links: dict[str, SatelliteLink] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._audio_started = False
+        self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        if not self.links:
+        await self.update(self.config)
+
+    async def update(self, config: AppConfig) -> None:
+        async with self._lock:
+            self.config = config
+            wanted = config.tools.satellites
+            for name in list(self.links):
+                if name not in wanted or _connection(wanted[name]) != _connection(self.links[name].settings):
+                    await self._stop(name)
+            for name, settings in wanted.items():
+                link = self.links.get(name)
+                if link is not None:
+                    link.reconfigure(settings, config)
+                    continue
+                if not self._audio_started:
+                    await self.audio.start()
+                    self._audio_started = True
+                link = SatelliteLink(name, settings, config, self.services, self.speech, self.audio)
+                self.links[name] = link
+                self._tasks[name] = asyncio.create_task(link.run(), name=f"satellite-{name}")
+                logger.info("Satellite added", extra={"event": "satellite_added", "device": name})
+
+    async def _stop(self, name: str) -> None:
+        self.links.pop(name, None)
+        task = self._tasks.pop(name, None)
+        if task is None:
             return
-        await self.audio.start()
-        self._tasks = [asyncio.create_task(link.run(), name=f"satellite-{link.name}") for link in self.links]
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        logger.info("Satellite removed", extra={"event": "satellite_removed", "device": name})
 
     async def close(self) -> None:
-        for task in self._tasks:
-            task.cancel()
-        for task in self._tasks:
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-        await self.audio.close()
+        async with self._lock:
+            for name in list(self._tasks):
+                await self._stop(name)
+        if self._audio_started:
+            await self.audio.close()

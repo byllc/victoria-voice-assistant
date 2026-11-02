@@ -166,12 +166,23 @@ def create_app(
             app.state.speech = speech
             background.append(asyncio.create_task(speech.load(), name="speech-load"))
         app.state.satellites = None
-        if app.state.speech is not None and manager.current.tools.satellites:
-            # ESPHome satellites (Stage 12); each waits for the speech models before connecting.
+        if app.state.speech is not None:
+            # ESPHome satellites (Stage 12); each waits for the speech models before connecting, and
+            # config reloads add, remove or reconfigure them (Stage 13).
             from victoria_voice_assistant.satellite.esphome import SatelliteManager
 
-            app.state.satellites = SatelliteManager(manager.current, services, app.state.speech)
-            await app.state.satellites.start()
+            satellites = SatelliteManager(manager.current, services, app.state.speech)
+            app.state.satellites = satellites
+            await satellites.start()
+
+            updates: set[asyncio.Task] = set()
+
+            def on_satellites_reload(config: AppConfig) -> None:
+                task = asyncio.get_running_loop().create_task(satellites.update(config), name="satellites-update")
+                updates.add(task)
+                task.add_done_callback(updates.discard)
+
+            manager.add_listener(on_satellites_reload)
         watcher = asyncio.create_task(manager.watch(), name="config-watcher")
         pinning: asyncio.Task | None = None
         if os.environ.get("ASSISTANT_PIN_MODELS", "1") != "0":

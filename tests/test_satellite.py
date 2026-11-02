@@ -248,3 +248,44 @@ def test_a_finished_timer_rings_on_the_device_which_then_owns_it(example_config_
     assert len(ringing) == 1
     assert [event[0] for event in client.timer_events] == [T.VOICE_ASSISTANT_TIMER_FINISHED]
     assert left == []  # the device's "stop" word or button stops it; nothing tells us when
+
+
+def test_satellites_follow_config_reloads(example_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs: list[str] = []
+
+    async def fake_run(self: esphome.SatelliteLink) -> None:
+        runs.append(self.name)
+        await asyncio.Event().wait()  # "connected" until cancelled
+
+    async def no_server(self: AudioServer) -> None:
+        return None
+
+    monkeypatch.setattr(esphome.SatelliteLink, "run", fake_run)
+    monkeypatch.setattr(AudioServer, "start", no_server)
+    monkeypatch.setattr(AudioServer, "close", no_server)
+    base = load_config(example_config_dir)
+
+    def with_satellites(**satellites: dict) -> Any:
+        tools = base.tools.model_copy(update={"satellites": {n: SatelliteConfig(**s) for n, s in satellites.items()}})
+        return base.model_copy(update={"tools": tools})
+
+    async def scenario() -> list[Any]:
+        manager = esphome.SatelliteManager(with_satellites(), Services(timers=TimerService(TimersConfig()), weather=WeatherService(WeatherConfig())), FakeSpeech())  # type: ignore[arg-type]
+        await manager.start()
+        seen = [sorted(manager.links)]  # none configured: nothing starts
+        await manager.update(with_satellites(office={"host": "o.local"}, kitchen={"host": "k.local"}))
+        await asyncio.sleep(0)
+        office = manager.links["office"]
+        seen.append(sorted(manager.links))
+        await manager.update(with_satellites(office={"host": "o.local", "gain": 12}, kitchen={"host": "k2.local"}))
+        await asyncio.sleep(0)
+        seen.append((manager.links["office"] is office, manager.links["office"].settings.gain))  # same connection, new gain
+        await manager.update(with_satellites(kitchen={"host": "k2.local"}))
+        seen.append(sorted(manager.links))
+        await manager.close()
+        seen.append(sorted(manager.links))
+        return seen
+
+    seen = asyncio.run(scenario())
+    assert seen == [[], ["kitchen", "office"], (True, 12.0), ["kitchen"], []]
+    assert runs == ["office", "kitchen", "kitchen"]  # the kitchen reconnected for its new host

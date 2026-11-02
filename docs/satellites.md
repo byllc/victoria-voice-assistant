@@ -53,13 +53,7 @@ satellites:
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
 ```
 
-Then restart the assistant:
-
-```sh
-launchctl kickstart -k gui/$(id -u)/com.victoria.voice-assistant
-```
-
-Satellites are read when the assistant starts. Changes under `satellites:`, and tool changes a connected satellite should use, take effect at the next restart. Browser sessions pick up configuration changes without one.
+Saving `tools.yaml` is enough; no restart (Stage 13). A satellite added under `satellites:` connects, one removed disconnects, one whose `host`, `port` or `key` changed reconnects, and other changes (its `gain`, `room` or `pending_color`, and tool changes) reach it while connected. Only `satellite_audio_port` needs a restart.
 
 Give its room what the room has, under `rooms` (several satellites can share a room):
 
