@@ -242,6 +242,9 @@ async def run_chat_session(
     async def on_health(_results) -> None:
         push_dashboard()
 
+    def on_satellites() -> None:
+        push_dashboard()
+
     async def on_task_event(event: TaskEvent) -> None:
         if event.kind == "changed":
             push_dashboard()  # every task, from any device
@@ -287,6 +290,8 @@ async def run_chat_session(
         services.notifications.attach(outlet)
     if services.health is not None:
         services.health.add_listener(on_health)
+    if services.satellites is not None:
+        services.satellites.add_listener(on_satellites)
     if hub is not None:
         hub.sessions.add(session)
     try:
@@ -296,6 +301,8 @@ async def run_chat_session(
             handle.cancel()
         if services.health is not None:
             services.health.remove_listener(on_health)
+        if services.satellites is not None:
+            services.satellites.remove_listener(on_satellites)
         if services.notifications is not None:
             services.notifications.detach(outlet)
         services.timers.remove_listener(on_timer_event)

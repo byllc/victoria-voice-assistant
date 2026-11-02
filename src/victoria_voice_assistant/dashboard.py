@@ -20,8 +20,17 @@ def task_view(runner: AgentRunner, task: Task) -> dict[str, Any]:
     }
 
 
+def satellite_views(services: Services) -> list[dict[str, Any]]:
+    """Each satellite's state (from the board), with its running timers (Stage 13)."""
+    board = services.satellites
+    if board is None:
+        return []
+    return [{**status, "timers": services.timers.snapshot(status["name"])} for status in board.snapshot()]
+
+
 def dashboard(services: Services) -> dict[str, Any]:
-    """Every task (newest first), the running and waiting counts, this month's spend per budgeted pool, and health."""
+    """Every task (newest first), the running and waiting counts, this month's spend per budgeted pool, health,
+    and the satellites."""
     runner = services.agents
     tasks = runner.tasks.recent(limit=10_000) if runner is not None else []
     spend = []
@@ -40,4 +49,5 @@ def dashboard(services: Services) -> dict[str, Any]:
             "spend": spend,
             "health": services.health.snapshot() if services.health is not None else [],
         },
+        "satellites": satellite_views(services),
     }

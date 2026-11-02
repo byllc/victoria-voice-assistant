@@ -56,6 +56,7 @@ from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcesso
 from victoria_voice_assistant.chat.tools import SessionState
 from victoria_voice_assistant.config.schema import AppConfig, SatelliteConfig
 from victoria_voice_assistant.notifications.service import Announcement, Notification
+from victoria_voice_assistant.satellite.status import SatelliteBoard
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
 from victoria_voice_assistant.tools.timers import TimerEvent
@@ -373,6 +374,22 @@ class SatelliteSession:
         except Exception as exc:  # noqa: BLE001 - the connection dropped; the link reconnects
             logger.warning("Satellite event not sent", extra={"event": "satellite_send_failed", "device": self.name, "reason": str(exc)})
 
+    def _status(self, **changes: Any) -> None:
+        if self.services.satellites is not None:
+            self.services.satellites.update(self.name, **changes)
+
+    def _board_state(self) -> str | None:
+        board = self.services.satellites
+        return next((s["state"] for s in board.snapshot() if s["name"] == self.name), None) if board else None
+
+    def _idle_after(self, seconds: float) -> None:
+        """The device plays the reply after the turn ends; it's idle once that has had time to play."""
+        def idle() -> None:
+            if self.run is None and self._board_state() == "replying":
+                self._status(state="idle")
+
+        asyncio.get_running_loop().call_later(seconds + 1.0, idle)
+
     def reconfigure(self, settings: SatelliteConfig, config: AppConfig) -> None:
         """A config reload while connected: new settings (gain, room, light colour) and the reloaded tools."""
         if settings.pending_color != self.settings.pending_color:
@@ -412,6 +429,7 @@ class SatelliteSession:
         logger.info("Satellite turn", extra={"event": "satellite_turn", "device": self.name, "text": wake_word_phrase})
         self.send(E.VOICE_ASSISTANT_RUN_START)
         self.send(E.VOICE_ASSISTANT_STT_START)
+        self._status(state="listening")
         self.run.timers.append(asyncio.get_running_loop().call_later(NO_SPEECH_S, self._no_speech))
         return 0  # stream the audio over this connection
 
@@ -450,6 +468,7 @@ class SatelliteSession:
         if self.run is None or not self.run.listening:
             return
         self.run.listening = False  # the device stops streaming; the turn is the model's now
+        self._status(state="thinking")
         logger.info("Satellite speech ended", extra={"event": "satellite_speech_end", "device": self.name, **self._audio_stats()})
         self.send(E.VOICE_ASSISTANT_STT_VAD_END)
         self.run.timers.append(asyncio.get_running_loop().call_later(REPLY_WAIT_S, self._no_reply))
@@ -460,6 +479,7 @@ class SatelliteSession:
         if self.run is None:
             return
         self.send(E.VOICE_ASSISTANT_STT_END, {"text": text})
+        self._status(request=text)
         self.send(E.VOICE_ASSISTANT_INTENT_START)  # the LED ring shows it thinking
 
     def _no_speech(self) -> None:
@@ -498,6 +518,8 @@ class SatelliteSession:
         for handle in self.run.timers:
             handle.cancel()
         self.run = None
+        if not self.delivering:
+            self._status(state="idle")
         if send_end:
             self.send(E.VOICE_ASSISTANT_RUN_END)
 
@@ -522,10 +544,13 @@ class SatelliteSession:
                 self.send(E.VOICE_ASSISTANT_INTENT_END, {"continue_conversation": "1" if follow_up else "0"})
                 self.send(E.VOICE_ASSISTANT_TTS_START, {"text": text})
                 self.send(E.VOICE_ASSISTANT_TTS_END, {"url": url})
+                self._status(state="replying", reply=text)
                 self._end_run()
+                self._idle_after(seconds)
                 logger.info("Satellite reply", extra={"event": "satellite_reply", "device": self.name, "duration_s": round(seconds, 1), "text": text})
                 return
             logger.info("Satellite announcement", extra={"event": "satellite_announce", "device": self.name, "duration_s": round(seconds, 1), "text": text})
+            self._status(state="announcing", reply=text)
             await self.client.send_voice_assistant_announcement_await_response(
                 url, max(30.0, seconds + 15.0), text=text, start_conversation=follow_up
             )
@@ -533,6 +558,8 @@ class SatelliteSession:
             logger.warning("Satellite reply failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
         finally:
             self.delivering = False
+            if self.run is None and self._board_state() == "announcing":
+                self._status(state="idle")
 
     # Timers, mirrored to the device so it rings and its "stop" word works
 
@@ -654,6 +681,7 @@ class SatelliteLink:
                     await asyncio.to_thread(local_address, self.settings.host), ring_key=ring,
                 )
                 self.session = session
+                self.services.satellites.update(self.name, online=True, state="idle")
                 await session.run_until_disconnected(disconnected)
                 logger.warning("Satellite disconnected", extra={"event": "satellite_disconnected", "device": self.name})
             except asyncio.CancelledError:
@@ -663,6 +691,8 @@ class SatelliteLink:
             finally:
                 self.connected = False
                 self.session = None
+                if self.services.satellites is not None:
+                    self.services.satellites.update(self.name, online=False, state="idle")
                 try:
                     await client.disconnect()
                 except Exception:  # noqa: BLE001
@@ -689,6 +719,9 @@ class SatelliteManager:
         self.services = services
         self.speech = speech
         self.audio = AudioServer(config.tools.satellite_audio_port)
+        if services.satellites is None:
+            services.satellites = SatelliteBoard()
+        self.board = services.satellites
         self.links: dict[str, SatelliteLink] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._audio_started = False
@@ -701,6 +734,7 @@ class SatelliteManager:
         async with self._lock:
             self.config = config
             wanted = config.tools.satellites
+            self.board.configured({name: settings.room for name, settings in wanted.items()})
             for name in list(self.links):
                 if name not in wanted or _connection(wanted[name]) != _connection(self.links[name].settings):
                     await self._stop(name)

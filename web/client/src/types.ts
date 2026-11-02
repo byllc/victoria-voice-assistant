@@ -39,8 +39,22 @@ export type TaskInfo = {
 
 export type Health = { name: string; ok: boolean | null; detail: string };
 
+export type SatelliteState = "idle" | "listening" | "thinking" | "replying" | "announcing";
+
+export type SatelliteInfo = {
+  name: string;
+  room: string | null;
+  online: boolean;
+  state: SatelliteState;
+  request: string | null;
+  reply: string | null;
+  changed_at: number;
+  timers: TimerInfo[];
+};
+
 export type Dashboard = {
   tasks: TaskInfo[];
+  satellites?: SatelliteInfo[];
   summary: {
     running: number;
     waiting: number;

@@ -108,7 +108,7 @@ export function useChat(onSignedOut: () => void) {
           for (const item of message.items) append({ kind: "notification", item });
           break;
         case "dashboard":
-          setDashboard({ tasks: message.tasks, summary: message.summary });
+          setDashboard({ tasks: message.tasks, summary: message.summary, satellites: message.satellites });
           break;
         case "push_config":
           setPushKey(message.public_key);

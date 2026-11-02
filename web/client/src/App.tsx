@@ -23,6 +23,7 @@ import { AlertsView } from "./AlertsView";
 import { MusicPlayer } from "./MusicPlayer";
 import { useSpeaker } from "./useSpeaker";
 import { ChatView } from "./ChatView";
+import { SatellitesView } from "./SatellitesView";
 import { TasksView } from "./TasksView";
 import { Timers } from "./Timers";
 import { useChat } from "./useChat";
@@ -82,6 +83,8 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
   const [tab, setTab] = useState("chat");
   const active = chat.dashboard?.tasks.filter((t) => ACTIVE_STATES.includes(t.state)).length ?? 0;
   const waiting = chat.dashboard?.summary.waiting ?? 0;
+  const satellites = chat.dashboard?.satellites?.length ?? 0;
+  const offline = chat.dashboard?.satellites?.filter((s) => !s.online).length ?? 0;
   const unread = chat.notifications.length;
 
   const signOut = async () => {
@@ -136,6 +139,11 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
           <TabsTrigger value="alerts" className="flex-1 gap-2">
             Alerts {unread > 0 && <Badge color="warning" size="sm">{unread}</Badge>}
           </TabsTrigger>
+          {satellites > 0 && (
+            <TabsTrigger value="satellites" className="flex-1 gap-2">
+              Satellites {offline > 0 && <Badge color="destructive" size="sm">{offline}</Badge>}
+            </TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
           <ChatView chat={chat} voice={voice} onOpenAlerts={() => setTab("alerts")} />
@@ -145,6 +153,9 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
         </TabsContent>
         <TabsContent value="alerts" className="min-h-0 flex-1 overflow-y-auto">
           <AlertsView chat={chat} />
+        </TabsContent>
+        <TabsContent value="satellites" className="min-h-0 flex-1 overflow-y-auto">
+          <SatellitesView chat={chat} />
         </TabsContent>
       </Tabs>
     </div>

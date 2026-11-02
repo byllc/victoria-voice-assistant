@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from victoria_voice_assistant.tools.home import HomeAssistantHub
     from victoria_voice_assistant.tools.music import MusicService
     from victoria_voice_assistant.notifications.service import NotificationService
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class Services:
     health: HealthMonitor | None = None
     home: HomeAssistantHub | None = None
     music: MusicService | None = None
+    satellites: SatelliteBoard | None = None  # what each satellite is doing, for the dashboard
 
 
 @dataclass

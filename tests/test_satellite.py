@@ -289,3 +289,51 @@ def test_satellites_follow_config_reloads(example_config_dir: Path, monkeypatch:
     seen = asyncio.run(scenario())
     assert seen == [[], ["kitchen", "office"], (True, 12.0), ["kitchen"], []]
     assert runs == ["office", "kitchen", "kitchen"]  # the kitchen reconnected for its new host
+
+
+def test_the_board_tracks_satellites_for_the_dashboard() -> None:
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
+
+    changes: list[int] = []
+    board = SatelliteBoard(clock=lambda: 5.0)
+    board.add_listener(lambda: changes.append(1))
+    board.configured({"office": "office", "kitchen-1": "kitchen"})
+    board.update("office", online=True)
+    board.update("office", online=True)  # no change: no update sent
+    board.configured({"office": "office"})  # the kitchen satellite was removed
+    assert [(s["name"], s["room"], s["online"], s["state"]) for s in board.snapshot()] == [("office", "office", True, "idle")]
+    assert len(changes) == 3
+
+
+def test_a_turn_shows_on_the_board(example_config_dir: Path) -> None:
+    from victoria_voice_assistant.dashboard import dashboard
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
+
+    async def scenario() -> list[tuple[str, Any, Any]]:
+        session, _client = _session(example_config_dir)
+        board = SatelliteBoard()
+        session.services.satellites = board
+        board.configured({"office": "office"})
+        seen = []
+
+        def note() -> None:
+            (status,) = board.snapshot()
+            seen.append((status["state"], status["request"], status["reply"]))
+
+        board.add_listener(note)
+        await session.handle_start("c1", 0, None, "Victoria")
+        session.user_started()
+        session.user_stopped()
+        session.heard("what time is it")
+        await session.deliver([(_speech(0.2, 24000), 24000)], "It's noon.")
+        view = dashboard(session.services)["satellites"]
+        assert view[0]["room"] == "office" and view[0]["timers"] == []
+        return seen
+
+    seen = asyncio.run(scenario())
+    assert seen == [
+        ("listening", None, None),
+        ("thinking", None, None),
+        ("thinking", "what time is it", None),
+        ("replying", "what time is it", "It's noon."),
+    ]
