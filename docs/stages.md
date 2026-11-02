@@ -279,7 +279,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 ## Stage 12: Satellites (optional)
 - Status: in progress
 - Done criteria:
-  - [ ] Compatibility findings reviewed by Bill, and the adapter approach agreed, before adapter code is written.
+  - [x] Compatibility findings reviewed by Bill, and the adapter approach agreed, before adapter code is written. Agreed 2026-11-01 (decisions log).
   - [ ] One satellite handles wake word → command → reply for timers, weather, search, agents, home control, and music.
   - [ ] Pending notifications light the satellite.
   - [ ] Clarifying questions reopen the mic without the wake word (or the documented fallback works).
@@ -392,3 +392,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 10 | Approved by Bill. Carried over: sound from Safari after the switch to PCM; Spotify; the Alexa relay; ducking by voice; slow listing of a new browser; `--config-dir` and `config/.env`. | Bill / 2026-11-01: "ok approve, commit and push, stage 10 and continue to stage 11" |
 | 2026-11-01 | 11 | Approved by Bill with three done criteria open: a week of daily use, the end-to-end benchmark on the Mac mini, and the runbook (not written yet) with his review; also carried: the crash checks on the Mac mini, weather's home location. | Bill / 2026-11-01: "approve stage 11" |
 | 2026-11-01 | 12 | The assistant alone connects to the Satellite1; Home Assistant doesn't (it doesn't get the new key). So the satellite's voice, LEDs, button, sensors, timers and announcements are the assistant's; its entities leave Home Assistant; music through Music Assistant needs a direct route (Snapcast, in the firmware) to be checked. Home Assistant's old ESPHome entry will fail to connect until deleted (Bill's call). | Bill / 2026-11-01: "I don't want home assistant to connect to it, I want this assistant to connect to it" |
+| 2026-11-01 | 12 | Compatibility findings reviewed and the adapter approach agreed (the proposed approach in the Stage 12 evidence): the assistant keeps the satellite's connection and runs its voice turns through the browser-voice pipeline, with FLAC replies, LED states from voice events, follow-ups, timers on the device and the office room. | Bill / 2026-11-01: "Yes, build it" |
