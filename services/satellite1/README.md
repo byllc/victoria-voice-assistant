@@ -24,20 +24,5 @@ ESPHome version that release requires, generates and stores the key the first ti
 `satellite1.yaml` next to their config (their paths are relative to that folder). Flashing keeps the device's
 Wi-Fi settings.
 
-
-## Connecting the assistant
-
-Add the device under `satellites:` in `config/tools.yaml` (the name is its room's satellite name; see
-`config/examples/tools.yaml`), then restart the assistant:
-
-```yaml
-satellites:
-  office:
-    host: satellite1-xxxxxx.local   # or its IP address
-    key: "${SATELLITE1_API_KEY}"
-```
-
-The assistant connects once its speech models are loaded and reconnects if the connection drops; the log shows
-`satellite_connected`. A satellite flashing red has no client connected. It fetches each spoken reply as FLAC
-from the assistant's audio server (plain HTTP on the LAN, port 8767 by default); if the macOS firewall is on, it
-must allow incoming connections to the project's Python (`.venv/bin/python`).
+Connecting the assistant, moving to the Mac mini, Wi-Fi setup for a new device, using it and troubleshooting
+are in [docs/satellites.md](../../docs/satellites.md).

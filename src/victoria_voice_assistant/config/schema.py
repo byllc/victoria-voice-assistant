@@ -297,7 +297,6 @@ class SatelliteConfig(Schema):
     # Its microphone level is raised by this factor before speech detection: the Satellite1's clean
     # (unclipped) channel is quiet (Stage 12 findings).
     gain: float = Field(default=8.0, gt=0, le=64)
-    audio_port: int = Field(default=8767, gt=0, lt=65536)  # where the satellite fetches replies (LAN, HTTP)
 
 
 class ToolTestGiven(Schema):
@@ -347,6 +346,7 @@ class ToolsConfig(Schema):
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     satellites: dict[str, SatelliteConfig] = Field(default_factory=dict)  # device name (as in music.rooms) -> satellite
+    satellite_audio_port: int = Field(default=8767, gt=0, lt=65536)  # where every satellite fetches replies (LAN, HTTP)
     tests: list[ToolTestConfig] = Field(default_factory=list)
 
     @field_validator("tools", mode="before")

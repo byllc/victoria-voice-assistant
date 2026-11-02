@@ -44,7 +44,7 @@ Optional, each set up in its own document:
 - **The decider** ([services/mlx-lm](services/mlx-lm/README.md)): a small local decision model on `127.0.0.1:8090`, served by mlx-lm.
 - **Agents:** Hermes ([docs/hermes.md](docs/hermes.md)) and Claude ([docs/claude-setup.md](docs/claude-setup.md)) take bigger requests; results come back as notifications ([docs/push.md](docs/push.md)).
 - **Home Assistant** for home control ([docs/home-assistant.md](docs/home-assistant.md)) and **Music Assistant** for music ([docs/music.md](docs/music.md)).
-- **Voice satellites** (Stage 12, in progress): a FutureProofHomes Satellite1 that the assistant connects to over ESPHome ([services/satellite1](services/satellite1/README.md)).
+- **Voice satellites** (Stage 12, in progress): a FutureProofHomes Satellite1 that the assistant connects to over ESPHome ([docs/satellites.md](docs/satellites.md)).
 
 ### What happens when you speak
 
@@ -216,6 +216,7 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/home-assistant.md](docs/home-assistant.md): home control through Home Assistant: setup, the `voice` label, what you can say.
 - [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens): kept in the macOS Keychain, run from `config/.env`, which is never committed.
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.
+- [docs/satellites.md](docs/satellites.md): voice satellites (the Satellite1): setup, moving to the Mac mini, using one, the LED ring, troubleshooting.
 - [docs/claude-setup.md](docs/claude-setup.md): turning on the optional Claude agent (an API key; it's a stub until then).
 - [docs/hermes.md](docs/hermes.md): connecting the assistant to a Hermes Agent installation (any; `services/hermes/` is only a test setup).
 - [services/mlx-lm/README.md](services/mlx-lm/README.md), [services/searxng/README.md](services/searxng/README.md), [services/satellite1/README.md](services/satellite1/README.md): the decider, SearXNG, and the Satellite1 firmware.

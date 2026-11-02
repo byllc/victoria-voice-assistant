@@ -608,10 +608,8 @@ class SatelliteManager:
         self.config = config
         self.services = services
         self.speech = speech
-        satellites = config.tools.satellites
-        port = next(iter(satellites.values())).audio_port if satellites else 8767
-        self.audio = AudioServer(port)
-        self.links = [SatelliteLink(name, s, config, services, speech, self.audio) for name, s in satellites.items()]
+        self.audio = AudioServer(config.tools.satellite_audio_port)
+        self.links = [SatelliteLink(name, s, config, services, speech, self.audio) for name, s in config.tools.satellites.items()]
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:

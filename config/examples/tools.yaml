@@ -212,7 +212,7 @@ music:                             # Music Assistant (docs/music.md)
   duck_level: 20                   # music volume while someone talks to the assistant
 
 
-# ESPHome voice satellites (Stage 12; docs/stages.md and services/satellite1/README.md). The name is the
+# ESPHome voice satellites (Stage 12; docs/satellites.md). The name is the
 # device name: a music room whose `satellite:` is this name is its room. The key is the device's API
 # encryption key, set with `assistant secrets set SATELLITE1_API_KEY` (our build of its firmware uses it).
 satellites: {}
@@ -220,7 +220,7 @@ satellites: {}
 #    host: satellite1-xxxxxx.local
 #    key: "${SATELLITE1_API_KEY:-}"
 #    gain: 8           # its microphone is raised by this before speech detection
-#    audio_port: 8767  # where it fetches replies (plain HTTP on the LAN)
+# satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)
 
 mcp_servers:
   homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration
