@@ -406,6 +406,9 @@ def main(argv: list[str] | None = None) -> int:
         return _rotate_logs() or status
 
     if args.command == "web":
+        if args.config_dir:
+            # The app reads its secrets (the household password) from this folder's .env, not the default one.
+            os.environ["ASSISTANT_CONFIG_DIR"] = str(_config_dir(args.config_dir).resolve())
         try:
             files = find_tls_files(_config_dir(args.config_dir))
             info = validate(files) if files else None
