@@ -377,6 +377,9 @@ class AgentConfig(Schema):
     targets: dict[str, str] = Field(default_factory=dict)
     reply: str | None = None
     notify: NotifyStyle | None = None  # how a background result is announced; default_style if unset
+    # A LaunchAgent to restart when one of this agent's tasks is cancelled or times out: Hermes keeps
+    # retrying a cancelled job on its own (up to 45 minutes), stalling the next one (Bill, Stage 11).
+    restart_on_cancel: str | None = None
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> AgentConfig:
