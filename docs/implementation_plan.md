@@ -1,6 +1,6 @@
-# Home Voice Assistant: Implementation Plan (v1.3)
+# Home Voice Assistant: Implementation Plan (v1.4)
 
-Owner: Bill · Updated: 2026-11-02 (v1.3: Stage 13, satellites at household scale) · Companion to: *Home Voice Assistant Architecture* (`voice-pipeline-architecture.md`, currently v2.10)
+Owner: Bill · Updated: 2026-11-02 (v1.4: Stage 14, carried-over fixes; v1.3: Stage 13) · Companion to: *Home Voice Assistant Architecture* (`voice-pipeline-architecture.md`, currently v2.10)
 
 This plan is written for a coding agent. The pipeline is built first and is fully usable from the web client; the ESP32 satellites come last, as an optional stage. The architecture document says **what** to build and **why**; this plan says **in what order**, **what "done" means** at each stage, and **how approval works**. When the two disagree, stop and ask.
 
@@ -68,6 +68,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 11 | Hardening | not started | | | |
 | 12 | Satellites (optional) | not started | | | |
 | 13 | Satellites at household scale (optional) | not started | | | |
+| 14 | Carried-over fixes and checks | not started | | | |
 
 ## Stage N: <name>
 - Status:
@@ -416,6 +417,41 @@ The LaunchAgent listens on `127.0.0.1:8765`; unload it with
 - whether dashboard controls are open to every household login;
 - the wake-word arbitration window;
 - the architecture changes proposed in the decisions log (2026-11-02).
+
+### Stage 14: Carried-over fixes and checks
+
+**Goal:** the bugs and open checks left by Stages 10–12 are fixed or settled.
+
+**Why a stage of its own:** Bill approved Stage 12 with these open and moved them here (2026-11-02), so Stage 13 can start.
+
+**Scope:**
+
+*From Stage 12 (satellites):*
+- The router model (gemma-4-12b on the M2) fails tool calls: about 4 in 10 "set a timer" requests come back empty even with the retry, the rest write the call as text, and nearly every reply is padded with blank lines to the 200-token limit (13-16 s). Try a replacement for the router and Hermes under the one-copy rule (qwen3-coder-30b is already downloaded), and reword the empty-reply fallback so it can't be taken for a hearing problem.
+- By voice on the satellite: search, agents, home control and music (time, weather and timers work); answering a clarifying question without the wake word (the mic reopens, the answer is untested).
+- A long Hermes task by voice: "Hermes is working on that for you.", the result as a notification lighting the ring amber, "any notifications?" reading it and turning the ring off.
+- Replies to satellites streamed, so playback starts before the whole reply is synthesized.
+- The satellite's own wake-word check often rejects "Victoria" ("model predicts 'victoria', but VAD model doesn't").
+- The timer reply "1-minute timer set for 1 minute." repeats itself.
+- Home Assistant's own behaviour with the device: documented in docs/satellites.md; Bill's acceptance.
+- Every satellite moved over, after Bill's go-ahead (with Stage 13's fleet work).
+- Pipecat 1.15 deprecates PipelineTask/PipelineRunner (removed in 2.0): move the chat, voice, agent and satellite pipelines to PipelineWorker/WorkerRunner, with a live voice check.
+
+*From Stage 11 (hardening):*
+- One week of daily use, with issues logged and fixed or accepted by Bill.
+- The end-to-end benchmark of voice and text interactions, on the Mac mini.
+- The runbook (start, stop, update, restore, add a tool, add an agent), reviewed by Bill.
+- Crash and restart checks on the Mac mini.
+
+*From Stage 10 (music):*
+- Sound from Safari after the switch to PCM.
+- Spotify.
+- The Alexa relay.
+- Ducking by voice.
+
+**Done criteria:** each item above is fixed and checked, or Bill accepts it as it is (recorded in the decisions log).
+
+**Blocking decisions:** which router model to try; whether the M2 or the Mac mini is the place to judge it.
 
 ## 5. Later (not scheduled)
 

@@ -16,8 +16,9 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 9 | Home control | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 10 | Music | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 11 | Hardening | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
-| 12 | Satellites (optional) | in progress | 2026-11-01 | | |
+| 12 | Satellites (optional) | approved | 2026-11-01 | | Bill / 2026-11-02 |
 | 13 | Satellites at household scale (optional) | not started | | | |
+| 14 | Carried-over fixes and checks | not started | | | |
 
 ## Stage 0: Tracker, instructions, repo
 - Status: approved
@@ -278,13 +279,13 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 11"), before three done criteria were met. Carried over: one week of daily use with issues logged; the end-to-end benchmark (on the target Mac mini, at the end); the runbook (not written yet) and its review; the crash checks on the Mac mini; weather's home location in `config/tools.yaml`.
 
 ## Stage 12: Satellites (optional)
-- Status: in progress
+- Status: approved
 - Done criteria:
   - [x] Compatibility findings reviewed by Bill, and the adapter approach agreed, before adapter code is written. Agreed 2026-11-01 (decisions log).
   - [ ] One satellite handles wake word → command → reply for timers, weather, search, agents, home control, and music.
   - [ ] Pending notifications light the satellite.
-  - [ ] Clarifying questions reopen the mic without the wake word (or the documented fallback works).
-  - [ ] A timer rings on the right device and stops by voice or button.
+  - [x] Clarifying questions reopen the mic without the wake word (or the documented fallback works). The follow-up turn opened with no wake word (19:19:00); answering it is carried to Stage 14.
+  - [x] A timer rings on the right device and stops by voice or button. By voice, 2026-11-02 18:54: the ring showed the countdown, rang, and stopped on "stop".
   - [ ] Home Assistant's own behaviour with the device is documented and acceptable to Bill.
   - [ ] After Bill's go-ahead, all satellites are moved over.
 - Blocking decisions: the outcome of the compatibility checks.
@@ -306,7 +307,8 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Adapter built (2026-11-02, not yet tried end to end by voice): `src/victoria_voice_assistant/satellite/esphome.py`, configured under `satellites:` in `tools.yaml` (`aioesphomeapi` 46). Under launchd it connected to the office satellite once the speech models loaded (`satellite_connected`). `tests/test_satellite.py` (8 tests, no device or speech models): FLAC at 48 kHz mono, the microphone gain, the reply server, the voice events of a turn from wake word to reply (with "continue conversation" when a question is open), an announcement when no turn is open, a wake with no speech, an aborted turn, and timers mirrored to the device.
   - Review and cleanup pass (2026-11-02): tests no longer restart the real Hermes LaunchAgent (the example config's `restart_on_cancel` made the Hermes cancel and timeout tests run `launchctl kickstart -k`; now stubbed for every test); a reconnect could be ended by the previous connection's late stop (fixed); README, `docs/secrets.md` (`SATELLITE1_API_KEY`), the Satellite1 README (Home Assistant doesn't connect; the microphone channel change) and the example `tools.yaml` (no satellite on by default) brought up to date. Noted for later, not done: Pipecat 1.15 deprecates `PipelineTask`/`PipelineRunner` for `PipelineWorker`/`WorkerRunner` (removed in 2.0); moving the chat, voice, agent and satellite pipelines needs a live voice check.
   - Pending-notification light (2026-11-02): the satellite's own "LED Ring" light glows amber (`pending_color`, default `#FFA000`; null leaves the ring alone) while notifications are unread for its device, and goes off when none are. The firmware shows that ring whenever the satellite is idle, and its voice animations take over during a turn. Checked on the device: the assistant set the ring off on connect (nothing unread); a direct command turned it on (state read back: on, RGB 1.0/0.63/0.0, brightness 0.6) and off again. Tests: the ring follows the unread list, with nothing sent when it doesn't change, and is left alone with no ring or no colour. Not yet seen end to end with a real notification (an agent result started from the satellite).
-- Bill's review notes:
+  - Voice tests, 2026-11-02: "Hey Viki, what time is it?" answered ("It's 1:53 PM."); a one-minute timer counted down on the ring, rang and stopped by voice; "Set a timer." asked "How long should the timer be?" after the empty-reply retry, then the unanswered follow-up left the satellite waiting (fixed: no-speech turns end with RUN_END alone); a later "Set a timer." failed both model tries (the router model; carried).
+- Bill's review notes: Approved by Bill / 2026-11-02 ("aporve phase 12"), with the open items moved to Stage 14 ("lets move the remaining bugs/issues to phase 14"): wake word → command → reply for search, agents, home control and music; the pending light with a real notification; answering a clarifying question; Home Assistant's behaviour accepted; all satellites moved over; plus the router model's failures, streamed replies, the satellite's own wake-word check, and the timer reply wording.
 
 ## Stage 13: Satellites at household scale (optional)
 - Status: not started
@@ -326,6 +328,30 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - whether dashboard controls are open to every household login;
   - the wake-word arbitration window;
   - the architecture changes proposed in the decisions log (2026-11-02).
+- Evidence:
+- Bill's review notes:
+
+## Stage 14: Carried-over fixes and checks
+- Status: not started
+- Done criteria: each item is fixed and checked, or accepted by Bill as it is.
+  - [ ] The router model (gemma-4-12b on the M2) fails tool calls: about 4 in 10 "set a timer" requests come back empty even with the retry, the rest write the call as text, and nearly every reply is padded with blank lines to the 200-token limit (13-16 s). Try a replacement for the router and Hermes under the one-copy rule (qwen3-coder-30b is already downloaded), and reword the empty-reply fallback so it can't be taken for a hearing problem.
+  - [ ] By voice on the satellite: search, agents, home control and music (time, weather and timers work); answering a clarifying question without the wake word (the mic reopens, the answer is untested).
+  - [ ] A long Hermes task by voice: "Hermes is working on that for you.", the result as a notification lighting the ring amber, "any notifications?" reading it and turning the ring off.
+  - [ ] Replies to satellites streamed, so playback starts before the whole reply is synthesized.
+  - [ ] The satellite's own wake-word check often rejects "Victoria" ("model predicts 'victoria', but VAD model doesn't").
+  - [ ] The timer reply "1-minute timer set for 1 minute." repeats itself.
+  - [ ] Home Assistant's own behaviour with the device: documented in docs/satellites.md; Bill's acceptance.
+  - [ ] Every satellite moved over, after Bill's go-ahead (with Stage 13's fleet work).
+  - [ ] Pipecat 1.15 deprecates PipelineTask/PipelineRunner (removed in 2.0): move the chat, voice, agent and satellite pipelines to PipelineWorker/WorkerRunner, with a live voice check.
+  - [ ] One week of daily use, with issues logged and fixed or accepted by Bill.
+  - [ ] The end-to-end benchmark of voice and text interactions, on the Mac mini.
+  - [ ] The runbook (start, stop, update, restore, add a tool, add an agent), reviewed by Bill.
+  - [ ] Crash and restart checks on the Mac mini.
+  - [ ] Sound from Safari after the switch to PCM.
+  - [ ] Spotify.
+  - [ ] The Alexa relay.
+  - [ ] Ducking by voice.
+- Blocking decisions: which router model to try; whether the M2 or the Mac mini is the place to judge it.
 - Evidence:
 - Bill's review notes:
 
@@ -425,3 +451,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-02 | 12 | Refines the previous row: a quick answer is the reply, and only a long task is acknowledged. Tool calls by the router already reply directly. For an agent handoff, the turn waits for the agent (`wait` mode, or `auto` up to `wait_s`, 8 s for Hermes and Claude) and speaks its result or error as the reply. Only once `wait_s` passes, or at once for a `background` agent, does it say "<Agent> is working on that for you." and end the turn; the result then comes as a notification. An agent's question, a cancel or a timeout also ends the wait. Dashboard retry and re-send acknowledge at once. Supersedes the always-acknowledge wording in the previous row; the §10.1 proposal stands, with this behaviour. | Bill / 2026-11-02: "any of the simple requewts, lthat uses a tool from teh first model / decision model shoudl just respond right away, the only time you should say \"agent is workign on this\" is if we hand off a long running task to another agent" |
 | 2026-11-02 | 12 | Architecture updated to v2.10, and the plan's header and secrets rule to match: §10.1 handoff (a quick answer is the reply; only a long task is acknowledged), §7 one loaded copy per model with `context_length`, §3 local agents share the assistant's copy, §8 weather home as secrets, §12 eviction risk. The Stage 13 architecture proposals are not included (still awaiting Bill). | Bill / 2026-11-02: "yes, upgrade the architecture document andthe implmentation plan too if necessary" |
 | 2026-11-02 | 12 | An empty model reply is asked for once more before "Sorry, I didn't get that." Found by sending the router's own request for "Set a timer." to LM Studio 8 times: gemma-4-12b never made a proper tool call (5 wrote it as text, which the Stage 11 cleaner turns into the question; 3 gave only blank lines, so no reply), and 7 of 8 padded to the 200-token limit with blank lines (13-16 s; the clean run took 3 s). LM Studio rejects a stop sequence for this model. The model's speed and tool calls stay open for the model choice on the Mac mini. | Bill / 2026-11-02: "Retry empty replies" |
+| 2026-11-02 | 12 | Stage 12 approved by Bill, with its open items and the bugs found in testing moved to a new Stage 14 (carried-over fixes and checks, plan v1.4), together with the items Stages 10 and 11 carried. Stage 13 starts next. | Bill / 2026-11-02: "lets move the remaining bugs/issues to phase 14,  aporve phase 12 and move on to phase 13" |
