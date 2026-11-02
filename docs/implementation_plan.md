@@ -1,6 +1,6 @@
 # Home Voice Assistant: Implementation Plan (v1.3)
 
-Owner: Bill · Updated: 2026-11-02 (v1.3: Stage 13, satellites at household scale) · Companion to: *Home Voice Assistant Architecture* (`voice-pipeline-architecture.md`, currently v2.9)
+Owner: Bill · Updated: 2026-11-02 (v1.3: Stage 13, satellites at household scale) · Companion to: *Home Voice Assistant Architecture* (`voice-pipeline-architecture.md`, currently v2.10)
 
 This plan is written for a coding agent. The pipeline is built first and is fully usable from the web client; the ESP32 satellites come last, as an optional stage. The architecture document says **what** to build and **why**; this plan says **in what order**, **what "done" means** at each stage, and **how approval works**. When the two disagree, stop and ask.
 
@@ -26,7 +26,7 @@ Stage statuses: `not started` → `in progress` → `ready for review` → `appr
 - **Python virtual environments.** Every Python environment (service, web interface, spikes) is a virtual environment managed by uv (`uv venv` + `uv sync` from `pyproject.toml` + lock file, interpreter pinned to 3.12). Never install packages into the system Python. `uv run` is the way to execute everything.
 - **Python 3.12+, managed with `uv`, every dependency pinned in the lock file.** The web client uses TypeScript with Vite.
 - **Pipecat built-ins first.** Use Pipecat's own feature wherever one exists (architecture §11 lists them). Replace a built-in only with measured evidence, recorded in the decisions log.
-- **Secrets** come from environment variables, never from config files or the repo.
+- **Secrets** are kept in the macOS Keychain and run from `config/.env` (git-ignored, never committed); config names them as `${NAME}`. Never in config files or the repo (`docs/secrets.md`).
 - **Tests:** each stage adds automated tests for what it builds. Tests that need hardware or a running model are marked so they can be skipped in a quick run.
 - **Latency is measured, not assumed.** From Stage 3 on, every request logs per-stage timings.
 - **Config is the interface.** Behaviour that the architecture puts in `models.yaml`, `tools.yaml`, or `agents.yaml` is configured there, not hard-coded.

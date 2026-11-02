@@ -1,6 +1,6 @@
-# Home Voice Assistant Architecture (Draft v2.9)
+# Home Voice Assistant Architecture (Draft v2.10)
 
-Owner: Bill · Updated: 2026-10-24 · Status: draft; open items in §13
+Owner: Bill · Updated: 2026-11-02 (v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
 
 ## 1. Goal
 
@@ -38,7 +38,7 @@ Version 1 runs on a Mac mini, M4 Pro, 64 GB unified memory.
 - **Music Assistant (external):** open-source music server that connects to Spotify and Plex and plays to speakers in each room. It runs wherever suits it best (for example as the Home Assistant add-on, or on another Linux machine), not necessarily on the Mac mini. The assistant only needs its URL and token (§8, built-in music).
 - **Plex Media Server:** existing music library, wherever it runs today.
 - **Web interface:** a separate process that serves the example web client for chat and voice, and handles login and HTTPS (§4.1).
-- **Agents:** Hermes and other agent harnesses run on the Mac mini as their own services. Agents that use a local model get it from LM Studio; cloud models are reached directly.
+- **Agents:** Hermes and other agent harnesses run on the Mac mini as their own services. Agents that use a local model get it from LM Studio, sharing the assistant's loaded copy of the same model; cloud models are reached directly.
 
 ### Runtime: native first, no Docker
 
@@ -262,6 +262,7 @@ models:
     params: { temperature: 0.2, max_tokens: 200 }
     timeout_s: 5
     pin: true                         # load at startup, never evict
+    context_length: 65536             # one copy serves every entry naming this model, and local agents
   fast-small:
     server: lmstudio
     model: <small-MLX-id>
@@ -315,6 +316,7 @@ roles:
 Notes:
 
 - **Pinning in LM Studio:** by default, LM Studio unloads idle models after a timeout, and loading a second on-demand model evicts the first. Either could put a multi-second model load in front of a voice request. Models marked `pin: true` are loaded at startup with `lms load` (no idle timeout), which on-demand loading doesn't evict.
+- **One loaded copy per model:** every entry that names the same model, and any local agent using it (Hermes), shares one copy, loaded once with the largest `context_length` any of them asks for. A model already loaded is used as it is, under whatever identifier and idle timeout it has; the assistant never loads a second copy. Several requests share a copy through LM Studio's parallel slots. (Decisions log, 2026-11-02: three copies of one model on the dev machine had pushed most of it into swap.)
 - **Claude:** Anthropic offers an OpenAI-compatible endpoint (`https://api.anthropic.com/v1/`), but describes it as intended for testing rather than production, and it doesn't support prompt caching. The native `anthropic` server type is preferred. Some Claude models also reject certain sampling parameters, so each model's `params` are kept per model rather than global.
 - **Prices** are entered from the provider's current price list and used only for our own spend tracking.
 - **Secrets** come from the environment or `config/.env` (`${…}`), never from the file itself. They are kept in the macOS Keychain (`assistant secrets set NAME`).
@@ -461,7 +463,7 @@ search:
 
 weather:
   provider: open-meteo               # no API key needed
-  home: { name: Home, lat: 0.0, lon: 0.0 }   # set to our location
+  home: { name: Home, lat: "${WEATHER_HOME_LAT}", lon: "${WEATHER_HOME_LON}" }   # personal, so kept as secrets
   units: imperial
   cache_ttl_s: 600
 
@@ -654,12 +656,13 @@ Permissions belong to each agent's own configuration. Voice is an unauthenticate
 
 ### 10.1 Handoff
 
-1. Kokoro says a short acknowledgement ("Asking Claude").
-2. Depending on the agent's `mode`:
-   - `wait`: stream the result when it arrives.
-   - `background`: "I'll let you know when it's done." The device returns to idle.
-   - `auto`: wait up to `wait_s`, then switch to background.
-3. Background results, agent questions, and errors become **notifications** (below). They are never just spoken into an empty room and lost.
+A quick answer is the reply; only a long task is acknowledged (decisions log, 2026-11-02). Requests the fast model answers with its own tools reply directly as always. For a handoff to an agent, depending on its `mode`:
+
+- `wait`: the turn waits, and the agent's result (or error) is spoken as the reply.
+- `auto`: the same for up to `wait_s`. If the agent hasn't finished by then, Kokoro says "Hermes is working on that for you." and the device returns to idle.
+- `background`: a long task by definition. "Hermes is working on that for you." at once, and the device returns to idle.
+
+The wait also ends early, with the same acknowledgement, if the agent asks a question, or the task is cancelled or times out. Results that arrive after the turn has ended, agent questions, and errors become **notifications** (below). They are never just spoken into an empty room and lost. The dashboard's retry and re-send aren't a conversation turn, so they acknowledge at once. Relays such as Alexa keep their own reply ("Asking Alexa.").
 
 ### 10.2 Task lifecycle
 
@@ -756,7 +759,7 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 ## 12. Risks and decisions
 
 - **Satellite ownership (highest risk for the satellite phase; doesn't affect the core pipeline):** the satellites were set up with Home Assistant, whose ESPHome integration is already connected to each one. My understanding is that voice-assistant requests go to a single subscribed client, so Home Assistant and this service would compete. Test with one Satellite1 first. Likely outcome: this service owns voice and Home Assistant's voice pipeline is disabled for that device. Fallback: customize the Satellite1's ESPHome YAML. *Resolved in Stage 12 (decisions log, 2026-11-01): the assistant alone connects, with an API key built into our firmware; Home Assistant no longer connects to the satellite.*
-- **Model eviction:** an unpinned model in LM Studio can be unloaded and cost seconds to reload. Pin the router models and check memory when adding local agent models.
+- **Model eviction:** an unpinned model in LM Studio can be unloaded and cost seconds to reload. Pin the router models, keep one loaded copy per model (§7), and check memory when adding local agent models.
 - **Follow-up listening and announcements on satellites:** clarify, confirm, agent questions, and background results all need the device to reopen its mic or play unprompted audio. Include both in the device test. *Both work on the Satellite1 (Stage 12).*
 - **Agent name recognition:** Whisper may mishear agent names ("Claude" as "cloud"). List aliases, and pass agent names to Whisper as an initial prompt to bias recognition.
 - **Cloud data and cost:** cloud agents receive request text and whatever `share_context` allows. Set a monthly spend limit on the Anthropic account.
