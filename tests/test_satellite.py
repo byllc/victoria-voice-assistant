@@ -29,6 +29,7 @@ class FakeClient:
         self.events: list[tuple[Any, dict[str, str] | None]] = []
         self.announcements: list[dict[str, Any]] = []
         self.timer_events: list[tuple[Any, ...]] = []
+        self.lights: list[tuple[int, dict[str, Any]]] = []
 
     def send_voice_assistant_event(self, event: Any, data: dict[str, str] | None) -> None:
         self.events.append((event, data))
@@ -38,6 +39,9 @@ class FakeClient:
 
     def send_voice_assistant_timer_event(self, *args: Any) -> None:
         self.timer_events.append(args)
+
+    def light_command(self, key: int, **kwargs: Any) -> None:
+        self.lights.append((key, kwargs))
 
     def kinds(self) -> list[Any]:
         return [event for event, _ in self.events]
@@ -58,13 +62,13 @@ def _speech(seconds: float, rate: int) -> bytes:
     return (np.sin(2 * np.pi * 440 * t) * 8000).astype(np.int16).tobytes()
 
 
-def _session(example_config_dir: Path, timers: TimerService | None = None) -> tuple[SatelliteSession, FakeClient]:
+def _session(example_config_dir: Path, timers: TimerService | None = None, ring_key: int | None = 42) -> tuple[SatelliteSession, FakeClient]:
     config = load_config(example_config_dir)
     services = Services(timers=timers or TimerService(TimersConfig()), weather=WeatherService(WeatherConfig()))
     client = FakeClient()
     session = SatelliteSession(
         "office", SatelliteConfig(host="satellite.local"), client, config, services,
-        FakeSpeech(), AudioServer(8767), "10.0.0.5",  # type: ignore[arg-type]
+        FakeSpeech(), AudioServer(8767), "10.0.0.5", ring_key=ring_key,  # type: ignore[arg-type]
     )
     return session, client
 
@@ -197,3 +201,32 @@ def test_timers_are_mirrored_to_the_device(example_config_dir: Path) -> None:
     assert started[0] == T.VOICE_ASSISTANT_TIMER_STARTED and started[2:] == ("pasta", 60, 60, True)
     assert updated[0] == T.VOICE_ASSISTANT_TIMER_UPDATED and updated[2:] == ("pasta", 60, 50, True)
     assert cancelled[0] == T.VOICE_ASSISTANT_TIMER_CANCELLED and cancelled[1] == started[1]
+
+
+def test_unread_notifications_light_the_ring_until_read(example_config_dir: Path) -> None:
+    async def scenario() -> FakeClient:
+        session, client = _session(example_config_dir)
+        await session.outlet.show([])  # on connect, nothing unread: the ring is turned off
+        await session.outlet.show([object(), object()])  # type: ignore[list-item]
+        await session.outlet.show([object()])  # type: ignore[list-item]  # still on: nothing sent
+        await session.outlet.show([])
+        return client
+
+    client = asyncio.run(scenario())
+    assert client.lights == [
+        (42, {"state": False}),
+        (42, {"state": True, "rgb": (1.0, 160 / 255, 0.0), "brightness": 0.6}),
+        (42, {"state": False}),
+    ]
+
+
+def test_no_ring_or_no_colour_leaves_the_light_alone(example_config_dir: Path) -> None:
+    async def scenario() -> list[FakeClient]:
+        no_ring, first = _session(example_config_dir, ring_key=None)
+        await no_ring.outlet.show([object()])  # type: ignore[list-item]
+        off, second = _session(example_config_dir)
+        off.settings = off.settings.model_copy(update={"pending_color": None})
+        await off.outlet.show([object()])  # type: ignore[list-item]
+        return [first, second]
+
+    assert [client.lights for client in asyncio.run(scenario())] == [[], []]

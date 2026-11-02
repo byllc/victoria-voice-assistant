@@ -271,7 +271,7 @@ class SatelliteOutlet:
         await self.session.say(announcement.text)
 
     async def show(self, unread: list[Notification]) -> None:
-        return None
+        self.session.set_pending_light(bool(unread))
 
 
 # One connected satellite -------------------------------------------------------------------------
@@ -290,8 +290,11 @@ class SatelliteSession:
         speech: SpeechModels,
         audio: AudioServer,
         audio_host: str,
+        ring_key: int | None = None,
     ) -> None:
         self.name = name
+        self.ring_key = ring_key  # the device's user-facing "LED Ring" light, for the pending indicator
+        self._ring_on: bool | None = None
         self.settings = settings
         self.client = client
         self.services = services
@@ -368,6 +371,25 @@ class SatelliteSession:
             self.client.send_voice_assistant_event(event, data)
         except Exception as exc:  # noqa: BLE001 - the connection dropped; the link reconnects
             logger.warning("Satellite event not sent", extra={"event": "satellite_send_failed", "device": self.name, "reason": str(exc)})
+
+    def set_pending_light(self, on: bool) -> None:
+        """Light the LED ring while notifications are unread here. The firmware shows it whenever the
+        satellite is idle; its voice animations take over during a turn."""
+        color = self.settings.pending_color
+        if self.ring_key is None or color is None or on == self._ring_on:
+            return
+        self._ring_on = on
+        try:
+            if on:
+                rgb = tuple(int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
+                self.client.light_command(self.ring_key, state=True, rgb=rgb, brightness=0.6)
+            else:
+                self.client.light_command(self.ring_key, state=False)
+        except Exception as exc:  # noqa: BLE001 - the connection dropped; the link reconnects
+            self._ring_on = None
+            logger.warning("Satellite light not set", extra={"event": "satellite_send_failed", "device": self.name, "reason": str(exc)})
+            return
+        logger.info("Satellite pending light", extra={"event": "satellite_pending_light", "device": self.name, "status": "on" if on else "off"})
 
     def busy(self) -> bool:
         return self.run is not None or not self.state.idle() or self.output.collecting or self.delivering
@@ -593,9 +615,11 @@ class SatelliteLink:
                 self.connected = True
                 delay = 2.0
                 logger.info("Satellite connected", extra={"event": "satellite_connected", "device": self.name})
+                entities, _services = await client.list_entities_services()
+                ring = next((e.key for e in entities if type(e).__name__ == "LightInfo" and e.object_id == "led_ring"), None)
                 session = SatelliteSession(
                     self.name, self.settings, client, self.config, self.services, self.speech, self.audio,
-                    await asyncio.to_thread(local_address, self.settings.host),
+                    await asyncio.to_thread(local_address, self.settings.host), ring_key=ring,
                 )
                 await session.run_until_disconnected(disconnected)
                 logger.warning("Satellite disconnected", extra={"event": "satellite_disconnected", "device": self.name})

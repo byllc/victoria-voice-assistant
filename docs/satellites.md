@@ -48,6 +48,7 @@ satellites:
     key: "${SATELLITE1_API_KEY}"
 #   port: 6053      # the ESPHome API port
 #   gain: 8         # the microphone is raised by this before speech detection (its clean channel is quiet)
+#   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
 ```
 
@@ -100,13 +101,14 @@ The Mac mini runs the assistant in the end; the satellites don't change.
 - **Timers** ring on the satellite that set them, and its LED ring shows the time left. To stop one, say "stop" without the wake word (the firmware listens for it only while a timer rings), or press the action button. *Not yet tried by voice.*
 - **Volume:** the up and down buttons. The LED ring shows the level.
 - **Mute:** the left button mutes the microphones in hardware. A red light by the microphones shows it's muted.
-- **Notifications** are read out as announcements when they arrive. *The pending-notification light on the LED ring isn't built yet (a Stage 12 done criterion).*
+- **Notifications** are read out as announcements when they arrive. While any are unread for the satellite's room, its LED ring glows amber (`pending_color`; `null` turns it off). "Any notifications?" reads them, and the ring goes off.
 
 ### The LED ring
 
 | Ring | Meaning |
 |---|---|
-| Off (or your chosen colour) | Idle, waiting for the wake word |
+| Off | Idle, waiting for the wake word |
+| Steady amber | Idle, with unread notifications |
 | Slow clockwise spin | Woken, waiting for you to speak |
 | Fast clockwise spin | Listening |
 | Two blinking lights | Thinking |

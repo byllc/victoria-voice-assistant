@@ -301,6 +301,9 @@ class SatelliteConfig(Schema):
     # Its microphone level is raised by this factor before speech detection: the Satellite1's clean
     # (unclipped) channel is quiet (Stage 12 findings).
     gain: float = Field(default=8.0, gt=0, le=64)
+    # The LED ring's colour while notifications are unread for this satellite (architecture §10.3's
+    # pending indicator); null leaves the ring alone.
+    pending_color: str | None = Field(default="#FFA000", pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class ToolTestGiven(Schema):
