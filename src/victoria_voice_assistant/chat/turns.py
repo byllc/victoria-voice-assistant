@@ -11,10 +11,14 @@ from pipecat.frames.frames import (
     Frame,
     FunctionCallsStartedFrame,
     InputTransportMessageFrame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
     LLMMessagesAppendFrame,
+    LLMTextFrame,
     OutputTransportMessageFrame,
 )
+from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime
@@ -24,6 +28,13 @@ from victoria_voice_assistant.tools.music import MusicService
 from victoria_voice_assistant.tools.timers import TimerService
 
 logger = logging.getLogger(__name__)
+
+EMPTY_REPLY = "Sorry, I didn't get that. Could you say it another way?"
+# Control tokens the local model sometimes leaks into its text, like "<|channel>::" (gemma-4-12b).
+CONTROL_TOKENS = re.compile(r"<\|?/?[a-z_\"]+\|?>:*")  # also its quote token, <|"|>
+ROLE_NOISE = re.compile(r"[\s:]*(?:(?:user|model|assistant)[\s:]*)*")
+WRITTEN_CALL = re.compile(r"call:(\w+)\{(.*)\}", re.DOTALL)
+MIN_LETTERS = 8  # a reply's opening is held until it has this many letters of real text
 
 YES = {
     "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "please", "yes please", "do it", "go ahead",
@@ -76,9 +87,11 @@ class TurnPreprocessor(FrameProcessor):
         agents: AgentRunner | None = None,
         notifications: NotificationService | None = None,
         music: MusicService | None = None,
+        context: LLMContext | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.context = context
         self.state = state
         self.runtime = runtime
         self.timers = timers
@@ -158,6 +171,12 @@ class TurnPreprocessor(FrameProcessor):
             return True
         pending = self.state.take_pending()
         if pending is None:
+            stray = match_yes_no(text)
+            if stray is not None and not self._last_reply_asked():
+                # Nothing was asked: a yes or no on its own (often heard by mistake) gets a short answer.
+                reply = "Okay." if stray == "no" else "There's nothing waiting for a yes. What would you like?"
+                await self._reply(text, reply, "stray_yes_no", started)
+                return True
             return await self._agent_address(text, started)
         if pending.kind == "clarify":
             self.state.answering_clarify = True
@@ -233,6 +252,16 @@ class TurnPreprocessor(FrameProcessor):
         await self.push_frame(OutputTransportMessageFrame(message={"type": "token", "text": reply}))
         await self.push_frame(OutputTransportMessageFrame(message={"type": "done"}))
 
+    def _last_reply_asked(self) -> bool:
+        """Whether the assistant's last reply asked something (a yes there may answer it in plain text)."""
+        if self.context is None:
+            return True  # can't tell: let the model decide
+        for message in reversed(self.context.get_messages()):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                content = message.get("content")
+                return isinstance(content, str) and content.rstrip().endswith("?")
+        return False
+
     async def _reply(self, user_text: str, reply: str, handled_by: str, started: float) -> None:
         """Answer with no model call."""
         await self._deliver(user_text, reply)
@@ -259,21 +288,78 @@ def _user_text(frame: LLMMessagesAppendFrame) -> str | None:
 class TurnTracker(FrameProcessor):
     """Placed right after the LLM: counts the tool calls and model replies a request is waiting on.
 
-    When the last one finishes, the next waiting message is released.
+    When the last one finishes, the next waiting message is released. It also guards what the local
+    model says (Stage 11): the start of each reply is held until it has a few real words, with leaked
+    control tokens ("<|channel>::", "::user<channel|>user") removed, and a reply of nothing but those
+    (or nothing at all) becomes EMPTY_REPLY rather than silence or garbage.
     """
 
     def __init__(self, state: SessionState, preprocessor: TurnPreprocessor, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.preprocessor = preprocessor
+        self._held: list[str] | None = None  # the reply's opening text, until it has real words
+        self._said_something = True
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        await self.push_frame(frame, direction)
         if direction != FrameDirection.DOWNSTREAM:
+            await self.push_frame(frame, direction)
             return
-        if isinstance(frame, FunctionCallsStartedFrame):
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._held, self._said_something = [], False
+        elif isinstance(frame, LLMTextFrame):
+            if self._held is not None:
+                self._held.append(frame.text)
+                opening = clean_reply("".join(self._held))
+                # A tool call written out as text ("call:clarify{...}") is held whole, to be read at the end.
+                if not opening.startswith("call:") and len(re.findall(r"[A-Za-z]", opening)) >= MIN_LETTERS:
+                    await self._release(frame)
+                return
+            if "<" in frame.text:
+                frame.text = CONTROL_TOKENS.sub("", frame.text)
+        elif isinstance(frame, InterruptionFrame):
+            self._held, self._said_something = None, True  # cut off by the user, not empty
+        elif isinstance(frame, FunctionCallsStartedFrame):
+            self._held, self._said_something = None, True  # a tool call: whatever came before it was noise
             self.state.tools_busy += len(frame.function_calls)
-        elif isinstance(frame, LLMFullResponseEndFrame) and not isinstance(frame, SpokenReplyEndFrame):
-            self.state.llm_busy -= 1
-            await self.preprocessor.release_next()
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            if self._held is not None:
+                await self._release(None)
+            if not self._said_something:
+                logger.warning("Model gave an empty reply", extra={"event": "empty_reply"})
+                await self.push_frame(LLMTextFrame(EMPTY_REPLY))
+                self._said_something = True
+            await self.push_frame(frame, direction)
+            if not isinstance(frame, SpokenReplyEndFrame):
+                self.state.llm_busy -= 1
+                await self.preprocessor.release_next()
+            return
+        await self.push_frame(frame, direction)
+
+    async def _release(self, frame: LLMTextFrame | None) -> None:
+        text = clean_reply("".join(self._held or []))
+        self._held = None
+        if text:
+            self._said_something = True
+            if frame is not None:
+                frame.text = text
+                await self.push_frame(frame)
+            else:
+                await self.push_frame(LLMTextFrame(text))
+
+
+def clean_reply(text: str) -> str:
+    """The reply without leaked control tokens, stray colons, or bare role names ("user")."""
+    text = CONTROL_TOKENS.sub("", text)
+    if ROLE_NOISE.fullmatch(text):
+        return ""
+    text = text.lstrip(": ")
+    written_call = WRITTEN_CALL.fullmatch(text.strip())
+    if written_call:
+        # The model wrote its tool call as text instead of making it. A clarifying question can still be
+        # asked; anything else can't be run from here, so it counts as no reply.
+        name, body = written_call.groups()
+        question = re.search(r"question\s*:\s*(.+?)\s*$", body)
+        return question.group(1).strip().strip('"') if name == "clarify" and question else ""
+    return text

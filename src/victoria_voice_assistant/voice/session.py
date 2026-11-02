@@ -208,8 +208,7 @@ class VoiceTurnPreprocessor(TurnPreprocessor):
     """
 
     def __init__(self, *args, context: LLMContext, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.context = context
+        super().__init__(*args, context=context, **kwargs)
         self._spoken_waiting: deque[str] = deque()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
