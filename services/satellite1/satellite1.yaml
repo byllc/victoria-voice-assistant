@@ -25,3 +25,10 @@ esphome:
       then:
         - micro_wake_word.disable_model: okay_nabu
         - micro_wake_word.disable_model: hey_jarvis
+
+# The voice assistant's audio clipped on channel 0 (Bill heard it distorted); channel 1, which the wake word
+# detector uses with a gain of 6, is much quieter. The voice goes to the assistant from channel 1, unamplified.
+voice_assistant:
+  microphone:
+    microphone: sat1_mics
+    channels: 1
