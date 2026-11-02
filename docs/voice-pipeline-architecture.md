@@ -62,7 +62,7 @@ Docker Desktop runs every container inside one always-on Linux VM, which costs m
 
 Everything starts under `launchd`, sleep is disabled via `pmset`, and models are loaded at startup and pinned (§7).
 
-**Configuration folder.** All configuration files live in a `config/` folder, never in the repository root: `config/models.yaml` (§7), `config/tools.yaml` (§8), `config/agents.yaml` (§9), `config/searxng/settings.yml`, and `config/.env` for secrets (git-ignored). The service reads `config/` by default, and `ASSISTANT_CONFIG_DIR` points it elsewhere. Throughout this document, `models.yaml`, `tools.yaml`, and `agents.yaml` mean the files in that folder.
+**Configuration folder.** All configuration files live in a `config/` folder, never in the repository root: `config/models.yaml` (§7), `config/tools.yaml` (§8), `config/agents.yaml` (§9), `config/searxng/settings.yml`, and `config/.env` for secrets (git-ignored; written from the macOS Keychain by `assistant secrets`, see `docs/secrets.md`). The service reads `config/` by default, and `ASSISTANT_CONFIG_DIR` points it elsewhere. Throughout this document, `models.yaml`, `tools.yaml`, and `agents.yaml` mean the files in that folder.
 
 | Component | Memory estimate |
 |---|---|
@@ -80,7 +80,7 @@ That leaves room for one mid-size local agent model (for example a ~30B model at
 
 ## 4. Components
 
-- **Satellite adapter:** the satellites run ESPHome firmware, and ESPHome devices don't dial out; a client connects *to* them over the ESPHome native API. The adapter does this with `aioesphomeapi`. It subscribes to voice-assistant requests, receives 16 kHz mono audio, drives the LED states, serves replies as an HTTP URL for the device's media player, and pushes announcements (timers, finished agent tasks). Device hardware and firmware choices, including a possible backend-neutral satellite protocol, are covered in Appendix A.
+- **Satellite adapter:** the satellites run ESPHome firmware, and ESPHome devices don't dial out; a client connects *to* them over the ESPHome native API. The adapter does this with `aioesphomeapi`. It subscribes to voice-assistant requests, receives 16 kHz mono audio, drives the LED states, serves replies as an HTTP URL for the device's media player (FLAC: the Satellite1 plays nothing else), and pushes announcements (timers, finished agent tasks). Device hardware and firmware choices, including a possible backend-neutral satellite protocol, are covered in Appendix A.
 - **Chat adapter:** WebRTC (Pipecat SmallWebRTC) for voice, with echo cancellation; a websocket for text and events. Used by the web client (§4.1) and any future app.
 - **Pipeline (Pipecat), in-process:** Silero VAD → `WhisperSTTServiceMLX` → address check → fast model → `KokoroTTSService`, streamed sentence by sentence.
 - **Model registry:** `models.yaml`: servers, models, pools of paid models, and the local decision engine (§7).
@@ -202,7 +202,7 @@ Target: tool-path reply starts within about 1.5 s of end of speech, plus the too
 - **Prompt caching:** system prompt and tool schemas are static and first, so the server can reuse the cached prefix every turn. Dynamic context goes after it.
 - **Built-in tools** (always present, not in config): `clarify(question, options)`, `ask_agent(agent, task)`, `offer_agent(agent, summary)`. These keep the output structured, so the pipeline never parses free text to decide what happened.
 - **Pending questions:** clarify, offer, and confirm store a question on the session with a ~10 s expiry. At most one clarifying question per request; if still unresolved, offer the default agent. Silence cancels.
-- **Follow-up listening:** satellites must reopen the mic after a question without a new wake word. To verify in the device test.
+- **Follow-up listening:** satellites must reopen the mic after a question without a new wake word. Verified on the Satellite1 (Stage 12): a reply marked "continue conversation" reopens it.
 - **Speech style:** replies are short and spoken-friendly; long results are summarized, with the full text sent to the chat client if one is open.
 
 ### How tool calling runs
@@ -317,7 +317,7 @@ Notes:
 - **Pinning in LM Studio:** by default, LM Studio unloads idle models after a timeout, and loading a second on-demand model evicts the first. Either could put a multi-second model load in front of a voice request. Models marked `pin: true` are loaded at startup with `lms load` (no idle timeout), which on-demand loading doesn't evict.
 - **Claude:** Anthropic offers an OpenAI-compatible endpoint (`https://api.anthropic.com/v1/`), but describes it as intended for testing rather than production, and it doesn't support prompt caching. The native `anthropic` server type is preferred. Some Claude models also reject certain sampling parameters, so each model's `params` are kept per model rather than global.
 - **Prices** are entered from the provider's current price list and used only for our own spend tracking.
-- **Secrets** come from the environment (`${…}`), never from the file itself.
+- **Secrets** come from the environment or `config/.env` (`${…}`), never from the file itself. They are kept in the macOS Keychain (`assistant secrets set NAME`).
 
 ### 7.1 Decision engine
 
@@ -435,7 +435,7 @@ tools:
     setup: >
       Pick an implementation and change `kind`: `mcp` with server `homeassistant`
       (Home Assistant's MCP Server integration), or `ha_service` for direct calls.
-      Add the Home Assistant URL under mcp_servers and set HA_TOKEN in the environment.
+      Add the Home Assistant URL under mcp_servers and run `assistant secrets set HA_TOKEN`.
     examples: ["turn off the kitchen lights", "is the heat on upstairs"]
 
   - name: lock_door
@@ -475,8 +475,8 @@ music:
   token: ${MUSIC_ASSISTANT_TOKEN}
   source_order: [plex, spotify]      # where to look when no source is named
   rooms:                             # satellite → speaker that plays music there
-    kitchen: { satellite: kitchen-sat, player: <music-assistant-player-id> }
-    office:  { satellite: office-sat,  player: <music-assistant-player-id> }
+    kitchen: { satellite: kitchen, player: <music-assistant-player-id> }   # names under satellites:
+    office:  { satellite: office,  player: <music-assistant-player-id> }
   duck_level: 20                     # music volume while the assistant listens or speaks
 
 mcp_servers:
@@ -541,7 +541,7 @@ Timers run inside the assistant service, so they work without the internet and r
 - **Actions:** start, cancel, add or remove time, status of one ("how long on the laundry?"), and status of all ("You have two timers: pasta, 4 minutes; laundry, 32 minutes").
 - **Ambiguity:** "cancel the timer" with more than one running gets a clarifying question listing them by name.
 - **Ringing:** the device plays the chime and speaks the name ("Your pasta timer is done") on repeat until stopped, or for `ring_max_s`. Several timers finishing together are announced together.
-- **Stopping:** saying "stop" without the wake word is the goal. ESPHome's micro wake word supports a "stop" model used for timers on other HA voice devices; whether the Satellite1 firmware enables it needs checking in the device test. Fallbacks: the wake word plus "stop", or the device's button.
+- **Stopping:** saying "stop" without the wake word is the goal. ESPHome's micro wake word supports a "stop" model used for timers on other HA voice devices; the Satellite1 firmware has one, enabled while a timer rings (found in Stage 12; still to be tried by voice). Fallbacks: the wake word plus "stop", or the device's button.
 - **Persistent:** timers are stored in SQLite so a service restart doesn't lose them.
 - **Chat client:** shows running timers with a live countdown.
 
@@ -755,9 +755,9 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 
 ## 12. Risks and decisions
 
-- **Satellite ownership (highest risk for the satellite phase; doesn't affect the core pipeline):** the satellites were set up with Home Assistant, whose ESPHome integration is already connected to each one. My understanding is that voice-assistant requests go to a single subscribed client, so Home Assistant and this service would compete. Test with one Satellite1 first. Likely outcome: this service owns voice and Home Assistant's voice pipeline is disabled for that device. Fallback: customize the Satellite1's ESPHome YAML.
+- **Satellite ownership (highest risk for the satellite phase; doesn't affect the core pipeline):** the satellites were set up with Home Assistant, whose ESPHome integration is already connected to each one. My understanding is that voice-assistant requests go to a single subscribed client, so Home Assistant and this service would compete. Test with one Satellite1 first. Likely outcome: this service owns voice and Home Assistant's voice pipeline is disabled for that device. Fallback: customize the Satellite1's ESPHome YAML. *Resolved in Stage 12 (decisions log, 2026-11-01): the assistant alone connects, with an API key built into our firmware; Home Assistant no longer connects to the satellite.*
 - **Model eviction:** an unpinned model in LM Studio can be unloaded and cost seconds to reload. Pin the router models and check memory when adding local agent models.
-- **Follow-up listening and announcements on satellites:** clarify, confirm, agent questions, and background results all need the device to reopen its mic or play unprompted audio. Include both in the device test.
+- **Follow-up listening and announcements on satellites:** clarify, confirm, agent questions, and background results all need the device to reopen its mic or play unprompted audio. Include both in the device test. *Both work on the Satellite1 (Stage 12).*
 - **Agent name recognition:** Whisper may mishear agent names ("Claude" as "cloud"). List aliases, and pass agent names to Whisper as an initial prompt to bias recognition.
 - **Cloud data and cost:** cloud agents receive request text and whatever `share_context` allows. Set a monthly spend limit on the Anthropic account.
 - **Search speed and reliability:** self-hosted SearXNG is slower than a paid search API, and upstream engines sometimes rate-limit or block metasearch traffic, which shows up as empty or partial results. Keep several engines configured, watch SearXNG's engine errors, and cache aggressively.
@@ -767,7 +767,7 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 - **Music and the microphone:** the Satellite1's echo cancellation can only remove audio it plays itself. Music from a separate speaker in the same room will make wake-word detection and transcription harder. Ducking helps; test with music playing at normal volume.
 - **Sendspin is experimental:** ESPHome marks its Sendspin component as experimental, and it isn't yet known whether it coexists with the voice assistant on one device. Prefer existing speakers for music in version 1.
 - **Spotify policy:** Spotify has tightened its developer API repeatedly. Going through Music Assistant keeps that dependency in one maintained project rather than in our code.
-- **Timer "stop" word:** if the Satellite1 can't listen for "stop" without the wake word, stopping a ringing timer is clumsier. Check in the device test.
+- **Timer "stop" word:** if the Satellite1 can't listen for "stop" without the wake word, stopping a ringing timer is clumsier. *Its firmware has a "stop" word, enabled while a timer rings (Stage 12; still to be tried by voice).*
 - **Tool sprawl:** the test command and the ~15-tool guideline are the guardrails.
 - **Single speech process:** a crash or a blocked event loop affects every device at once. Safeguards in §4.2.
 - **Shared GPU:** agents run on the same Mac mini, so a background agent generating with a local model competes with Whisper and the fast model for the GPU. A voice request during a long agent run will be slower. Measure this; if it matters, give the fast path priority by pausing background agent work during a voice turn, or move heavy agents to a cloud model.

@@ -1,9 +1,9 @@
 # Tools the fast model may call. Reloaded on save; an invalid tool becomes an
 # automatic stub (see `assistant tools status`) instead of rejecting the file.
 #
-# Kinds: builtin (timers, weather), python (`service: package.module:function`),
-# http (`http:` section), stub. mcp, ha_service and ha_script become automatic
-# stubs until their stage. Params take JSON Schema; `required: true` marks one
+# Kinds: builtin (timers, weather, search, music), python (`service: package.module:function`),
+# http (`http:` section), mcp and ha_service (Home Assistant; docs/home-assistant.md), stub.
+# ha_script is not built yet and becomes an automatic stub. Params take JSON Schema; `required: true` marks one
 # required. reply: { template: true } speaks the tool's own text,
 # { template: "..." } formats a string, { silent: true } says nothing; the
 # default is the model phrasing the result (a second model call).
@@ -208,8 +208,19 @@ music:                             # Music Assistant (docs/music.md)
   source_order: [plex, spotify]    # searched in this order unless the request names a source
   rooms: {}                        # optional: room names and aliases for players, and a satellite's room
   #  exercise room: { player: Exercise room speaker, aliases: [gym] }
-  #  office: { player: Bill's Mac mini, satellite: office-sat }
+  #  office: { player: Bill's Mac mini, satellite: office }
   duck_level: 20                   # music volume while someone talks to the assistant
+
+
+# ESPHome voice satellites (Stage 12; docs/stages.md and services/satellite1/README.md). The name is the
+# device name: a music room whose `satellite:` is this name is its room. The key is the device's API
+# encryption key, set with `assistant secrets set SATELLITE1_API_KEY` (our build of its firmware uses it).
+satellites: {}
+#  office:
+#    host: satellite1-xxxxxx.local
+#    key: "${SATELLITE1_API_KEY:-}"
+#    gain: 8           # its microphone is raised by this before speech detection
+#    audio_port: 8767  # where it fetches replies (plain HTTP on the LAN)
 
 mcp_servers:
   homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration

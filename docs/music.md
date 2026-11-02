@@ -33,7 +33,7 @@ Music plays where you say (Bill, 2026-11-01): "play Footprints in the exercise r
 ```yaml
 rooms:
   exercise room: { player: Exercise room speaker, aliases: [gym] }
-  office: { player: "Bill’s Mac mini", satellite: office-sat }
+  office: { player: "Bill’s Mac mini", satellite: office }
 ```
 
 ## The web app as a speaker and player

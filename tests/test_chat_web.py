@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 from pipecat.frames.frames import (
     EndFrame,
-    ErrorFrame,
     LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMMessagesAppendFrame,

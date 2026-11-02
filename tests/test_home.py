@@ -19,7 +19,7 @@ from victoria_voice_assistant.tools.home import (
     entities_from_registries,
     resolve,
 )
-from victoria_voice_assistant.tools.registry import Services, ToolContext, build_registry
+from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 

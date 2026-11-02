@@ -13,7 +13,7 @@ from victoria_voice_assistant.agents.spend import SpendEntry, SpendLog, cost_usd
 from victoria_voice_assistant.agents.tasks import TaskEvent, TaskService
 from victoria_voice_assistant.chat.llm import build_llm
 from victoria_voice_assistant.config.loader import load_config
-from victoria_voice_assistant.config.schema import AppConfig, ModelsConfig, TimersConfig, WeatherConfig
+from victoria_voice_assistant.config.schema import AppConfig, TimersConfig, WeatherConfig
 from victoria_voice_assistant.decider.engine import Decision
 from victoria_voice_assistant.storage.db import migrate
 from victoria_voice_assistant.tools.registry import Services

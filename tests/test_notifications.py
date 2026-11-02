@@ -469,7 +469,7 @@ def _question_runner(example_config_dir: Path, agent_name: str, timeout_min: flo
 
 def test_a_model_agent_asks_and_gets_an_answer(example_config_dir: Path) -> None:
     async def scenario():
-        runner, notifications, clock = _question_runner(example_config_dir, "helper")
+        runner, notifications, _clock = _question_runner(example_config_dir, "helper")
         answers = []
 
         async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
@@ -535,7 +535,7 @@ def test_a_harness_question_continues_with_the_exchange(example_config_dir: Path
         await _finish(runner)
         return calls, answered, runner.tasks.get(outcome.result["task_id"]), notifications
 
-    calls, answered, task, notifications = asyncio.run(scenario())
+    calls, answered, task, _notifications = asyncio.run(scenario())
     assert answered.speak == "Okay, I'll tell Hermes."
     assert calls == [
         None,
@@ -550,7 +550,7 @@ def test_a_harness_question_continues_with_the_exchange(example_config_dir: Path
 
 def test_questions_are_asked_at_once_unless_the_assistant_is_speaking() -> None:
     async def scenario():
-        service, clock = service_at(AFTERNOON)
+        service, _clock = service_at(AFTERNOON)
         speaker = FakeOutlet(speaks=True)
         speaker.is_busy = True  # mid-conversation, but not talking right now
         speaker.speaking = lambda: talking[0]  # type: ignore[method-assign]

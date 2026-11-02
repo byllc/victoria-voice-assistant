@@ -19,7 +19,7 @@ Work is organized into numbered stages in `docs/stages.md`, tracked per `docs/im
 ## Ground rules
 
 - Python 3.12+ with **uv**, always in a **uv-managed virtualenv** (`.venv` from `pyproject.toml`, pinned interpreter, locked deps). Never the system Python; use `uv run`. Web client: **TypeScript + Vite**.
-- Native processes under **launchd**; no Docker. Apple `container` only for agent sandboxes (stage 8+).
+- Native processes under **launchd**; no Docker. Apple `container` only for agent sandboxes (stage 7+).
 - Dev box is an **M2 Mac (32 GB)** with local test LLMs in LM Studio; the deployment target is a Mac mini M4 Pro (64 GB). M2 numbers are for design validation only.
 - **Pipecat built-ins first** (see architecture §11: `WhisperSTTServiceMLX`, `KokoroTTSService`, Silero VAD, Smart Turn, OpenAI LLM service, `LLMSwitcher`, `MCPClient`, SmallWebRTC). Replace a built-in only with measured evidence, recorded in the decisions log.
 - All config lives in **`config/`** (`models.yaml`, `tools.yaml`, `agents.yaml`, `config/searxng/`). Never in the repo root. Service default is `config/`, overridable by `ASSISTANT_CONFIG_DIR`. Committed examples go in `config/examples/`.

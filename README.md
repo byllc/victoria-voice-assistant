@@ -1,12 +1,12 @@
 # Victoria: a private household voice assistant
 
-Victoria is a local-first voice assistant for our home. It is meant to replace Alexa for everyday requests (timers, weather, the time, and later home control, music and search) and to hand bigger requests to AI agents such as Hermes and Claude. Speech recognition, speech synthesis and the everyday model all run on one Mac mini, so audio never leaves the house.
+Victoria is a local-first voice assistant for our home. It is meant to replace Alexa for everyday requests (timers, weather, the time, search, home control and music) and to hand bigger requests to AI agents such as Hermes and Claude. Speech recognition, speech synthesis and the everyday model all run on one Mac mini, so audio never leaves the house.
 
 Development happens on an M2 Mac with local test models. The target is a Mac mini (M4 Pro, 64 GB, macOS 26). Speed measured on the M2 isn't representative.
 
 ## How it works
 
-Two processes of ours, plus LM Studio for the language models:
+Two main processes of ours, plus LM Studio for the language models:
 
 ```
  browser / phone                     Mac mini
@@ -39,6 +39,13 @@ Two processes of ours, plus LM Studio for the language models:
 - **LM Studio** serves the local models through an OpenAI-compatible API. The `router` model answers everyday requests and calls tools; if it fails, the `router_fallback` model takes over.
 - **SearXNG** is a self-hosted metasearch engine, run natively on `127.0.0.1:8888`. `web_search` gets a few short snippets from it, and `web_read` reads one result page (plain HTTP first, a warm headless Chromium for pages that need JavaScript). Web text is passed to the model marked as untrusted.
 
+Optional, each set up in its own document:
+
+- **The decider** ([services/mlx-lm](services/mlx-lm/README.md)): a small local decision model on `127.0.0.1:8090`, served by mlx-lm.
+- **Agents:** Hermes ([docs/hermes.md](docs/hermes.md)) and Claude ([docs/claude-setup.md](docs/claude-setup.md)) take bigger requests; results come back as notifications ([docs/push.md](docs/push.md)).
+- **Home Assistant** for home control ([docs/home-assistant.md](docs/home-assistant.md)) and **Music Assistant** for music ([docs/music.md](docs/music.md)).
+- **Voice satellites** (Stage 12, in progress): a FutureProofHomes Satellite1 that the assistant connects to over ESPHome ([services/satellite1](services/satellite1/README.md)).
+
 ### What happens when you speak
 
 1. The browser streams your microphone over WebRTC to the assistant service.
@@ -52,9 +59,9 @@ Two processes of ours, plus LM Studio for the language models:
 
 Tools are declared in `config/tools.yaml` and reloaded when the file changes:
 
-- **Kinds:** `builtin` (timers, weather, web search), `python` (a function in this project), `http` (a REST call), and `stub` (planned but not built).
+- **Kinds:** `builtin` (timers, weather, web search, music), `python` (a function in this project), `http` (a REST call), `mcp` and `ha_service` (Home Assistant), and `stub` (planned but not built). `ha_script` isn't built yet and becomes an automatic stub.
 - **Stubs:** a stub speaks a short notice and sends its setup steps to the chat. A tool whose definition is broken or whose code can't be found becomes an automatic stub instead of breaking the file.
-- **Built-in tools:** `clarify` (ask one question), `offer_agent` and `ask_agent` are always present.
+- **Built-in tools:** `clarify` (ask one question), `offer_agent`, `ask_agent`, `tasks` and `notifications` are always present.
 
 ## Status
 
@@ -66,8 +73,13 @@ Work proceeds in numbered stages, each approved before the next starts. The live
 | 3 | Web interface and text chat | approved |
 | 4 | Tool registry, timers, weather | approved |
 | 5 | Voice in the browser | approved |
-| 6 | Local web search (SearXNG) | in progress: search works; review pending |
-| 7–12 | Agents and model pools, notifications and task dashboard, home control, music, hardening, satellites | not started |
+| 6 | Local web search (SearXNG) | approved |
+| 7 | Agents and model pools | approved |
+| 8 | Notifications and task dashboard | approved |
+| 9 | Home control | approved |
+| 10 | Music | approved |
+| 11 | Hardening: backups, log rotation, health checks, crash recovery | approved |
+| 12 | Satellites (optional) | in progress |
 
 ## Requirements
 
@@ -110,7 +122,7 @@ Open <http://localhost:8766>. Type to chat, or click **Start voice** and allow t
 
 The first `assistant serve` downloads the speech models: Whisper large-v3-turbo (about 1.6 GB) and Kokoro (about 330 MB). `curl http://127.0.0.1:8765/health` shows `"speech": "ready"` once voice can be used.
 
-Things to try: "set a pasta timer for ten minutes", "what timers do I have", "cancel the timer", "what's the weather tomorrow", "what time is it", "what's the latest news about the Artemis mission", "turn off the kitchen lights" (a stub: it sends its setup steps to the chat).
+Things to try: "set a pasta timer for ten minutes", "what timers do I have", "cancel the timer", "what's the weather tomorrow", "what time is it", "what's the latest news about the Artemis mission", "turn off the kitchen lights" (until Home Assistant is set up, it sends its setup steps to the chat).
 
 ### Login
 
@@ -132,9 +144,10 @@ Browsers allow the microphone only on HTTPS pages (or `localhost`). Put a certif
 uv run assistant launchd install --load        # assistant service
 uv run assistant launchd install-web --load    # web interface
 uv run assistant launchd install-searxng --load  # SearXNG
+uv run assistant launchd install-backup --load   # the daily job at 03:30: a backup, then log rotation
 ```
 
-Both restart automatically if they exit. Logs go to `~/Library/Logs/Victoria Voice Assistant/`. To restart after a code or certificate change:
+`install-decider` does the same for the decider. The services restart automatically if they exit. Logs go to `~/Library/Logs/Victoria Voice Assistant/`. To restart after a code or certificate change:
 
 ```sh
 launchctl kickstart -k gui/$(id -u)/com.victoria.voice-assistant
@@ -149,10 +162,11 @@ Everything lives in `config/` (or the directory in `ASSISTANT_CONFIG_DIR`); the 
 | File | What it holds |
 |---|---|
 | `models.yaml` | LM Studio and other servers, models and their parameters, roles (`router`, `router_fallback`), and `speech:` (Whisper model, Kokoro voice, VAD and turn-detection settings) |
-| `tools.yaml` | Tools, built-in service settings (weather, timers, search), and the phrases `tools test` checks |
+| `tools.yaml` | Tools, built-in service settings (weather, timers, search, notifications, music), Home Assistant's server (`mcp_servers`), satellites, and the phrases `tools test` checks |
 | `searxng/settings.yml` | SearXNG's settings: localhost only, JSON output, which engines, a short timeout |
-| `agents.yaml` | Agents and their aliases (used from Stage 7) |
+| `agents.yaml` | Agents, their aliases and relays |
 | `tls/` | The HTTPS certificate and key. Git-ignored. |
+| `.env` | Secrets, written from the Keychain by `assistant secrets` ([docs/secrets.md](docs/secrets.md)). Git-ignored and never committed. |
 
 Edits to the YAML files are picked up while the service runs. An invalid edit is rejected and logged, and the previous configuration stays in use.
 
@@ -168,9 +182,15 @@ With gemma models, keep `reasoning_effort: none` in each model's `params`. Witho
 | `assistant tools status` | List tools, which are stubs, and why |
 | `assistant tools test` | Send each example phrase to the router model and report what it did |
 | `assistant tls status` | Check the HTTPS certificate: key match, names, expiry |
+| `assistant secrets list` / `set` / `delete` / `sync` / `get` | Secrets in the Keychain and `config/.env` ([docs/secrets.md](docs/secrets.md)) |
+| `assistant push keys` / `status` | Set up phone alerts / list subscribed browsers ([docs/push.md](docs/push.md)) |
+| `assistant backup create` / `list` / `restore` | Back up the database and configuration (never secrets) / list / restore (stop the services first) |
+| `assistant logs rotate` | Compress and empty service logs over 5 MB, keeping 5 old copies |
+| `assistant daily` | A backup, then log rotation (what the backup LaunchAgent runs) |
 | `assistant voice bench` | Speak 20 commands over WebRTC and report latency by stage (for the target machine) |
 | `assistant searxng install` / `run` | Check out the pinned SearXNG and build its environment / run it |
-| `assistant launchd install` / `install-web` / `install-searxng` | Write (and with `--load`, start) the LaunchAgents |
+| `assistant decider install` / `run` | Build the decider's mlx-lm environment / run it |
+| `assistant launchd install` / `install-web` / `install-searxng` / `install-decider` / `install-backup` | Write (and with `--load`, start) the LaunchAgents |
 
 Run them with `uv run`, for example `uv run assistant tools status`.
 
@@ -198,3 +218,4 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.
 - [docs/claude-setup.md](docs/claude-setup.md): turning on the optional Claude agent (an API key; it's a stub until then).
 - [docs/hermes.md](docs/hermes.md): connecting the assistant to a Hermes Agent installation (any; `services/hermes/` is only a test setup).
+- [services/mlx-lm/README.md](services/mlx-lm/README.md), [services/searxng/README.md](services/searxng/README.md), [services/satellite1/README.md](services/satellite1/README.md): the decider, SearXNG, and the Satellite1 firmware.

@@ -132,7 +132,7 @@ def test_run_command_serves_the_weights_on_localhost(
 
 
 def test_run_command_refuses_remote_servers_and_missing_weights(example_models: ModelsConfig, tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="127.0.0.1"):
+    with pytest.raises(ValueError, match=r"127\.0\.0\.1"):
         mlxlm.run_command(_models(example_models, tmp_path, base_url="http://192.168.1.5:8090/v1"))
     with pytest.raises(FileNotFoundError, match="no MLX model"):
         mlxlm.run_command(_models(example_models, tmp_path, weights=tmp_path / "missing"))

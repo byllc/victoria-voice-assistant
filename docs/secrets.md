@@ -34,9 +34,10 @@ Restart the assistant (and the web process, for the web password) after changing
 | `ASSISTANT_WEB_PASSWORD` | The household login for the web interface | Choose one. Read by the web process at start | Only if you want a login; without it the web interface is open with a red banner |
 | `HERMES_API_KEY` | The Hermes gateway's key; the same value goes in Hermes's `API_SERVER_KEY` | Make one: `openssl rand -hex 32 \| uv run assistant secrets set HERMES_API_KEY` ([hermes.md](hermes.md)) | With a `harness` agent (Hermes) |
 | `ANTHROPIC_API_KEY` | Claude | Anthropic Console > API keys ([claude-setup.md](claude-setup.md)) | Only to turn Claude on |
-| `HA_TOKEN` | Home Assistant long-lived access token | Home Assistant > your profile > Security > Long-lived access tokens > Create token | For home control (Stage 9) |
+| `HA_TOKEN` | Home Assistant long-lived access token | Home Assistant > your profile > Security > Long-lived access tokens > Create token | For home control |
 | `VAPID_PRIVATE_KEY` | Web Push signing key | Made for you: `uv run assistant push keys` ([push.md](push.md)) | Only for phone alerts |
-| `MUSIC_ASSISTANT_TOKEN` | Music Assistant token | Music Assistant settings (Stage 10) | For music, once built |
+| `MUSIC_ASSISTANT_TOKEN` | Music Assistant token | Music Assistant settings | For music |
+| `SATELLITE1_API_KEY` | The Satellite1's ESPHome API encryption key | Made for you the first time `services/satellite1/build.sh` runs ([its README](../services/satellite1/README.md)) | With a satellite (Stage 12) |
 
 Not secrets you set:
 

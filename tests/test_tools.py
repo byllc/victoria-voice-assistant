@@ -12,7 +12,6 @@ import httpx
 import pytest
 import yaml
 from pipecat.frames.frames import (
-    EndFrame,
     InputTransportMessageFrame,
     LLMContextFrame,
     LLMMessagesAppendFrame,
@@ -400,7 +399,7 @@ def test_loop_guard_offers_an_agent() -> None:
         runtime = ToolRuntime(registry, state, notify=_ignore)
         return await runtime.run(registry.get("clarify"), {"question": "Which?"}), state  # type: ignore[arg-type]
 
-    (outcome, direct), state = run(scenario())
+    (_outcome, direct), state = run(scenario())
     assert direct == "I can't do that myself. Want me to ask Helper?"
     assert state.pending is not None and state.pending.kind == "yes_no"
 

@@ -22,7 +22,7 @@ Stage statuses: `not started` → `in progress` → `ready for review` → `appr
 
 ## 2. Ground rules for all stages
 
-- **Target:** Mac mini, M4 Pro, 64 GB, macOS 26. **Development happens on an M2 Mac** with local environments and local test LLMs (LM Studio); architecture memory figures are for the target machine and M2 measurements are for design validation only. Native processes under `launchd`; no Docker. Apple `container` only for agent sandboxes (Stage 8).
+- **Target:** Mac mini, M4 Pro, 64 GB, macOS 26. **Development happens on an M2 Mac** with local environments and local test LLMs (LM Studio); architecture memory figures are for the target machine and M2 measurements are for design validation only. Native processes under `launchd`; no Docker. Apple `container` only for agent sandboxes (from Stage 7).
 - **Python virtual environments.** Every Python environment (service, web interface, spikes) is a virtual environment managed by uv (`uv venv` + `uv sync` from `pyproject.toml` + lock file, interpreter pinned to 3.12). Never install packages into the system Python. `uv run` is the way to execute everything.
 - **Python 3.12+, managed with `uv`, every dependency pinned in the lock file.** The web client uses TypeScript with Vite.
 - **Pipecat built-ins first.** Use Pipecat's own feature wherever one exists (architecture §11 lists them). Replace a built-in only with measured evidence, recorded in the decisions log.
@@ -134,8 +134,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 ```sh
 uv sync --extra dev
 uv run assistant config init
-cp -n config/examples/.env.example config/.env
-# Set LMS_API_KEY in config/.env, then:
+uv run assistant secrets set LMS_API_KEY   # Keychain and config/.env (docs/secrets.md)
 uv run assistant config check
 uv run assistant launchd install --load
 ```
@@ -291,9 +290,11 @@ The LaunchAgent listens on `127.0.0.1:8765`; unload it with
 1. **Satellite takeover:** connect to one Satellite1 with `aioesphomeapi` while Home Assistant is also connected. Can our client receive voice-assistant audio? What happens to Home Assistant? Can we drive LEDs, play a reply URL, and play an unprompted announcement?
 2. **Follow-up listening and "stop":** can we reopen the mic after a reply without the wake word? Does the Satellite1 firmware expose a "stop" wake word for timers?
 
+*Outcome (2026-11-01, decisions log):* the assistant alone connects; Home Assistant doesn't, and never gets the new key. Follow-up listening works; the firmware has a "stop" word while a timer rings (not yet tried by voice). The satellite runs our build of FutureProofHomes' stable firmware: our API key, Bill's wake words, and the clean microphone channel.
+
 *Then:* the ESPHome satellite adapter, designed from those findings: wake-word sessions, audio in, LED states, reply audio via URL, announcements, follow-up listening, timers ringing on the device that set them and stopping by voice or button; the notification pending indicator on the satellite's LEDs. Room mapping per device. One Satellite1 first; others after Bill confirms.
 
-**Out of scope:** the custom satellite protocol and firmware (architecture Appendix A).
+**Out of scope:** the custom satellite protocol and firmware (architecture Appendix A). Configuration changes to the stock firmware (key, wake words, microphone channel) are in scope.
 
 **Done criteria:**
 - [ ] Compatibility findings reviewed by Bill, and the adapter approach agreed, before adapter code is written.
