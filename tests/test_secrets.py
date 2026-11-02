@@ -134,3 +134,17 @@ def test_secrets_set_list_and_get(keychain: FakeKeyring, tmp_path: Path, monkeyp
     assert capsys.readouterr().out.endswith("tok-123")
     assert main(["secrets", "--config-dir", str(config_dir), "delete", "HA_TOKEN"]) == 0
     assert read_env_file(config_dir / ".env") == {} and ("victoria-voice-assistant", "HA_TOKEN") not in keychain.items
+
+
+def test_the_web_command_reads_secrets_from_its_config_dir(tmp_path, monkeypatch) -> None:
+    from victoria_voice_assistant import cli
+    from victoria_voice_assistant.secret_store import get_secret
+
+    config = tmp_path / "other-config"
+    config.mkdir()
+    (config / ".env").write_text("ASSISTANT_WEB_PASSWORD=from-other\n")
+    monkeypatch.delenv("ASSISTANT_WEB_PASSWORD", raising=False)
+    monkeypatch.delenv("ASSISTANT_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *args, **kwargs: None)
+    assert cli.main(["web", "--config-dir", str(config)]) == 0
+    assert get_secret("ASSISTANT_WEB_PASSWORD") == "from-other"

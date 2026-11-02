@@ -24,6 +24,7 @@ from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 from victoria_voice_assistant.web.tls import TlsError, describe, find_tls_files, log_cert, validate
 from victoria_voice_assistant.launchd import (
+    install_backup_launch_agent,
     install_decider_launch_agent,
     install_launch_agent,
     install_searxng_launch_agent,
@@ -117,6 +118,23 @@ def _build_parser() -> argparse.ArgumentParser:
     secret_get = secrets_subcommands.add_parser("get", help="print a secret for a script (refuses to print to a terminal)")
     secret_get.add_argument("name")
 
+    backup = commands.add_parser("backup", help="back up and restore the database and configuration")
+    backup.add_argument("--config-dir", help="configuration directory (default: config/)")
+    backup.add_argument("--dest", help="backups folder (default: backups/ beside the database)")
+    backup_subcommands = backup.add_subparsers(dest="backup_command", required=True)
+    backup_create = backup_subcommands.add_parser("create", help="write a backup now (never secrets)")
+    backup_create.add_argument("--keep", type=int, default=14, help="how many backups to keep (default: 14)")
+    backup_subcommands.add_parser("list", help="list backups, newest first")
+    backup_restore = backup_subcommands.add_parser("restore", help="restore a backup (stop the services first)")
+    backup_restore.add_argument("name", help="a backup's file name from `backup list`, or a path")
+
+    logs = commands.add_parser("logs", help="the services' log files")
+    logs_subcommands = logs.add_subparsers(dest="logs_command", required=True)
+    logs_subcommands.add_parser("rotate", help="compress and empty logs over 5 MB, keeping 5 old copies")
+
+    daily = commands.add_parser("daily", help="the daily job: a backup, then log rotation (run by launchd at 03:30)")
+    daily.add_argument("--config-dir", help="configuration directory (default: config/)")
+
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
     install = launchd_subcommands.add_parser("install", help="write assistant LaunchAgent plist")
@@ -132,6 +150,10 @@ def _build_parser() -> argparse.ArgumentParser:
     install_decider = launchd_subcommands.add_parser("install-decider", help="write decider (mlx-lm) LaunchAgent plist")
     install_decider.add_argument("--output", type=Path)
     install_decider.add_argument("--load", action="store_true", help="bootstrap LaunchAgent now")
+
+    install_backup = launchd_subcommands.add_parser("install-backup", help="write the daily backup LaunchAgent plist (03:30)")
+    install_backup.add_argument("--output", type=Path, help="plist path (default: ~/Library/LaunchAgents)")
+    install_backup.add_argument("--load", action="store_true", help="load it with launchctl now")
 
     decider = commands.add_parser("decider", help="the local decision model (mlx-lm)")
     decider_subcommands = decider.add_subparsers(dest="decider_command", required=True)
@@ -247,6 +269,45 @@ def _push_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rotate_logs() -> int:
+    from victoria_voice_assistant.launchd import log_directory
+    from victoria_voice_assistant.log_rotation import rotate
+
+    rotated = rotate(log_directory())
+    print(f"Rotated {len(rotated)} log(s)" + (f": {', '.join(p.name for p in rotated)}" if rotated else ""))
+    return 0
+
+
+def _backup_command(args: argparse.Namespace) -> int:
+    from victoria_voice_assistant.storage import backup
+    from victoria_voice_assistant.storage.db import default_database_path
+
+    database = default_database_path()
+    dest = Path(args.dest).expanduser() if args.dest else backup.default_backup_dir(database)
+    config_dir = _config_dir(args.config_dir)
+    if args.backup_command == "create":
+        archive = backup.create(config_dir, database, dest, keep=args.keep)
+        logging.getLogger(__name__).info("Backup written", extra={"event": "backup_created", "path": str(archive)})
+        print(f"Backup written: {archive}")
+        return 0
+    if args.backup_command == "list":
+        found = backup.list_backups(dest)
+        if not found:
+            print(f"No backups in {dest}")
+        for archive in found:
+            print(f"{archive.name}  {archive.stat().st_size // 1024} KB")
+        return 0
+    name = Path(args.name).expanduser()
+    archive = name if name.is_file() else dest / args.name
+    try:
+        saved = backup.restore(archive, config_dir, database, dest)
+    except backup.BackupError as exc:
+        print(f"Restore failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"Restored {archive.name}. What it replaced is saved as {saved.name}. Start the services again.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
     parser = _build_parser()
@@ -333,7 +394,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "secrets":
         return _secrets_command(args)
 
+    if args.command == "backup":
+        return _backup_command(args)
+
+    if args.command == "logs":
+        return _rotate_logs()
+
+    if args.command == "daily":
+        args.backup_command, args.dest, args.keep = "create", None, 14
+        status = _backup_command(args)
+        return _rotate_logs() or status
+
     if args.command == "web":
+        if args.config_dir:
+            # The app reads its secrets (the household password) from this folder's .env, not the default one.
+            os.environ["ASSISTANT_CONFIG_DIR"] = str(_config_dir(args.config_dir).resolve())
         try:
             files = find_tls_files(_config_dir(args.config_dir))
             info = validate(files) if files else None
@@ -404,6 +479,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "launchd" and args.launchd_command == "install-searxng":
         destination = install_searxng_launch_agent(args.output, load=args.load)
         print(f"SearXNG LaunchAgent plist written: {destination}")
+        return 0
+
+    if args.command == "launchd" and args.launchd_command == "install-backup":
+        destination = install_backup_launch_agent(args.output, load=args.load)
+        print(f"LaunchAgent plist written: {destination}")
         return 0
 
     if args.command == "launchd" and args.launchd_command == "install-web":

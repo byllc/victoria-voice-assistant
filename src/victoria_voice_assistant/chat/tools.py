@@ -49,6 +49,7 @@ class SessionState:
     busy_since: float | None = None
     requests: int = 0
     client_id: str | None = None  # the browser's own id (sent in `hello`), for phone push
+    barged_in: bool = False  # voice: this turn began by cutting off the assistant's reply
 
     def begin_request(self) -> None:
         self.requests += 1

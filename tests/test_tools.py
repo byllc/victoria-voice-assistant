@@ -725,3 +725,76 @@ def test_loop_guard_stops_even_without_agents() -> None:
 
     _, direct = run(scenario())
     assert direct == "Sorry, I can't do that."
+
+
+def test_a_stray_yes_or_no_gets_a_short_answer_unless_the_last_reply_asked() -> None:
+    from pipecat.processors.aggregators.llm_context import LLMContext
+    from pipecat.tests.utils import run_test
+
+    async def scenario(text: str, last_reply: str | None):
+        state = SessionState()
+        runtime = ToolRuntime(_registry([]), state, notify=_ignore)
+        messages = [{"role": "assistant", "content": last_reply}] if last_reply else []
+        preprocessor = TurnPreprocessor(state, runtime, TimerService(TimersConfig()), context=LLMContext(messages=messages))
+        down, _ = await run_test(preprocessor, frames_to_send=[_user(text)])
+        return _messages(down), [f for f in down if isinstance(f, LLMMessagesAppendFrame) and f.run_llm]
+
+    said, to_model = run(scenario("yes please", None))
+    assert said[0] == {"type": "token", "text": "There's nothing waiting for a yes. What would you like?"} and not to_model
+    said, to_model = run(scenario("no", "The timer is set."))
+    assert said[0] == {"type": "token", "text": "Okay."} and not to_model
+    _, to_model = run(scenario("yes", "Want me to turn it off?"))  # the model's own question
+    assert len(to_model) == 1
+
+
+def test_an_empty_model_reply_is_never_silent() -> None:
+    from pipecat.frames.frames import LLMFullResponseEndFrame, LLMFullResponseStartFrame, LLMTextFrame
+    from pipecat.tests.utils import run_test
+
+    from victoria_voice_assistant.chat.turns import EMPTY_REPLY, TurnTracker
+
+    async def scenario(texts: list[str]):
+        state = SessionState()
+        state.llm_busy = 1
+        runtime = ToolRuntime(_registry([]), state, notify=_ignore)
+        tracker = TurnTracker(state, TurnPreprocessor(state, runtime, TimerService(TimersConfig())))
+        frames = [LLMFullResponseStartFrame(), *(LLMTextFrame(t) for t in texts), LLMFullResponseEndFrame()]
+        down, _ = await run_test(tracker, frames_to_send=frames)
+        return [f.text for f in down if isinstance(f, LLMTextFrame)], state
+
+    texts, state = run(scenario(["\n\n", "\n"]))
+    assert texts[-1] == EMPTY_REPLY and state.llm_busy == 0
+    texts, _ = run(scenario(["Hello."]))
+    assert texts == ["Hello."]
+
+
+def test_leaked_control_tokens_are_removed() -> None:
+    from victoria_voice_assistant.chat.turns import CONTROL_TOKENS
+
+    assert CONTROL_TOKENS.sub("", "<|channel>::How long should the timer be?") == "How long should the timer be?"
+    assert CONTROL_TOKENS.sub("", "<|end|>Done.") == "Done."
+    assert CONTROL_TOKENS.sub("", "a < b | c") == "a < b | c"
+
+
+def test_junk_from_the_model_becomes_the_fallback_and_real_text_is_cleaned() -> None:
+    from pipecat.frames.frames import LLMFullResponseEndFrame, LLMFullResponseStartFrame, LLMTextFrame
+    from pipecat.tests.utils import run_test
+
+    from victoria_voice_assistant.chat.turns import EMPTY_REPLY, TurnTracker
+
+    async def said(chunks: list[str]) -> str:
+        state = SessionState()
+        state.llm_busy = 1
+        runtime = ToolRuntime(_registry([]), state, notify=_ignore)
+        tracker = TurnTracker(state, TurnPreprocessor(state, runtime, TimerService(TimersConfig())))
+        frames = [LLMFullResponseStartFrame(), *(LLMTextFrame(c) for c in chunks), LLMFullResponseEndFrame()]
+        down, _ = await run_test(tracker, frames_to_send=frames)
+        return "".join(f.text for f in down if isinstance(f, LLMTextFrame))
+
+    assert run(said(["::user", "<channel|>", "user"])) == EMPTY_REPLY  # seen from gemma-4-12b
+    assert run(said(["::"])) == EMPTY_REPLY
+    assert run(said(["<|chan", "nel>::How long", " should the timer be?"])) == "How long should the timer be?"
+    assert run(said(["Okay", "."])) == "Okay."  # short real replies still come through
+    written = ["call:clarify{question:", '<|"|>How long should', ' the timer be?<|"|>}']  # seen from gemma-4-12b
+    assert run(said(written)) == "How long should the timer be?"
+    assert run(said(["call:timer{action:start}"])) == EMPTY_REPLY

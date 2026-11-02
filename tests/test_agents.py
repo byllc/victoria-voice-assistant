@@ -194,9 +194,11 @@ def test_unknown_and_unsupported_agents_are_spoken(example_config_dir: Path) -> 
 def test_tasks_left_running_by_a_restart_are_marked_failed(tmp_path: Path) -> None:
     database = migrate(tmp_path / "a.sqlite3")
     TaskService(database).create("helper", "web", "x", "wait")
-    TaskService(database).start()
+    interrupted = TaskService(database).start()
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT state, error FROM tasks").fetchone() == ("failed", "the assistant restarted")
+    assert [(t.agent, t.request) for t in interrupted] == [("helper", "x")]  # returned, so the user is told
+    assert TaskService(database).start() == []  # only once
 
 
 def test_ask_helper_goes_straight_to_the_agent(example_config_dir: Path) -> None:
@@ -376,3 +378,36 @@ def test_tasks_tool_cancels_one_or_asks_which() -> None:
     assert by_agent.speak == "Cancelled Helper's task."
     assert nothing.speak == "Nothing is running."
     assert sorted(t.state for t in tasks.recent()) == ["cancelled", "cancelled", "finished"]
+
+
+def test_a_cancelled_or_timed_out_task_restarts_the_agents_service(example_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    restarted: list[str] = []
+
+    async def fake_restart(launch_label: str) -> bool:
+        restarted.append(launch_label)
+        return True
+
+    async def endless(agent, task) -> AgentReply:
+        await asyncio.sleep(10)
+        raise AssertionError("not reached")
+
+    monkeypatch.setattr(runner_module, "restart_launch_agent", fake_restart)
+    config = _config(example_config_dir)
+    helper = next(a for a in config.agents.agents if a.name == "helper")
+    helper.restart_on_cancel = "com.victoria.helper"
+
+    async def scenario():
+        agents, _ = _runner(config, reply=endless)
+        stopped = await agents.ask("helper", "x", "web")
+        await asyncio.sleep(0.01)
+        agents.tasks.cancel(stopped.result["task_id"])
+        await _settle(agents)
+        await asyncio.sleep(0.01)
+        monkeypatch.setattr(runner_module, "AGENT_TIMEOUT_S", 0.05)
+        await agents.ask("helper", "y", "web")
+        await asyncio.sleep(0.2)
+        return agents.tasks.get(stopped.result["task_id"])
+
+    task = run(scenario())
+    assert restarted == ["com.victoria.helper", "com.victoria.helper"]  # once for the cancel, once for the timeout
+    assert any("Restarting Helper" in text for _, text in task.progress)

@@ -191,3 +191,42 @@ def test_health_targets_and_checks(config: AppConfig) -> None:
     assert (results["hermes"].ok, results["hermes"].detail) == (False, "ConnectError")
     assert (results["lmstudio"].ok, results["lmstudio"].detail) == (False, "rejected the key")
     assert results["searxng"].ok is True and results["anthropic"].ok is None
+
+
+def test_this_machine_on_the_health_strip(config: AppConfig, tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    import victoria_voice_assistant.health as health
+    import victoria_voice_assistant.voice.monitor as monitor_module
+
+    now = 1_000_000.0
+    monitor = HealthMonitor(config, clock=lambda: now, backup_dir=tmp_path, web_url="https://127.0.0.1:8766")
+
+    async def memory(own, free):
+        async def resident():
+            return own
+
+        monkeypatch.setattr(monitor_module, "resident_mb", resident)
+        monkeypatch.setattr(health, "free_memory_percent", lambda: free)
+        return await monitor.memory()
+
+    fine = asyncio.run(memory(150.0, 40))
+    assert (fine.ok, fine.detail) == (True, "assistant 150 MB · Mac 40% free")
+    heavy = asyncio.run(memory(3500.0, 40))
+    assert heavy.ok is False and heavy.detail.startswith("assistant over 3000 MB")
+    squeezed = asyncio.run(memory(150.0, 5))
+    assert squeezed.ok is False and "low on memory" in squeezed.detail
+
+    assert (monitor.backup().ok, monitor.backup().detail) == (False, "no backup yet")
+    recent = tmp_path / "victoria-20261101-030000.tar.gz"
+    recent.write_bytes(b"x")
+    os.utime(recent, (now - 3 * 3600, now - 3 * 3600))
+    assert (monitor.backup().ok, monitor.backup().detail) == (True, "3 h ago")
+    os.utime(recent, (now - 50 * 3600, now - 50 * 3600))
+    assert (monitor.backup().ok, monitor.backup().detail) == (False, "last one 50 h ago")
+
+    up = asyncio.run(monitor.web(httpx.MockTransport(lambda request: httpx.Response(200))))
+    def refuse(request):
+        raise httpx.ConnectError("refused")
+    down = asyncio.run(monitor.web(httpx.MockTransport(refuse)))
+    assert up.ok is True and (down.ok, down.detail) == (False, "ConnectError")

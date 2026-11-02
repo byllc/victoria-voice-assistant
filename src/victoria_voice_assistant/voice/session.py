@@ -17,6 +17,7 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     Frame,
     InputAudioRawFrame,
+    InterruptionFrame,
     LLMContextFrame,
     LLMRunFrame,
     TTSSpeakFrame,
@@ -41,6 +42,7 @@ from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecat.turns.user_start import TranscriptionUserTurnStartStrategy, VADUserTurnStartStrategy
 from pipecat.turns.user_stop import SpeechTimeoutUserTurnStopStrategy, TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
@@ -49,7 +51,10 @@ from victoria_voice_assistant.chat.prompt import system_prompt
 from victoria_voice_assistant.chat.session import ChatHub, ChatSession
 from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcessor, TimingStartProcessor
 from victoria_voice_assistant.chat.tools import SessionState
-from victoria_voice_assistant.chat.turns import TurnPreprocessor
+from collections import deque
+from collections.abc import Callable
+
+from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker, is_stop
 from victoria_voice_assistant.config.schema import AppConfig, SpeechConfig
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
@@ -197,13 +202,14 @@ class VoiceTurnPreprocessor(TurnPreprocessor):
     """Voice version: sits after the user aggregator, so the transcript is already in the context.
 
     Stop and yes/no turns are answered by speaking directly; every other turn's
-    context frame goes on to the model. Overlapping speech is handled by Pipecat's
-    own interruptions, so there is no queue here.
+    context frame goes on to the model. A command spoken while the previous one is still
+    being worked on (Stage 11) waits: it is taken back out of the conversation, so the model
+    never sees two questions at once, and goes in as its own request when the first settles.
     """
 
     def __init__(self, *args, context: LLMContext, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.context = context
+        super().__init__(*args, context=context, **kwargs)
+        self._spoken_waiting: deque[str] = deque()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await FrameProcessor.process_frame(self, frame, direction)
@@ -211,13 +217,75 @@ class VoiceTurnPreprocessor(TurnPreprocessor):
             text = last_user_text(frame.context)
             if text is not None:
                 logger.info("Voice transcript", extra={"event": "voice_transcript", "text": text})
+                if self.state.barged_in and is_stop(text) and not self.timers.ringing(self.state.device):
+                    # "Stop" that cut the reply off has done its job; no answer to it.
+                    self.state.barged_in = False
+                    remove_last_user_message(self.context)
+                    logger.info("Reply stopped", extra={"event": "reply_stopped"})
+                    return
+                if not self.state.idle():
+                    remove_last_user_message(self.context)
+                    self._spoken_waiting.append(text)
+                    logger.info("Command waits for the current request", extra={"event": "request_queued"})
+                    return
                 if await self._handled(text):
                     return
         await self.push_frame(frame, direction)
 
+    async def release_next(self) -> None:
+        while self._spoken_waiting and self.state.idle():
+            text = self._spoken_waiting.popleft()
+            self.context.add_message({"role": "user", "content": text})
+            if not await self._handled(text):
+                await self.push_frame(LLMContextFrame(self.context))
+
     async def _deliver(self, user_text: str, reply: str) -> None:
         self.context.add_message({"role": "assistant", "content": reply})
         await self.push_frame(TTSSpeakFrame(reply, append_to_context=False))
+
+
+def remove_last_user_message(context: LLMContext) -> None:
+    messages = list(context.get_messages())
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, dict) and message.get("role") == "user":
+            del messages[index]
+            context.set_messages(messages)
+            return
+
+
+class VoiceTurnTracker(TurnTracker):
+    """The chat tracker, plus: an interruption ends the request it cut off (its replies won't come)."""
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        if isinstance(frame, InterruptionFrame):
+            self.state.llm_busy = self.state.tools_busy = 0
+            self.state.awaiting_llm = False
+        await super().process_frame(frame, direction)
+
+
+class WaitWhileBusyStartStrategy(VADUserTurnStartStrategy):
+    """Speech interrupts the assistant while it talks (so "stop" cuts a reply off) or when it's idle,
+    but not while a request is still being worked on before any reply: cancelling it there lost both
+    commands (Stage 11). That turn goes ahead without an interruption, and the preprocessor queues it.
+    """
+
+    def __init__(self, state: SessionState, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+        self._bot_speaking = False
+
+    async def process_frame(self, frame: Frame):
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            quiet = not self.state.idle() and not self._bot_speaking
+            self.state.barged_in = self._bot_speaking
+            if quiet:
+                logger.info("Speech while a request is in progress: no interruption", extra={"event": "turn_no_interrupt"})
+            await self.report_user_turn_started(enable_interruptions=not quiet)
 
 
 def last_user_text(context: LLMContext) -> str | None:
@@ -309,7 +377,7 @@ class ShortClipStopStrategy(TurnAnalyzerUserTurnStopStrategy):
         await super()._handle_vad_user_stopped_speaking(frame)
 
 
-def user_params(speech: SpeechConfig) -> LLMUserAggregatorParams:
+def user_params(speech: SpeechConfig, state: SessionState | None = None) -> LLMUserAggregatorParams:
     vad = SileroVADAnalyzer(
         params=VADParams(confidence=speech.vad.confidence, start_secs=speech.vad.start_s, stop_secs=speech.vad.stop_s)
     )
@@ -320,7 +388,10 @@ def user_params(speech: SpeechConfig) -> LLMUserAggregatorParams:
         )
     else:
         stop = SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=speech.turn.fallback_s)
-    return LLMUserAggregatorParams(vad_analyzer=vad, user_turn_strategies=UserTurnStrategies(stop=[stop]))
+    # Pipecat's default start list, with the VAD strategy replaced by the one that doesn't cut off a request.
+    start = [WaitWhileBusyStartStrategy(state), TranscriptionUserTurnStartStrategy()] if state is not None else None
+    strategies = UserTurnStrategies(stop=[stop], **({"start": start} if start else {}))
+    return LLMUserAggregatorParams(vad_analyzer=vad, user_turn_strategies=strategies)
 
 
 def log_latency(breakdown: LatencyBreakdown, session_id: str) -> None:
@@ -358,6 +429,8 @@ async def run_voice_session(
 
     def next_llm_call() -> int:
         state.llm_calls += 1
+        state.llm_busy += 1
+        state.awaiting_llm = False
         return state.llm_calls
 
     timer = RequestTimer(on_llm_call=next_llm_call)
@@ -377,10 +450,11 @@ async def run_voice_session(
         messages=[{"role": "system", "content": system_prompt(runtime.registry)}],
         tools=runtime.tools_schema(),
     )
-    pair = LLMContextAggregatorPair(context, user_params=user_params(config.models.speech))
+    pair = LLMContextAggregatorPair(context, user_params=user_params(config.models.speech, state))
     preprocessor = VoiceTurnPreprocessor(
         state, runtime, services.timers, agents=services.agents, notifications=services.notifications, context=context
     )
+    runtime.on_settled = preprocessor.release_next
     pipeline = Pipeline(
         [
             transport.input(),
@@ -389,6 +463,7 @@ async def run_voice_session(
             preprocessor,
             TimingStartProcessor(timer),
             router,
+            VoiceTurnTracker(state, preprocessor),
             TimingEndProcessor(timer),
             speech.tts(),
             transport.output(),

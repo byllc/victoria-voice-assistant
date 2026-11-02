@@ -10,6 +10,7 @@ quiet for `wait_s` and then says it's still working.
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import re
 from typing import TYPE_CHECKING, Any
@@ -98,6 +99,7 @@ class AgentRunner:
         self.spend = spend or SpendLog(None)
         self.chooser = PoolChooser(config.models, build_decider(config.models), self.spend)
         self._limits: dict[str, asyncio.Timeout] = {}
+        self._restarts: set[asyncio.Task[bool]] = set()
         self._asked: set[str] = set()
 
     def update_config(self, config: AppConfig) -> None:
@@ -272,6 +274,15 @@ class AgentRunner:
             pending=PendingQuestion(kind="yes_no", question=question, on_yes=("ask_agent", {"agent": default.name, "task": request})),
         )
 
+    def _restart_after_stop(self, agent: AgentConfig, task: Task) -> None:
+        """Restart the agent's service (`restart_on_cancel`) so it drops the job we stopped."""
+        if not agent.restart_on_cancel:
+            return
+        self.tasks.progress(task, f"Restarting {label(agent.name)} to stop the job")
+        restart = asyncio.get_running_loop().create_task(restart_launch_agent(agent.restart_on_cancel))
+        self._restarts.add(restart)
+        restart.add_done_callback(self._restarts.discard)
+
     async def _run(self, agent: AgentConfig, task: Task, override: str | None = None) -> None:
         name = label(agent.name)
         loop = asyncio.get_running_loop()
@@ -288,10 +299,12 @@ class AgentRunner:
         except asyncio.CancelledError:
             self.tasks.progress(task, "Cancelled")
             self.tasks.update(task, state="cancelled")
+            self._restart_after_stop(agent, task)
             raise
         except TimeoutError:
             self.tasks.progress(task, "Stopped: took too long")
             self.tasks.update(task, state="timed_out", error=f"no result after {AGENT_TIMEOUT_S:.0f} s")
+            self._restart_after_stop(agent, task)
             self._report(agent, task, "error", f"{name} took too long, so I stopped it.", delayed=True)
             return
         except Exception as exc:  # noqa: BLE001 - any agent failure is reported, never raised into the session
@@ -490,3 +503,21 @@ class AgentRunner:
         llm = build_llm(model, self.config.models)
         context = ToolContext(device=task.device, progress=lambda text: self.tasks.progress(task, text))
         return await run_model_agent(llm, agent.system, task.request, tools, context, history=history)
+
+
+async def restart_launch_agent(launch_label: str) -> bool:
+    """`launchctl kickstart -k`: stop the service's process and start it again."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{launch_label}",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        )
+        _, error = await process.communicate()
+    except OSError as exc:
+        logger.warning("Agent restart failed", extra={"event": "agent_restart_failed", "reason": str(exc)})
+        return False
+    if process.returncode != 0:
+        logger.warning("Agent restart failed", extra={"event": "agent_restart_failed", "reason": error.decode(errors="replace").strip()})
+        return False
+    logger.info("Agent restarted after a stop", extra={"event": "agent_restarted", "tool": launch_label})
+    return True

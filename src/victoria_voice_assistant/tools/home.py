@@ -515,6 +515,16 @@ class HomeAssistantHub:
             self.instances[key] = HomeAssistant(server, label)
         return self.instances[key]
 
+    async def warm(self) -> None:
+        """Connect ahead of the first request (Stage 11): the registries and the MCP session took long
+        enough on first use that a command spoken meanwhile was lost. Best effort; a failure is logged."""
+        for instance in list(self.instances.values()):
+            try:
+                await instance.entities()
+                await instance._intent_handlers()
+            except Exception as exc:  # noqa: BLE001 - Home Assistant may be down; the first request retries
+                logger.warning("Home Assistant not reachable at startup", extra={"event": "ha_unreachable", "reason": str(exc) or type(exc).__name__})
+
     async def close(self) -> None:
         for instance in self.instances.values():
             await instance.close()
