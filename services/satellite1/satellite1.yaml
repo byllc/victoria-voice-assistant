@@ -1,6 +1,8 @@
 # Our Satellite1 build (Stage 12): FutureProofHomes' stable firmware (v0.2.1, cloned into Satellite1-ESPHome/
-# by build.sh) with one change: a fixed API encryption key that we hold, so the assistant can connect as well
-# as Home Assistant. Stock firmware leaves the key for Home Assistant to set. build.sh copies this file into
+# by build.sh) with two changes: a fixed API encryption key that we hold, so the assistant can connect (stock
+# firmware leaves the key for Home Assistant to set); and Bill's wake words, "Victoria" (his own model) and
+# "Hey Viki" (TaterTotterson/microWakeWords, his tuned copy), with the stock "Okay Nabu" and "Hey Jarvis"
+# switched off at startup (they stay in the firmware: its sensitivity setting refers to them). build.sh copies this file into
 # Satellite1-ESPHome/config/ (their paths are relative to that folder), with secrets.yaml holding the key
 # from the Keychain (SATELLITE1_API_KEY); both copies are git-ignored.
 packages:
@@ -9,3 +11,17 @@ packages:
 api:
   encryption:
     key: !secret api_key
+
+micro_wake_word:
+  models:
+    - model: wake_words/victoria.json
+      id: victoria
+    - model: wake_words/hey_viki.json
+      id: hey_viki
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - micro_wake_word.disable_model: okay_nabu
+        - micro_wake_word.disable_model: hey_jarvis

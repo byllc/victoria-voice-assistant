@@ -1,8 +1,10 @@
 # Satellite1 firmware
 
-Our build of FutureProofHomes' Satellite1 firmware: their stable release (v0.2.1) unchanged, plus one
-addition, a fixed ESPHome API encryption key that we hold (`SATELLITE1_API_KEY`, in the Keychain and
-`config/.env`). Stock firmware lets Home Assistant set the key; with ours, both Home Assistant and the
+Our build of FutureProofHomes' Satellite1 firmware: their stable release (v0.2.1) unchanged, plus a fixed
+ESPHome API encryption key that we hold (`SATELLITE1_API_KEY`, in the Keychain and `config/.env`) and Bill's
+wake words in `wake_words/`: "Victoria" (his own model, trained with TaterTotterson's
+microWakeWord-Trainer-AppleSilicon) and "Hey Viki" (from TaterTotterson/microWakeWords, his tuned copy).
+The stock "Okay Nabu" and "Hey Jarvis" are switched off at startup. Stock firmware lets Home Assistant set the key; with ours, both Home Assistant and the
 assistant can connect.
 
 Build and flash (the first build downloads ESPHome and the ESP32 toolchain; several minutes):

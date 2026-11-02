@@ -23,6 +23,7 @@ if [ -z "$key" ]; then
 fi
 build=$here/Satellite1-ESPHome/config
 cp "$here/satellite1.yaml" "$build/victoria-satellite1.yaml"
+rm -rf "$build/wake_words" && cp -R "$here/wake_words" "$build/wake_words"
 umask 077
 printf 'api_key: "%s"\n' "$key" > "$build/secrets.yaml"
 
