@@ -15,7 +15,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 8 | Notifications and task dashboard | approved | 2026-10-31 | 2026-11-01 | Bill / 2026-11-01 |
 | 9 | Home control | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 10 | Music | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
-| 11 | Hardening | in progress | 2026-11-01 | | |
+| 11 | Hardening | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 12 | Satellites (optional) | not started | | | |
 
 ## Stage 0: Tracker, instructions, repo
@@ -254,9 +254,9 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-11-01 ("approve, commit and push, stage 10"). Carried over: sound from Safari on his Mac after the switch to PCM (the cause was inferred, not observed); Spotify (skipped); the Alexa relay until Alexa Media Player is installed; ducking checked by voice with music playing; a new browser taking about 16 s to be listed by Music Assistant; the web interface reading `config/.env` from the default config folder even with `--config-dir`.
 
 ## Stage 11: Hardening
-- Status: in progress
+- Status: approved
 - Done criteria:
-  - [ ] Killing any one service recovers automatically without losing timers, tasks, or notifications.
+  - [x] Killing any one service recovers automatically without losing timers, tasks, or notifications. On this Mac (evidence below); the Mac mini still to check.
   - [ ] One week of daily use with issues logged and fixed or accepted by Bill.
   - [ ] An end-to-end benchmark of representative voice and text interactions reports overall success and per-stage latency.
   - [ ] Runbook reviewed by Bill.
@@ -274,7 +274,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Carried-in fixes, stray yes/no and blank replies (`chat/turns.py`). Before, over chat: "yes" -> "I am sorry, I am not sure what you would like me to do."; "no" -> "I'm sorry, I didn't quite catch that…"; "yes please" -> nothing; "set a timer" -> nothing. (1) A yes or no with no question open, after a reply that didn't ask anything, gets a template: "There's nothing waiting for a yes. What would you like?" / "Okay." (if the last reply was a question, the model still decides). (2) The model's text is guarded in the turn tracker (chat and voice): the opening of each reply is held until it has eight letters of real text, with leaked control tokens removed; seen from gemma-4-12b for "set a timer": "<|channel>::How long should the timer be?", "::user<channel|>user", "::", and a tool call written as text, "call:clarify{question:<|"|>How long should the timer be?<|"|>}" (its question is asked; any other written call counts as no reply). A reply with nothing real in it becomes "Sorry, I didn't get that. Could you say it another way?" After: "yes" / "yes please" -> "There's nothing waiting for a yes. What would you like?", "no" -> "Okay.", and "set a timer" five times -> "How long should the timer be?" each time; "set a timer for 2 minutes called tea", "what time is it" and the overlapping voice test unchanged. Tests in `tests/test_tools.py` (stray yes/no, empty reply, junk, split tokens, written calls). `uv run pytest -q`: 303 passed, 3 skipped.
   - Carried-in fix, `assistant web --config-dir`: it read the household password from the default `config/.env` even when given another folder (found in Stage 10). It now points the app at that folder first. Test: `tests/test_secrets.py`.
   - Carried-in fix, Hermes after a cancel (Stage 8 finding: Hermes kept retrying a cancelled job for up to 45 minutes, stalling the next one). Bill chose restarting Hermes ("Restart Hermes"). New agent setting `restart_on_cancel: <LaunchAgent label>`: when one of the agent's tasks is cancelled or times out, the runner runs `launchctl kickstart -k` on it (Hermes's `run.sh` removes the old container as it starts) and notes "Restarting Hermes to stop the job" on the task. Set for Hermes in `config/agents.yaml` and the example. Live: "ask hermes to write a 1500 word story about a lighthouse keeper" -> "Cancel the Hermes task." -> "Cancelled Hermes's task."; Hermes restarted (new process; "Agent restarted after a stop"), answered again, and the next request, "ask hermes what two plus two is", finished: "Two plus two is four." Test: `tests/test_agents.py` (cancel and timeout). Restarting stops anything else Hermes was doing at that moment (Bill accepted).
-- Bill's review notes:
+- Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 11"), before three done criteria were met. Carried over: one week of daily use with issues logged; the end-to-end benchmark (on the target Mac mini, at the end); the runbook (not written yet) and its review; the crash checks on the Mac mini; weather's home location in `config/tools.yaml`.
 
 ## Decisions log
 | Date | Stage | Proposal or decision | Bill's answer |
@@ -362,3 +362,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 10 | Music with no place named always plays on the device that heard the request, by chat or voice; it never asks "where should I play it?" and never falls back to the last player. The web app turns its browser speaker on (`music_start`) and plays there; a satellite plays in its room; a device with no speaker says "I can't play music on this device yet. Name a speaker, like the exercise room." A named place still wins. Found when Bill typed "play fall out boy" with the browser speaker off, was asked where, picked "Bill's MacBook Pro (2)" (this Mac's AirPlay receiver, unreachable), and heard nothing while the reply said "Playing". A play now counts only once the player reports playing within 5 s. | Bill / 2026-11-01: "the audio should always play on the device that heard the caht or voice request" |
 | 2026-11-01 | 10 | The stored `ASSISTANT_WEB_PASSWORD` stays: the next restart of the web interface asks for the household password (the running one started before it read `config/.env`, so it's open until then). The artwork fix takes effect at that restart. | Bill / 2026-11-01: "Keep it" |
 | 2026-11-01 | 10 | Approved by Bill. Carried over: sound from Safari after the switch to PCM; Spotify; the Alexa relay; ducking by voice; slow listing of a new browser; `--config-dir` and `config/.env`. | Bill / 2026-11-01: "ok approve, commit and push, stage 10 and continue to stage 11" |
+| 2026-11-01 | 11 | Approved by Bill with three done criteria open: a week of daily use, the end-to-end benchmark on the Mac mini, and the runbook (not written yet) with his review; also carried: the crash checks on the Mac mini, weather's home location. | Bill / 2026-11-01: "approve stage 11" |
