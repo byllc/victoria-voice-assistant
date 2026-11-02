@@ -462,7 +462,7 @@ async def run_voice_session(
             preprocessor,
             TimingStartProcessor(timer),
             router,
-            VoiceTurnTracker(state, preprocessor),
+            VoiceTurnTracker(state, preprocessor, retry=lambda: task.queue_frame(LLMRunFrame())),
             TimingEndProcessor(timer),
             speech.tts(),
             transport.output(),

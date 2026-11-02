@@ -47,7 +47,7 @@ satellites:
     host: satellite1-34bf90.local   # or its IP address
     key: "${SATELLITE1_API_KEY}"
 #   port: 6053      # the ESPHome API port
-#   gain: 8         # the microphone is raised by this before speech detection (its clean channel is quiet)
+#   gain: 24        # the microphone is raised by this before speech detection (its clean channel is quiet)
 #   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
 ```
@@ -136,7 +136,7 @@ Holding the action button for 10 seconds warns (a sound and the LED ring); keep 
 | Red twinkle | Is the assistant running (`curl http://127.0.0.1:8765/health`)? Is the device under `satellites:` with the right host? The log shows `satellite_unreachable` with a reason: a wrong key, or a host that can't be resolved or reached. |
 | It wakes but says nothing | Look for `satellite_reply` (with a `duration_s`) or `satellite_reply_failed`. A reply it can't fetch plays as silence: is the Mac reachable from the satellite on port 8767 (firewall, network)? |
 | It wakes, then gives up | `satellite_no_speech`: no speech was detected within 8 seconds of the wake word. Speak sooner, or check `gain` if it keeps happening. |
-| Whatever you say is misheard | The microphone level: our firmware uses the clean channel, raised by `gain` (8). Lower it if the audio clips, raise it if speech is missed. |
+| Whatever you say is misheard | The microphone level: our firmware uses the clean channel, raised by `gain` (24). Lower it if the audio clips, raise it if speech is missed. |
 | Quiet replies | Power: see above. |
 | Home Assistant shows it unavailable | Expected: see Home Assistant above. |
 

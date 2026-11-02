@@ -164,7 +164,7 @@ def test_a_wake_with_no_speech_ends_quietly(example_config_dir: Path, monkeypatc
         return session, client
 
     session, client = asyncio.run(scenario())
-    assert client.kinds()[-2:] == [E.VOICE_ASSISTANT_STT_VAD_END, E.VOICE_ASSISTANT_RUN_END]
+    assert client.kinds()[-2:] == [E.VOICE_ASSISTANT_STT_START, E.VOICE_ASSISTANT_RUN_END]  # no STT_VAD_END first
     assert session.run is None
 
 
@@ -230,3 +230,21 @@ def test_no_ring_or_no_colour_leaves_the_light_alone(example_config_dir: Path) -
         return [first, second]
 
     assert [client.lights for client in asyncio.run(scenario())] == [[], []]
+
+
+def test_a_finished_timer_rings_on_the_device_which_then_owns_it(example_config_dir: Path) -> None:
+    async def scenario() -> tuple[FakeClient, list[Any], list[Any]]:
+        timers = TimerService(TimersConfig())
+        session, client = _session(example_config_dir, timers)
+        await timers.start_seconds("office", "tea", 0.05)
+        await asyncio.sleep(0.2)  # it rings
+        ringing = timers.ringing("office")
+        await session.on_timer_event(TimerEvent("ring", "office"))
+        left = timers.timers("office")
+        await timers.close()
+        return client, ringing, left
+
+    client, ringing, left = asyncio.run(scenario())
+    assert len(ringing) == 1
+    assert [event[0] for event in client.timer_events] == [T.VOICE_ASSISTANT_TIMER_FINISHED]
+    assert left == []  # the device's "stop" word or button stops it; nothing tells us when

@@ -32,6 +32,7 @@ LOGGED_FIELDS = (
     "timers",
     "count",
     "peak",
+    "volume",
     "duration_s",
     "delta_s",
     "cert",

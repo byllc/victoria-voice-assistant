@@ -767,6 +767,34 @@ def test_an_empty_model_reply_is_never_silent() -> None:
     assert texts == ["Hello."]
 
 
+def test_an_empty_reply_asks_the_model_once_more_before_giving_up() -> None:
+    from pipecat.frames.frames import LLMFullResponseEndFrame, LLMFullResponseStartFrame, LLMTextFrame
+    from pipecat.tests.utils import run_test
+
+    from victoria_voice_assistant.chat.turns import EMPTY_REPLY, TurnTracker
+
+    async def scenario(attempts: list[list[str]]):
+        state = SessionState()
+        state.llm_busy = 1
+        retries: list[int] = []
+
+        async def retry() -> None:
+            retries.append(1)
+            state.llm_busy += 1  # the next model call, as the request timer counts it
+            state.awaiting_llm = False
+
+        runtime = ToolRuntime(_registry([]), state, notify=_ignore)
+        tracker = TurnTracker(state, TurnPreprocessor(state, runtime, TimerService(TimersConfig())), retry=retry)
+        frames = [f for texts in attempts for f in (LLMFullResponseStartFrame(), *(LLMTextFrame(t) for t in texts), LLMFullResponseEndFrame())]
+        down, _ = await run_test(tracker, frames_to_send=frames)
+        return [f.text for f in down if isinstance(f, LLMTextFrame)], len(retries), state
+
+    texts, retries, state = run(scenario([["\n\n"], ["How long should the timer be?"]]))
+    assert texts == ["How long should the timer be?"] and retries == 1 and state.llm_busy == 0
+    texts, retries, state = run(scenario([["\n"], ["\n"]]))  # empty twice: the fallback, and no third try
+    assert texts == [EMPTY_REPLY] and retries == 1 and state.llm_busy == 0
+
+
 def test_leaked_control_tokens_are_removed() -> None:
     from victoria_voice_assistant.chat.turns import CONTROL_TOKENS
 

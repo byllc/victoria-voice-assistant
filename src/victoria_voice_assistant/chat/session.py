@@ -192,7 +192,7 @@ async def run_chat_session(
             pair.user(),
             TimingStartProcessor(timer),
             router,
-            TurnTracker(state, preprocessor),
+            TurnTracker(state, preprocessor, retry=lambda: task.queue_frame(LLMRunFrame())),
             TimingEndProcessor(timer),
             ChatProtocolProcessor(),
             transport.output(),

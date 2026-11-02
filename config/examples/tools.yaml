@@ -219,7 +219,7 @@ satellites: {}
 #  office:
 #    host: satellite1-xxxxxx.local
 #    key: "${SATELLITE1_API_KEY:-}"
-#    gain: 8           # its microphone is raised by this before speech detection
+#    gain: 24          # its microphone is raised by this before speech detection
 #    pending_color: "#FFA000"   # its LED ring while notifications are unread (null: leave it alone)
 # satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)
 

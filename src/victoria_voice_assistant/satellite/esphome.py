@@ -170,6 +170,7 @@ class Run:
     listening: bool = True
     audio_s: float = 0.0  # audio received this turn, and its raw peak level (before `gain`), for the log
     peak: int = 0
+    audio: bytearray = field(default_factory=bytearray)  # after `gain`: its loudness is logged too
     timers: list[asyncio.TimerHandle] = field(default_factory=list)
 
 
@@ -340,7 +341,7 @@ class SatelliteSession:
                 preprocessor,
                 TimingStartProcessor(timer),
                 router,
-                VoiceTurnTracker(self.state, preprocessor),
+                VoiceTurnTracker(self.state, preprocessor, retry=lambda: self.task.queue_frame(LLMRunFrame())),
                 TimingEndProcessor(timer),
                 speech.tts(),
                 self.output,
@@ -414,7 +415,9 @@ class SatelliteSession:
         self.run.audio_s += samples.size / SAMPLE_RATE_IN
         if samples.size:
             self.run.peak = max(self.run.peak, int(np.abs(samples.astype(np.int32)).max()))
-        frame = InputAudioRawFrame(audio=raise_level(data, self.settings.gain), sample_rate=SAMPLE_RATE_IN, num_channels=1)
+        raised = raise_level(data, self.settings.gain)
+        self.run.audio += raised
+        frame = InputAudioRawFrame(audio=raised, sample_rate=SAMPLE_RATE_IN, num_channels=1)
         await self.task.queue_frame(frame)
 
     async def handle_stop(self, abort: bool) -> None:
@@ -453,17 +456,27 @@ class SatelliteSession:
         self.send(E.VOICE_ASSISTANT_INTENT_START)  # the LED ring shows it thinking
 
     def _no_speech(self) -> None:
-        from aioesphomeapi.model import VoiceAssistantEventType as E
-
         if self.run is not None and not self.run.heard_speech:
             logger.info("Satellite heard no speech", extra={"event": "satellite_no_speech", "device": self.name, **self._audio_stats()})
-            self.send(E.VOICE_ASSISTANT_STT_VAD_END)
+            # RUN_END alone, while the device is still streaming, always stops its mic and returns it to
+            # idle. Sent right after STT_VAD_END it could land while the mic was stopping, which the
+            # firmware ignores, leaving it waiting for a reply forever (2026-11-02, after a follow-up).
             self._end_run()
 
     def _audio_stats(self) -> dict[str, float]:
+        """For the log: how much audio came, its raw peak, and its loudness after `gain` on Pipecat's 0-1
+        scale, the one speech detection's `min_volume` gate (0.6) uses."""
         if self.run is None:
             return {}
-        return {"duration_s": round(self.run.audio_s, 1), "peak": self.run.peak}
+        stats: dict[str, float] = {"duration_s": round(self.run.audio_s, 1), "peak": self.run.peak}
+        if self.run.audio_s >= 0.5:
+            from pipecat.audio.utils import calculate_audio_volume
+
+            try:
+                stats["volume"] = round(calculate_audio_volume(bytes(self.run.audio), SAMPLE_RATE_IN), 2)
+            except ValueError:
+                pass
+        return stats
 
     def _no_reply(self) -> None:
         if self.run is not None:
@@ -536,11 +549,16 @@ class SatelliteSession:
                     self.client.send_voice_assistant_timer_event(T.VOICE_ASSISTANT_TIMER_CANCELLED, timer_id, None, 0, 0, False)
                 self._known_timers = set(running) | (self._known_timers & ringing)
             elif event.kind == "ring":
-                for timer in timers.ringing(self.name):
+                finished = timers.ringing(self.name)
+                for timer in finished:
                     self.client.send_voice_assistant_timer_event(
                         T.VOICE_ASSISTANT_TIMER_FINISHED, timer.id, timer.name, int(timer.duration_s), 0, False
                     )
                     self._known_timers.discard(timer.id)
+                if finished:
+                    # The satellite rings, and its "stop" word or button stop it; nothing tells us when, so
+                    # the timer is done here once the device has it.
+                    await timers.stop_ringing(self.name)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Satellite timer not sent", extra={"event": "satellite_send_failed", "device": self.name, "reason": str(exc)})
 

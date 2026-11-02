@@ -299,8 +299,9 @@ class SatelliteConfig(Schema):
     port: int = Field(default=6053, gt=0, lt=65536)
     key: str | None = None  # the device's API encryption key, e.g. "${SATELLITE1_API_KEY}"
     # Its microphone level is raised by this factor before speech detection: the Satellite1's clean
-    # (unclipped) channel is quiet (Stage 12 findings).
-    gain: float = Field(default=8.0, gt=0, le=64)
+    # (unclipped) channel is quiet (Stage 12 findings). At 8, speech sat at Pipecat's speech-detection
+    # loudness gate (`min_volume` 0.6, about -50 LUFS) and some turns heard no speech (2026-11-02).
+    gain: float = Field(default=24.0, gt=0, le=64)
     # The LED ring's colour while notifications are unread for this satellite (architecture §10.3's
     # pending indicator); null leaves the ring alone.
     pending_color: str | None = Field(default="#FFA000", pattern=r"^#[0-9A-Fa-f]{6}$")
