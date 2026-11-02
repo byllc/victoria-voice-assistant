@@ -111,9 +111,22 @@ def create_app(
         services.notifications = NotificationService(settings, database, push=PushService(settings, database))
         services.notifications.start()
         tasks = TaskService(database)
-        tasks.start()
+        for task in tasks.start():
+            # A restart cut it off: say so, rather than leave it to be found on the dashboard.
+            services.notifications.post(
+                source=task.agent,
+                kind="error",
+                headline=f"{task.agent[:1].upper()}{task.agent[1:]}'s task was cut off by a restart.",
+                summary=f"“{task.request}” didn't finish. Retry it from the Tasks tab.",
+                full=None,
+                target=task.device,
+                task_id=task.id,
+            )
         services.agents = AgentRunner(manager.current, services, tasks, SpendLog(database))
-        services.health = HealthMonitor(manager.current)
+        from victoria_voice_assistant.health import local_web_url
+        from victoria_voice_assistant.storage.backup import default_backup_dir
+
+        services.health = HealthMonitor(manager.current, backup_dir=default_backup_dir(database), web_url=local_web_url())
         if os.environ.get("ASSISTANT_HEALTH", "1") != "0":
             services.health.start()
         hub = ChatHub()

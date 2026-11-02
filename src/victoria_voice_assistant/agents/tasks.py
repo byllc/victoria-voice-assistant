@@ -75,12 +75,19 @@ class TaskService:
         self._pending: set[asyncio.Task] = set()
         self._answers: dict[str, asyncio.Future[str]] = {}
 
-    def start(self) -> None:
-        """Tasks left running when the service stopped can't be resumed: mark them failed."""
+    def start(self) -> list[Task]:
+        """Tasks left running when the service stopped can't be resumed: mark them failed and return them
+        (so the user can be told; Stage 11)."""
         if self.database_path is None:
-            return
+            return []
         now = self._clock()
         with self._connect() as connection:
+            interrupted = [
+                row[0]
+                for row in connection.execute(
+                    f"SELECT id FROM tasks WHERE state IN ({', '.join('?' * len(ACTIVE_STATES))})", ACTIVE_STATES
+                )
+            ]
             stale = connection.execute(
                 f"UPDATE tasks SET state = 'failed', error = 'the assistant restarted', updated_at = ? "
                 f"WHERE state IN ({', '.join('?' * len(ACTIVE_STATES))})",
@@ -101,6 +108,7 @@ class TaskService:
                     tuple(self._tasks),
                 ):
                     self._tasks[task_id].progress.append((at, text))
+        return [self._tasks[task_id] for task_id in interrupted if task_id in self._tasks]
 
     def add_listener(self, listener: TaskListener) -> None:
         self._listeners.append(listener)

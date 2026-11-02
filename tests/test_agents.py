@@ -194,9 +194,11 @@ def test_unknown_and_unsupported_agents_are_spoken(example_config_dir: Path) -> 
 def test_tasks_left_running_by_a_restart_are_marked_failed(tmp_path: Path) -> None:
     database = migrate(tmp_path / "a.sqlite3")
     TaskService(database).create("helper", "web", "x", "wait")
-    TaskService(database).start()
+    interrupted = TaskService(database).start()
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT state, error FROM tasks").fetchone() == ("failed", "the assistant restarted")
+    assert [(t.agent, t.request) for t in interrupted] == [("helper", "x")]  # returned, so the user is told
+    assert TaskService(database).start() == []  # only once
 
 
 def test_ask_helper_goes_straight_to_the_agent(example_config_dir: Path) -> None:
