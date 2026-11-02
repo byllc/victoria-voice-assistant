@@ -1,6 +1,6 @@
-# Home Voice Assistant Architecture (Draft v2.10)
+# Home Voice Assistant Architecture (Draft v2.11)
 
-Owner: Bill · Updated: 2026-11-02 (v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
+Owner: Bill · Updated: 2026-11-02 (v2.11: satellites at household scale; v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
 
 ## 1. Goal
 
@@ -89,6 +89,8 @@ That leaves room for one mid-size local agent model (for example a ~30B model at
 - **Built-in services** (§8): web search, weather, timers, and music control. These are the core Alexa features, so they live in the assistant service with their own config blocks, shared by the fast model and model agents.
 - **Task manager and notification service:** tracks background agent tasks and delivers results, questions, and alerts through notifications with priorities, quiet hours, and a pending indicator (§10).
 - **Session store:** per-device context (room, recent turns, pending question) and the device registry.
+- **Device registry** (`tools.yaml`): each satellite belongs to a room, and a room may have several. Each room names its music player, its Home Assistant area (so "turn off the lights" means that room's lights) and its Echo for relays; the music rooms and relay targets read from it. Satellites added to or removed from it connect or disconnect without a restart, and each one's connection state feeds the health checks.
+- **Wake-word arbitration:** when several satellites wake on the same words within a short, configurable window (about 0.5 s), one turn goes ahead: the satellite with an open question or a ringing timer, else the one whose audio after the wake word has the highest speech level against its own background noise (plus a per-satellite offset), with near-ties going to the first to report. The others end quietly and their audio never reaches Whisper. The window passes while the user is still speaking, so it adds no wait. Every decision is logged with its scores.
 
 ### 4.1 Web interface and example client
 
@@ -117,6 +119,7 @@ The web interface passes a signed session token with each proxied request, so th
 - **Stub setup notices** with their full setup steps (§8).
 - **Now playing** music, with play, pause, and skip.
 - **Room picker:** the browser acts as a device in a chosen room, so "play music here" and timers use that room.
+- **Satellite view,** beside the task dashboard and updated live: each satellite's room, whether it is online, its voice state (idle, listening, thinking, replying, announcing), its latest request and reply, its timers, and what it is playing, at what volume and in which group. Any household login can add a satellite to the stream another one plays or remove it, start or stop playback, and set its volume.
 
 **Task dashboard.** A view in the example client, not a separate app. It shows every agent task, updated live over the client's existing websocket:
 
@@ -155,7 +158,7 @@ The same information is available by voice through a built-in `tasks` tool: "Wha
 | Pitfall | Safeguard |
 |---|---|
 | **Blocking the event loop.** Pipecat runs on one asyncio loop that carries audio for every device. Python work around inference (Kokoro text preparation, resampling) can hold it and make every stream stutter. | Run all speech inference on background threads. Measure event-loop lag continuously and log any stall over ~20 ms. |
-| **Simultaneous requests.** One Whisper and one Kokoro instance serve all devices, and MLX models shouldn't be called from several threads at once. | A lock or queue per model; requests from a second room wait their turn. Log queue time. |
+| **Simultaneous requests.** One Whisper and one Kokoro instance serve all devices, and MLX models shouldn't be called from several threads at once. | A lock or queue per model; requests from a second room wait their turn. Log queue time. Turn-detection models are shared between satellites where Pipecat allows, rather than loaded once per satellite. |
 | **One crash stops everything.** A native-code crash (Metal/MLX, ONNX Runtime, speech libraries) takes down every satellite, the chat connection, and the fast path. A leak in one model grows the whole process. | `launchd` restarts the service automatically. Timers and pending agent tasks are persisted in SQLite. Monitor process memory. |
 | **Slow restarts.** Restarting to fix tool code also reloads the speech models. | Load models in parallel at startup and accept requests only once they're ready; keep tool reloads (`tools.yaml`) restart-free. |
 | **Dependency clashes.** Whisper (MLX), Kokoro (ONNX Runtime and its pronunciation libraries), Pipecat, Playwright, and tool libraries share one Python environment. | Pin every version with a lock file; upgrade one component at a time. |
@@ -555,13 +558,13 @@ Music runs through **Music Assistant**, an open-source music server, rather than
 
 - **Spotify:** the Spotify Web API only controls playback on Spotify Connect devices, and the satellites aren't Connect devices. It also restricts development-mode apps: since February 2026 they need a Premium account owner and allow 5 users, which is fine for a household but limits what a home-built app can do. Music Assistant already has a Spotify provider that streams Spotify to any of its players.
 - **Plex:** Music Assistant has a Plex provider that reads the library from the existing Plex Media Server. (Plexamp is a Plex player app; the library lives on the Plex server, which is what Music Assistant uses.)
-- **Speakers:** Music Assistant plays to Sonos, AirPlay, Google Cast, Snapcast, Squeezelite, DLNA, Home Assistant media players, and Sendspin (its own protocol, with an ESPHome component for ESP32 devices). Rooms can be grouped for synced playback.
+- **Speakers:** Music Assistant plays to Sonos, AirPlay, Google Cast, Snapcast, Squeezelite, DLNA, Home Assistant media players, and Sendspin (its own protocol, with an ESPHome component for ESP32 devices). Rooms can be grouped for synced playback. **The satellites are players too:** their firmware includes a Sendspin player, and Music Assistant connects to it directly (not through Home Assistant or the ESPHome API). Music Assistant's sync groups play one stream on any set of satellites and speakers, and members can be added and removed while it plays: by voice ("play … in the kitchen and the office", "add the bedroom") or from the satellite view.
 
 How the assistant uses it:
 
 - **Control** goes through Music Assistant's Python client (`music-assistant-client`) over its API: search, play, pause, skip, volume, now playing.
 - **Search order:** if no source is named, the library in `source_order` is searched first (Plex), then Spotify. "On Spotify" or "from Plex" in the request overrides it.
-- **Room:** music plays in the room of the device that heard the request, using the `rooms` map. "In the kitchen" overrides it. The satellite's small speaker can be the player, but a real speaker in each room is better for music.
+- **Room:** music plays in the room of the device that heard the request, using the `rooms` map. "In the kitchen" overrides it. Music plays on both kinds of player (Bill, 2026-11-02): the satellite's own speaker, or a real speaker where a room has one, alone or grouped. Ducking during a voice turn ducks only the satellite that heard it.
 - **Ducking:** when the wake word fires, music in that room drops to `duck_level` and returns to normal after the reply.
 - **Replies** are templated ("Playing Kind of Blue by Miles Davis from Plex"), with no second model call.
 
@@ -694,6 +697,8 @@ A notification service, part of the task manager, owns everything the assistant 
 - "What did Hermes say?" replays the last result from that agent.
 - After any other request in that room, the assistant adds one short line: "By the way, you have a message from Hermes." This happens once per notification, not after every reply.
 
+**Announcements to several rooms** ("announce dinner's ready everywhere") are synthesized once and the same audio is sent to each satellite. Timers and notifications still go only to their own room.
+
 **Grouping:** several notifications ready at the same time are announced together ("Two updates: Hermes finished the meal plan, and Claude answered your question about leeks").
 
 **Fallbacks:** if the target satellite is offline, use another satellite in the same room; failing that, the chat client and a phone push.
@@ -768,7 +773,7 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 - **Voice is unauthenticated:** anyone near a satellite, or audio from a TV, can issue commands, including cloud requests that cost money. Confirmation for risky tools, restricted agent profiles, and (later) speaker ID mitigate this.
 - **Tool and agent latency:** web search and cloud models depend on external services. Per-tool and per-model timeouts with a spoken fallback ("I couldn't reach Claude").
 - **Music and the microphone:** the Satellite1's echo cancellation can only remove audio it plays itself. Music from a separate speaker in the same room will make wake-word detection and transcription harder. Ducking helps; test with music playing at normal volume.
-- **Sendspin is experimental:** ESPHome marks its Sendspin component as experimental, and it isn't yet known whether it coexists with the voice assistant on one device. Prefer existing speakers for music in version 1.
+- **Sendspin is experimental:** ESPHome marks its Sendspin component as experimental and Music Assistant calls its Sendspin support a technical preview (only one Music Assistant server on a network may use it). Whether wake-word detection holds up while a satellite plays music itself, and how ten streams fare on Wi-Fi (Opus rather than FLAC), are Stage 13's first checks.
 - **Spotify policy:** Spotify has tightened its developer API repeatedly. Going through Music Assistant keeps that dependency in one maintained project rather than in our code.
 - **Timer "stop" word:** if the Satellite1 can't listen for "stop" without the wake word, stopping a ringing timer is clumsier. *Its firmware has a "stop" word, enabled while a timer rings (Stage 12; still to be tried by voice).*
 - **Tool sprawl:** the test command and the ~15-tool guideline are the guardrails.
@@ -784,7 +789,7 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 
 ## 13. Open questions
 
-1. Which speakers should play music in each room: the satellites themselves, or existing speakers (Sonos, AirPlay, Cast)?
+1. ~~Which speakers should play music in each room: the satellites themselves, or existing speakers (Sonos, AirPlay, Cast)?~~ Both (Bill, 2026-11-02).
 2. Which model should Hermes use by default: a local model in LM Studio (private, competes for the GPU) or a cloud model (faster for long jobs, costs money)?
 3. Should the system identify who is speaking (per-person calendars, lists, permissions), or treat the household as one user?
 4. HTTPS on the LAN: a local certificate authority (`mkcert`) or Tailscale certificates? Tailscale also gives safe access from outside the home.
