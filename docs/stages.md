@@ -16,7 +16,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 9 | Home control | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 10 | Music | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 11 | Hardening | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
-| 12 | Satellites (optional) | not started | | | |
+| 12 | Satellites (optional) | in progress | 2026-11-01 | | |
 
 ## Stage 0: Tracker, instructions, repo
 - Status: approved
@@ -275,6 +275,21 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Carried-in fix, `assistant web --config-dir`: it read the household password from the default `config/.env` even when given another folder (found in Stage 10). It now points the app at that folder first. Test: `tests/test_secrets.py`.
   - Carried-in fix, Hermes after a cancel (Stage 8 finding: Hermes kept retrying a cancelled job for up to 45 minutes, stalling the next one). Bill chose restarting Hermes ("Restart Hermes"). New agent setting `restart_on_cancel: <LaunchAgent label>`: when one of the agent's tasks is cancelled or times out, the runner runs `launchctl kickstart -k` on it (Hermes's `run.sh` removes the old container as it starts) and notes "Restarting Hermes to stop the job" on the task. Set for Hermes in `config/agents.yaml` and the example. Live: "ask hermes to write a 1500 word story about a lighthouse keeper" -> "Cancel the Hermes task." -> "Cancelled Hermes's task."; Hermes restarted (new process; "Agent restarted after a stop"), answered again, and the next request, "ask hermes what two plus two is", finished: "Two plus two is four." Test: `tests/test_agents.py` (cancel and timeout). Restarting stops anything else Hermes was doing at that moment (Bill accepted).
 - Bill's review notes: Approved by Bill / 2026-11-01 ("approve stage 11"), before three done criteria were met. Carried over: one week of daily use with issues logged; the end-to-end benchmark (on the target Mac mini, at the end); the runbook (not written yet) and its review; the crash checks on the Mac mini; weather's home location in `config/tools.yaml`.
+
+## Stage 12: Satellites (optional)
+- Status: in progress
+- Done criteria:
+  - [ ] Compatibility findings reviewed by Bill, and the adapter approach agreed, before adapter code is written.
+  - [ ] One satellite handles wake word → command → reply for timers, weather, search, agents, home control, and music.
+  - [ ] Pending notifications light the satellite.
+  - [ ] Clarifying questions reopen the mic without the wake word (or the documented fallback works).
+  - [ ] A timer rings on the right device and stops by voice or button.
+  - [ ] Home Assistant's own behaviour with the device is documented and acceptable to Bill.
+  - [ ] After Bill's go-ahead, all satellites are moved over.
+- Blocking decisions: the outcome of the compatibility checks.
+- Evidence:
+  - Starting point (read-only, from Home Assistant's states): one FutureProofHomes Satellite1, "Bill's Office Satelite" (ESPHome device `satellite1-34bf90`), with an Assist satellite, LED ring, action button, wake sound and mic mute switches, Snapcast switch, speaker output select and XMOS firmware sensor; every entity unavailable (the device is offline). Music Assistant lists its speaker as "Bill s Office", also unavailable.
+- Bill's review notes:
 
 ## Decisions log
 | Date | Stage | Proposal or decision | Bill's answer |
