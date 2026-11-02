@@ -264,7 +264,7 @@ class MusicService:
 
     def _room_for_device(self, device: str) -> str | None:
         for name, room in (self.config.rooms if self.config else {}).items():
-            if room.satellite and room.satellite == device:
+            if device in room.satellites or room.satellite == device:
                 return name
         return None
 

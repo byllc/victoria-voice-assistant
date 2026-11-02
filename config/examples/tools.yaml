@@ -206,19 +206,24 @@ music:                             # Music Assistant (docs/music.md)
   server: http://homeassistant.local:8095
   token: "${MUSIC_ASSISTANT_TOKEN:-}"
   source_order: [plex, spotify]    # searched in this order unless the request names a source
-  rooms: {}                        # optional: room names and aliases for players, and a satellite's room
-  #  exercise room: { player: Exercise room speaker, aliases: [gym] }
-  #  office: { player: Bill's Mac mini, satellite: office }
   duck_level: 20                   # music volume while someone talks to the assistant
 
 
-# ESPHome voice satellites (Stage 12; docs/satellites.md). The name is the
-# device name: a music room whose `satellite:` is this name is its room. The key is the device's API
-# encryption key, set with `assistant secrets set SATELLITE1_API_KEY` (our build of its firmware uses it).
+# The device registry (Stage 13): what each room has. Satellites name their room below; music plays on a
+# room's player, "turn off the lights" from a satellite means its room's Home Assistant area, and
+# "ask Alexa" goes to its Echo. (The older `music.rooms` still works and is folded in.)
+rooms: {}
+#  exercise room: { player: Exercise room speaker, aliases: [gym] }
+#  office: { player: Bill's Mac mini, area: Office, echo: media_player.office_echo }
+
+# ESPHome voice satellites (Stage 12; docs/satellites.md). The name is the device name. The key is the
+# device's API encryption key, set with `assistant secrets set SATELLITE1_API_KEY` (our build of its
+# firmware uses it).
 satellites: {}
 #  office:
 #    host: satellite1-xxxxxx.local
 #    key: "${SATELLITE1_API_KEY:-}"
+#    room: office      # its room in `rooms`; default: the room with its own name
 #    gain: 24          # its microphone is raised by this before speech detection
 #    pending_color: "#FFA000"   # its LED ring while notifications are unread (null: leave it alone)
 # satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)

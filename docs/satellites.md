@@ -39,7 +39,7 @@ Find its address afterwards from your router, or use its mDNS name: `satellite1-
 
 ### 3. Tell the assistant about it
 
-Add it to `config/tools.yaml`. The name is how the assistant refers to the device, and the name a music room uses for it (`music.rooms.<room>.satellite`):
+Add it to `config/tools.yaml`. The name is how the assistant refers to the device; `room` puts it in a room of the device registry (`rooms`, by default the room with the satellite's own name), whose player, Home Assistant area and Echo it then uses:
 
 ```yaml
 satellites:
@@ -48,6 +48,7 @@ satellites:
     key: "${SATELLITE1_API_KEY}"
 #   port: 6053      # the ESPHome API port
 #   gain: 24        # the microphone is raised by this before speech detection (its clean channel is quiet)
+#   room: office    # its room in `rooms`; default: the room with its own name
 #   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
 ```
@@ -60,7 +61,15 @@ launchctl kickstart -k gui/$(id -u)/com.victoria.voice-assistant
 
 Satellites are read when the assistant starts. Changes under `satellites:`, and tool changes a connected satellite should use, take effect at the next restart. Browser sessions pick up configuration changes without one.
 
-To tie it to a room for music, add `satellite: office` to that room under `music.rooms` ([music.md](music.md)).
+Give its room what the room has, under `rooms` (several satellites can share a room):
+
+```yaml
+rooms:
+  office:
+    player: Bill's Mac mini      # music played here ([music.md](music.md))
+    area: Office                 # "turn off the lights" from this satellite means the Office's lights
+    echo: media_player.office_echo   # "ask Alexa" goes to this Echo
+```
 
 ### 4. Check it connected
 

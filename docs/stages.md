@@ -329,6 +329,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - the wake-word arbitration window;
   - the architecture changes proposed in the decisions log (2026-11-02).
 - Evidence:
+  - Device registry (2026-11-02): `rooms:` at the top level of `tools.yaml` lists each room's music player, Home Assistant area and Echo; each satellite names its room (`satellites.<name>.room`, by default the room with its own name), and a room can have several. `victoria_voice_assistant/rooms.py` answers "which room is this device in". Music reads its rooms from the registry (the older `music.rooms` still works, folded in), the Alexa relay finds the asking room's Echo there, and "turn off the lights" from a satellite means its room's area. Tests (`tests/test_rooms.py`): several satellites in one room, the default room, the older form folded in, the relay choosing the asking room's Echo, and "the lights" meaning the room's area while a named device still wins. 324 passed. Bill's config (no rooms yet) still loads, and the assistant restarted cleanly with the satellite connected.
 - Bill's review notes:
 
 ## Stage 14: Carried-over fixes and checks

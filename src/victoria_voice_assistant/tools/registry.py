@@ -12,6 +12,7 @@ import httpx
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 
 from victoria_voice_assistant.config.schema import AgentsConfig, ToolConfig, ToolsConfig
+from victoria_voice_assistant.rooms import room_config
 from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
@@ -512,8 +513,9 @@ def _home_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -> T
     if tool.kind == "mcp":
         control = HomeControl(home, tool.entities.domains if tool.entities else None)
 
-        async def home_control(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
-            return await control.handle(arguments)
+        async def home_control(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            room = room_config(tools, ctx.device)
+            return await control.handle(arguments, area=room.area if room else None)
 
         return home_control
     try:

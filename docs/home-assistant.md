@@ -31,6 +31,6 @@
 
 ## How targets are matched
 
-The labelled entities, their names, aliases and areas are read from Home Assistant's registries (refreshed every minute). A spoken target matches, in order: an entity whose distinguishing words were all said ("bedroom light" in "the bedroom lights"); an area ("the kitchen": the labelled lights, switches, fans and covers there); then a name the words are part of ("front door" for "Front Door Lock"). The matched entity's exact name is passed to Home Assistant's intent, so it never acts on something unlabelled with a similar name.
+The labelled entities, their names, aliases and areas are read from Home Assistant's registries (refreshed every minute). A spoken target matches, in order: an entity whose distinguishing words were all said ("bedroom light" in "the bedroom lights"); an area ("the kitchen": the labelled lights, switches, fans and covers there); then a name the words are part of ("front door" for "Front Door Lock"). A target that matches nothing ("turn off the lights") means the asking device's room: its `area` in the device registry (`rooms` in `tools.yaml`, Stage 13), so a satellite in the office turns off the Office's labelled lights. The matched entity's exact name is passed to Home Assistant's intent, so it never acts on something unlabelled with a similar name.
 
 Labels and aliases make names easier to say: add an alias in Home Assistant ("lamp" for "Hue white lamp 1") and the assistant picks it up within a minute.

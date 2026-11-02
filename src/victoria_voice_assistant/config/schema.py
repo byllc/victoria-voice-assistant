@@ -264,9 +264,22 @@ class NotificationsConfig(Schema):
 
 
 class MusicRoomConfig(Schema):
+    """Older form of a room with a player (`music.rooms`); folded into the device registry (`rooms`), which
+    then fills this in for the music service: every room with a player, and the satellites in it."""
+
     satellite: str | None = None  # the device in this room (its requests play here)
     player: str  # Music Assistant player id or name
     aliases: list[str] = Field(default_factory=list)  # other ways to say the room
+    satellites: list[str] = Field(default_factory=list)  # filled in from `rooms` and `satellites`
+
+
+class RoomConfig(Schema):
+    """One room in the device registry (architecture §4): what it has. Satellites name their room."""
+
+    aliases: list[str] = Field(default_factory=list)  # other ways to say the room
+    player: str | None = None  # its Music Assistant player (id or name)
+    area: str | None = None  # its Home Assistant area: "turn off the lights" there means these
+    echo: str | None = None  # its Echo (a media_player entity), for relays such as "ask Alexa"
 
 
 class MusicConfig(Schema):
@@ -305,6 +318,7 @@ class SatelliteConfig(Schema):
     # The LED ring's colour while notifications are unread for this satellite (architecture §10.3's
     # pending indicator); null leaves the ring alone.
     pending_color: str | None = Field(default="#FFA000", pattern=r"^#[0-9A-Fa-f]{6}$")
+    room: str | None = None  # its room in `rooms`; default: the room with the satellite's own name
 
 
 class ToolTestGiven(Schema):
@@ -353,7 +367,8 @@ class ToolsConfig(Schema):
     music: MusicConfig | None = None
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
-    satellites: dict[str, SatelliteConfig] = Field(default_factory=dict)  # device name (as in music.rooms) -> satellite
+    rooms: dict[str, RoomConfig] = Field(default_factory=dict)  # the device registry: room -> what it has
+    satellites: dict[str, SatelliteConfig] = Field(default_factory=dict)  # device name -> satellite
     satellite_audio_port: int = Field(default=8767, gt=0, lt=65536)  # where every satellite fetches replies (LAN, HTTP)
     tests: list[ToolTestConfig] = Field(default_factory=list)
 
@@ -376,6 +391,31 @@ class ToolsConfig(Schema):
         names = [tool.name for tool in self.tools]
         if len(names) != len(set(names)):
             raise ValueError("tool names must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def build_device_registry(self) -> ToolsConfig:
+        """One registry (Stage 13): `music.rooms` (the older form) folds into `rooms`, each satellite gets
+        its room, and `music.rooms` is then filled from `rooms` for the music service."""
+        music_rooms = self.music.rooms if self.music else {}
+        for name, old in music_rooms.items():
+            room = self.rooms.setdefault(name, RoomConfig())
+            room.player = room.player or old.player
+            room.aliases = list(dict.fromkeys([*room.aliases, *old.aliases]))
+            if old.satellite in self.satellites and self.satellites[old.satellite].room is None:
+                self.satellites[old.satellite].room = name
+        for name, satellite in self.satellites.items():
+            satellite.room = satellite.room or name
+        if self.music is not None:
+            self.music.rooms = {
+                name: MusicRoomConfig(
+                    player=room.player,
+                    aliases=room.aliases,
+                    satellites=[s for s, sat in self.satellites.items() if sat.room == name],
+                )
+                for name, room in self.rooms.items()
+                if room.player
+            }
         return self
 
 
