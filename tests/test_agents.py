@@ -96,7 +96,7 @@ def _said(events: list[TaskEvent]) -> list[str]:
     return [event.text or "" for event in events if event.kind == "say"]
 
 
-def test_wait_mode_acknowledges_then_says_the_result(example_config_dir: Path, tmp_path: Path) -> None:
+def test_a_quick_result_is_the_reply(example_config_dir: Path, tmp_path: Path) -> None:
     database = migrate(tmp_path / "a.sqlite3")
 
     async def scenario():
@@ -106,8 +106,8 @@ def test_wait_mode_acknowledges_then_says_the_result(example_config_dir: Path, t
         return outcome, events, agent_runner
 
     outcome, events, agent_runner = run(scenario())
-    assert outcome.speak == "Asking Helper." and outcome.result["agent"] == "helper"
-    assert _said(events) == ["Leek and potato soup."]
+    assert outcome.speak == "Leek and potato soup." and outcome.result["agent"] == "helper"
+    assert _said(events) == []  # no "working on it" and no second message
     task = agent_runner.tasks.get(outcome.result["task_id"])
     assert task is not None and task.state == "finished" and task.input_tokens == 40
     with sqlite3.connect(database) as connection:
@@ -123,25 +123,24 @@ def test_background_mode_reports_back(example_config_dir: Path) -> None:
         return outcome, events
 
     outcome, events = run(scenario())
-    assert outcome.speak == "Asking Butler. I'll let you know when it's done."
+    assert outcome.speak == "Butler is working on that for you."
     assert _said(events) == ["Butler has finished. Leek and potato soup."]
 
 
-def test_auto_mode_says_it_is_still_working_after_wait_s(example_config_dir: Path) -> None:
+def test_auto_mode_reports_a_slow_result_without_a_still_working_notice(example_config_dir: Path) -> None:
     async def slow(agent, task) -> AgentReply:
         await asyncio.sleep(0.15)
         return AgentReply("Done planning.")
 
     async def scenario():
         agent_runner, events = _runner(_config(example_config_dir), reply=slow)
-        await agent_runner.ask("slowpoke", "plan a trip", "web")
+        outcome = await agent_runner.ask("slowpoke", "plan a trip", "web")
         await asyncio.sleep(0.3)
-        return events
+        return outcome, events
 
-    assert _said(run(scenario())) == [
-        "Slowpoke is still working on it. I'll let you know when it's done.",
-        "Slowpoke has finished. Done planning.",
-    ]
+    outcome, events = run(scenario())
+    assert outcome.speak == "Slowpoke is working on that for you."  # past wait_s: a long task
+    assert _said(events) == ["Slowpoke has finished. Done planning."]
 
 
 def test_failures_timeouts_and_cancels_are_recorded(example_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,7 +153,7 @@ def test_failures_timeouts_and_cancels_are_recorded(example_config_dir: Path, mo
 
     async def scenario():
         failing, failed_events = _runner(_config(example_config_dir), reply=broken)
-        failed = await failing.ask("helper", "x", "web")
+        failed = await failing.ask("helper", "x", "web")  # the error is the reply
         await _settle(failing)
 
         monkeypatch.setattr(runner_module, "AGENT_TIMEOUT_S", 0.05)
@@ -164,12 +163,12 @@ def test_failures_timeouts_and_cancels_are_recorded(example_config_dir: Path, mo
 
         monkeypatch.setattr(runner_module, "AGENT_TIMEOUT_S", 10)
         stoppable, stop_events = _runner(_config(example_config_dir), reply=endless)
-        stopped = await stoppable.ask("helper", "x", "web")
+        stopped = await stoppable.ask("helper", "x", "web", inline=False)
         await asyncio.sleep(0.01)
         assert stoppable.tasks.cancel(stopped.result["task_id"])
         await _settle(stoppable)
         return (
-            (failing.tasks.get(failed.result["task_id"]), _said(failed_events)),
+            (failing.tasks.get(failed.result["task_id"]), [failed.speak, *_said(failed_events)]),
             (slow.tasks.get(timed.result["task_id"]), _said(slow_events)),
             (stoppable.tasks.get(stopped.result["task_id"]), _said(stop_events)),
         )
@@ -222,7 +221,7 @@ def test_ask_helper_goes_straight_to_the_agent(example_config_dir: Path) -> None
 
     down, events = run(scenario())
     messages = [f.message for f in down if isinstance(f, OutputTransportMessageFrame)]
-    assert messages == [{"type": "token", "text": "Asking Helper."}, {"type": "done"}]
+    assert messages == [{"type": "token", "text": "Leek and potato soup."}, {"type": "done"}]
     assert all(not f.run_llm for f in down if isinstance(f, LLMMessagesAppendFrame))  # no model call
     assert events[-1].task.request == "what to make with leeks"
 
@@ -313,19 +312,19 @@ def test_long_replies_are_shortened_by_the_summarizer_or_cut() -> None:
     )
 
 
-def test_result_event_carries_short_speech_and_full_text(example_config_dir: Path) -> None:
+def test_a_long_result_is_spoken_short_with_the_full_text_in_chat(example_config_dir: Path) -> None:
     async def long_reply(agent, task) -> AgentReply:
         return AgentReply(LEEKS_MARKDOWN)
 
     async def scenario():
         agent_runner, events = _runner(_config(example_config_dir), reply=long_reply)
         agent_runner._summarizer = lambda: None  # type: ignore[method-assign]
-        await agent_runner.ask("helper", "leeks", "web")
+        outcome = await agent_runner.ask("helper", "leeks", "web")
         await _settle(agent_runner)
-        return [e for e in events if e.kind == "say"]
+        return outcome
 
-    (event,) = run(scenario())
-    assert event.full == LEEKS_MARKDOWN and len(event.text or "") <= 280 and "**" not in (event.text or "")
+    outcome = run(scenario())
+    assert outcome.chat == LEEKS_MARKDOWN and len(outcome.speak or "") <= 280 and "**" not in (outcome.speak or "")
 
 
 def _task_service() -> TaskService:
@@ -398,7 +397,7 @@ def test_a_cancelled_or_timed_out_task_restarts_the_agents_service(example_confi
 
     async def scenario():
         agents, _ = _runner(config, reply=endless)
-        stopped = await agents.ask("helper", "x", "web")
+        stopped = await agents.ask("helper", "x", "web", inline=False)
         await asyncio.sleep(0.01)
         agents.tasks.cancel(stopped.result["task_id"])
         await _settle(agents)

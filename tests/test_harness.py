@@ -130,8 +130,8 @@ def test_ask_hermes_streams_from_its_gateway(example_config_dir: Path, stand_in)
         return outcome, events, agent_runner
 
     outcome, events, agent_runner = asyncio.run(scenario())
-    assert outcome.speak == "Asking Hermes."
-    assert [e.text for e in events if e.kind == "say"] == ["Your meal plan is ready."]
+    assert outcome.speak == "Your meal plan is ready."  # a quick result is the reply
+    assert [e.text for e in events if e.kind == "say"] == []
     task = agent_runner.tasks.get(outcome.result["task_id"])
     assert task.state == "finished" and task.model == "hermes"
     request = server.requests[0]
@@ -170,10 +170,10 @@ def test_unreachable_or_keyless_hermes(example_config_dir: Path) -> None:
 
     async def scenario():
         down, down_events = _runner(_config(example_config_dir, dead_port))
-        await down.ask("hermes", "x", "web")
+        reply = await down.ask("hermes", "x", "web")
         await _settle(down, seconds=20)
         keyless, _ = _runner(_config(example_config_dir, dead_port, key=None))
-        return [e.text for e in down_events if e.kind == "say"], await keyless.ask("hermes", "x", "web")
+        return [reply.speak, *(e.text for e in down_events if e.kind == "say")], await keyless.ask("hermes", "x", "web")
 
     said, keyless = asyncio.run(scenario())
     assert said == ["I can't reach Hermes right now."]
