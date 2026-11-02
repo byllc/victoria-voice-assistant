@@ -17,7 +17,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 10 | Music | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 11 | Hardening | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 12 | Satellites (optional) | approved | 2026-11-01 | | Bill / 2026-11-02 |
-| 13 | Satellites at household scale (optional) | not started | | | |
+| 13 | Satellites at household scale (optional) | in progress | 2026-11-02 | | |
 | 14 | Carried-over fixes and checks | not started | | | |
 
 ## Stage 0: Tracker, instructions, repo
@@ -311,7 +311,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 - Bill's review notes: Approved by Bill / 2026-11-02 ("aporve phase 12"), with the open items moved to Stage 14 ("lets move the remaining bugs/issues to phase 14"): wake word → command → reply for search, agents, home control and music; the pending light with a real notification; answering a clarifying question; Home Assistant's behaviour accepted; all satellites moved over; plus the router model's failures, streamed replies, the satellite's own wake-word check, and the timer reply wording.
 
 ## Stage 13: Satellites at household scale (optional)
-- Status: not started
+- Status: in progress
 - Done criteria:
   - [ ] Check findings reviewed by Bill, and the music route agreed, before the audio work starts.
   - [ ] With every satellite connected, memory, event-loop lag and the queue waits for simultaneous turns are measured on the Mac mini and accepted by Bill. A turn in one room is unaffected by the idle satellites.
