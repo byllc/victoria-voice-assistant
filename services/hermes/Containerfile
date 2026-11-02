@@ -17,12 +17,12 @@ ARG HERMES_COMMIT=bf0203a794a07aac3ff764972ab9087baa4e4f4e
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
     | bash -s -- --commit "$HERMES_COMMIT" --non-interactive --skip-browser --skip-computer-use
 
-# Non-secret settings. The model is LM Studio on the Mac, reached at the container network's gateway;
-# context_length is explicit because Hermes reads the first loaded instance of a model, and the
-# assistant's own gemma instances are 8K. Only files and a shell, both inside this container.
+# Non-secret settings. The model is LM Studio on the Mac, reached at the container network's gateway: the
+# same single copy of google/gemma-4-12b the assistant uses, loaded by the assistant with 64K of context
+# (`context_length` in config/models.yaml). Only files and a shell, both inside this container.
 RUN hermes config set model.provider lmstudio \
     && hermes config set model.base_url http://192.168.64.1:1234/v1 \
-    && hermes config set model.default gemma-hermes \
+    && hermes config set model.default google/gemma-4-12b \
     && hermes config set model.context_length 65536 \
     && hermes config set terminal.backend local \
     && hermes config set terminal.cwd /work \

@@ -131,7 +131,42 @@ def test_pin_models_loads_each_pinned_model_once(example_config_dir: Path, tmp_p
     models = load_config(example_config_dir).models
     expected = sorted({config.model for config in models.models.values() if config.pin})
     assert pin_models(models, lms=str(lms)) == expected
-    assert calls.read_text(encoding="utf-8").splitlines() == [f"load {model} -y" for model in expected]
+    contexts = {m: max((c.context_length or 0) for c in models.models.values() if c.pin and c.model == m) for m in expected}
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        f"load {m} -y --identifier {m}" + (f" --context-length {contexts[m]}" if contexts[m] else "") for m in expected
+    ]
+
+
+def test_pin_models_loads_a_shared_model_once_with_the_largest_context(example_config_dir: Path, tmp_path: Path) -> None:
+    lms, calls = _fake_lms(tmp_path)
+    models = load_config(example_config_dir).models
+    models.models["fast"].context_length = 8192
+    models.models["fast-small"].model = models.models["fast"].model
+    models.models["fast-small"].pin = True
+    models.models["fast-small"].context_length = 65536
+    pin_models(models, lms=str(lms))
+    loads = [line for line in calls.read_text(encoding="utf-8").splitlines() if models.models["fast"].model in line]
+    assert loads == [f"load {models.models['fast'].model} -y --identifier {models.models['fast'].model} --context-length 65536"]
+
+
+def test_pin_models_uses_a_loaded_copy_whatever_its_ttl_or_identifier(example_config_dir: Path, tmp_path: Path) -> None:
+    models = load_config(example_config_dir).models
+    target = sorted({config.model for config in models.models.values() if config.pin})[0]
+    calls = tmp_path / "lms-calls.log"
+    script = tmp_path / "lms"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "ps" ]; then\n'
+        f'  echo \'[{{"modelKey": "{target}", "identifier": "something-else", "ttlMs": 3600000, "contextLength": 4096}}]\'\n'
+        "  exit 0\n"
+        "fi\n"
+        f'echo "$@" >> "{calls}"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    assert target in pin_models(models, lms=str(script))
+    loaded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+    assert not any(line.startswith(f"load {target}") for line in loaded)
 
 
 def test_pin_models_skips_models_already_loaded_without_ttl(example_config_dir: Path, tmp_path: Path) -> None:
@@ -152,7 +187,7 @@ def test_pin_models_skips_models_already_loaded_without_ttl(example_config_dir: 
     pinned = pin_models(models, lms=str(script))
     assert target in pinned
     loaded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
-    assert f"load {target} -y" not in loaded
+    assert not any(line.startswith(f"load {target}") for line in loaded)
 
 
 def test_pin_models_logs_failure_and_continues(example_config_dir: Path, tmp_path: Path) -> None:

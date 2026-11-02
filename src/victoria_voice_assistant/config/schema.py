@@ -40,6 +40,10 @@ class ModelConfig(Schema):
     params: dict[str, Any] = Field(default_factory=dict)
     timeout_s: float = Field(default=30, gt=0)
     pin: bool = False
+    # LM Studio loads one copy of each model for every entry that names it (and for Hermes), with the
+    # largest context any of them asks for (Bill, 2026-11-02: "if the same model is specified three
+    # times in config it should be the same model").
+    context_length: int | None = Field(default=None, gt=0)
     price: PriceConfig | None = None
 
 

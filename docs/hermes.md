@@ -24,7 +24,7 @@ API_SERVER_PORT=8642
 
 Then run `hermes gateway` (under `launchd`, systemd or similar so it restarts). Check it: `curl http://<host>:8642/health` and `curl -H "Authorization: Bearer <key>" http://<host>:8642/v1/models` (the model it lists is the name to use below).
 
-Hermes needs a model with at least 64K tokens of context. With LM Studio, load a separate instance for it (for example `lms load google/gemma-4-12b --context-length 65536 --identifier gemma-hermes`) so a long Hermes run doesn't queue behind the assistant's fast model.
+Hermes needs a model with at least 64K tokens of context. With LM Studio on the same Mac, point Hermes at the assistant's own model (`google/gemma-4-12b`) rather than loading a second copy: the assistant loads one copy of each model, with the largest `context_length` any entry in `config/models.yaml` asks for (65536 in the examples), and never loads a model that is already loaded. Several requests share that copy (LM Studio's parallel slots).
 
 ## On the assistant side
 
