@@ -168,6 +168,8 @@ class Run:
     wake_word: str | None
     heard_speech: bool = False
     listening: bool = True
+    audio_s: float = 0.0  # audio received this turn, and its raw peak level (before `gain`), for the log
+    peak: int = 0
     timers: list[asyncio.TimerHandle] = field(default_factory=list)
 
 
@@ -386,12 +388,16 @@ class SatelliteSession:
     async def handle_audio(self, data: bytes, _extra: bytes | None = None) -> None:
         if self.run is None or not self.run.listening:
             return
+        samples = np.frombuffer(data, dtype=np.int16)
+        self.run.audio_s += samples.size / SAMPLE_RATE_IN
+        if samples.size:
+            self.run.peak = max(self.run.peak, int(np.abs(samples.astype(np.int32)).max()))
         frame = InputAudioRawFrame(audio=raise_level(data, self.settings.gain), sample_rate=SAMPLE_RATE_IN, num_channels=1)
         await self.task.queue_frame(frame)
 
     async def handle_stop(self, abort: bool) -> None:
         if self.run is not None and abort:
-            logger.info("Satellite turn aborted", extra={"event": "satellite_turn_aborted", "device": self.name})
+            logger.info("Satellite turn aborted", extra={"event": "satellite_turn_aborted", "device": self.name, **self._audio_stats()})
             self._end_run(send_end=False)
 
     async def handle_announcement_finished(self, finished: Any) -> None:
@@ -412,6 +418,7 @@ class SatelliteSession:
         if self.run is None or not self.run.listening:
             return
         self.run.listening = False  # the device stops streaming; the turn is the model's now
+        logger.info("Satellite speech ended", extra={"event": "satellite_speech_end", "device": self.name, **self._audio_stats()})
         self.send(E.VOICE_ASSISTANT_STT_VAD_END)
         self.run.timers.append(asyncio.get_running_loop().call_later(REPLY_WAIT_S, self._no_reply))
 
@@ -427,9 +434,14 @@ class SatelliteSession:
         from aioesphomeapi.model import VoiceAssistantEventType as E
 
         if self.run is not None and not self.run.heard_speech:
-            logger.info("Satellite heard no speech", extra={"event": "satellite_no_speech", "device": self.name})
+            logger.info("Satellite heard no speech", extra={"event": "satellite_no_speech", "device": self.name, **self._audio_stats()})
             self.send(E.VOICE_ASSISTANT_STT_VAD_END)
             self._end_run()
+
+    def _audio_stats(self) -> dict[str, float]:
+        if self.run is None:
+            return {}
+        return {"duration_s": round(self.run.audio_s, 1), "peak": self.run.peak}
 
     def _no_reply(self) -> None:
         if self.run is not None:
