@@ -17,6 +17,18 @@ def disable_model_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ASSISTANT_KEYCHAIN", "0")  # tests never read or write the real Keychain
 
 
+@pytest.fixture(autouse=True)
+def no_service_restarts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cancelled or timed-out agent task restarts its LaunchAgent (`restart_on_cancel`, set for Hermes
+    in the example config); tests must never kickstart the real service."""
+    from victoria_voice_assistant.agents import runner
+
+    async def no_restart(_launch_label: str) -> bool:
+        return True
+
+    monkeypatch.setattr(runner, "restart_launch_agent", no_restart)
+
+
 @pytest.fixture
 def example_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     config_dir = tmp_path / "config"

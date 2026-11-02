@@ -73,7 +73,7 @@ def test_restore_refuses_an_archive_with_unexpected_paths(tmp_path: Path) -> Non
 
 
 def test_the_backup_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    config, database, dest = make_setup(tmp_path)
+    config, database, _dest = make_setup(tmp_path)
     monkeypatch.setenv("ASSISTANT_DATA_DIR", str(database.parent))
     assert main(["backup", "--config-dir", str(config), "create"]) == 0
     assert main(["backup", "--config-dir", str(config), "list"]) == 0

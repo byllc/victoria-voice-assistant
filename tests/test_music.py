@@ -110,7 +110,7 @@ def test_with_no_place_it_plays_only_on_the_device_that_heard() -> None:
 
 
 def test_a_browser_with_its_speaker_off_asks_what_when_nothing_is_named() -> None:
-    music, backend = service()
+    music, _backend = service()
 
     async def send(message: dict) -> None:
         pass
@@ -323,7 +323,7 @@ def test_a_player_that_never_starts_is_said_so(monkeypatch: pytest.MonkeyPatch) 
             self.played.append((player_id, uri))  # queued, but the speaker never plays (AirPlay off)
 
     monkeypatch.setattr(module, "PLAY_CHECK_S", 0.3)
-    music, backend = service(Silent())
+    music, _backend = service(Silent())
     outcome = run(music.handle("web", {"action": "play", "query": "Pangaea", "room": "Mac mini"}))
     assert outcome.error
     assert outcome.speak == "Bill’s Mac mini didn't start playing. It may be off or unreachable."

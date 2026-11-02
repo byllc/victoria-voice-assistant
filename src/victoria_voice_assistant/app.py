@@ -165,6 +165,13 @@ def create_app(
             speech = SpeechModels(manager.current.models.speech)
             app.state.speech = speech
             background.append(asyncio.create_task(speech.load(), name="speech-load"))
+        app.state.satellites = None
+        if app.state.speech is not None and manager.current.tools.satellites:
+            # ESPHome satellites (Stage 12); each waits for the speech models before connecting.
+            from victoria_voice_assistant.satellite.esphome import SatelliteManager
+
+            app.state.satellites = SatelliteManager(manager.current, services, app.state.speech)
+            await app.state.satellites.start()
         watcher = asyncio.create_task(manager.watch(), name="config-watcher")
         pinning: asyncio.Task | None = None
         if os.environ.get("ASSISTANT_PIN_MODELS", "1") != "0":
@@ -191,6 +198,8 @@ def create_app(
                 pass
             if pinning is not None:
                 pinning.cancel()
+            if app.state.satellites is not None:
+                await app.state.satellites.close()
             for task in [*background, *app.state.voice_tasks]:
                 task.cancel()
             await app.state.webrtc.close()

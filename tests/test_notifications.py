@@ -418,15 +418,16 @@ def test_a_background_result_becomes_a_notification(example_config_dir: Path) ->
     assert item.style == "ask_first" and item.task_id is not None
 
 
-def test_a_waited_for_result_is_said_straight_away(example_config_dir: Path) -> None:
+def test_a_waited_for_result_is_the_reply_not_a_notification(example_config_dir: Path) -> None:
     async def scenario():
         runner, notifications, events = _runner(example_config_dir, "wait")
-        await runner.ask("helper", "what goes with leeks", "web")
+        outcome = await runner.ask("helper", "what goes with leeks", "web")
         await _finish(runner)
-        return notifications.unread(), events
+        return outcome, notifications.unread(), events
 
-    unread, events = asyncio.run(scenario())
-    assert unread == [] and [e.text for e in events if e.kind == "say"] == ["Leeks and potatoes make a fine soup."]
+    outcome, unread, events = asyncio.run(scenario())
+    assert outcome.speak == "Leeks and potatoes make a fine soup."
+    assert unread == [] and [e.text for e in events if e.kind == "say"] == []
 
 
 def test_the_notifications_tool_is_built_in(example_config_dir: Path) -> None:
@@ -469,7 +470,7 @@ def _question_runner(example_config_dir: Path, agent_name: str, timeout_min: flo
 
 def test_a_model_agent_asks_and_gets_an_answer(example_config_dir: Path) -> None:
     async def scenario():
-        runner, notifications, clock = _question_runner(example_config_dir, "helper")
+        runner, notifications, _clock = _question_runner(example_config_dir, "helper")
         answers = []
 
         async def fake_call_model(agent, task, model, tools, history=None) -> AgentReply:
@@ -535,7 +536,7 @@ def test_a_harness_question_continues_with_the_exchange(example_config_dir: Path
         await _finish(runner)
         return calls, answered, runner.tasks.get(outcome.result["task_id"]), notifications
 
-    calls, answered, task, notifications = asyncio.run(scenario())
+    calls, answered, task, _notifications = asyncio.run(scenario())
     assert answered.speak == "Okay, I'll tell Hermes."
     assert calls == [
         None,
@@ -550,7 +551,7 @@ def test_a_harness_question_continues_with_the_exchange(example_config_dir: Path
 
 def test_questions_are_asked_at_once_unless_the_assistant_is_speaking() -> None:
     async def scenario():
-        service, clock = service_at(AFTERNOON)
+        service, _clock = service_at(AFTERNOON)
         speaker = FakeOutlet(speaks=True)
         speaker.is_busy = True  # mid-conversation, but not talking right now
         speaker.speaking = lambda: talking[0]  # type: ignore[method-assign]

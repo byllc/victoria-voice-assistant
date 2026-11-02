@@ -13,7 +13,7 @@ from victoria_voice_assistant.agents.spend import SpendEntry, SpendLog, cost_usd
 from victoria_voice_assistant.agents.tasks import TaskEvent, TaskService
 from victoria_voice_assistant.chat.llm import build_llm
 from victoria_voice_assistant.config.loader import load_config
-from victoria_voice_assistant.config.schema import AppConfig, ModelsConfig, TimersConfig, WeatherConfig
+from victoria_voice_assistant.config.schema import AppConfig, TimersConfig, WeatherConfig
 from victoria_voice_assistant.decider.engine import Decision
 from victoria_voice_assistant.storage.db import migrate
 from victoria_voice_assistant.tools.registry import Services
@@ -153,10 +153,10 @@ def test_ask_claude_uses_the_decider_and_logs_spend(config: AppConfig, tmp_path:
         return outcome, events, calls, agent_runner
 
     outcome, events, calls, agent_runner = run(scenario())
-    assert outcome.speak == "Asking Claude." and calls == [HAIKU]
+    assert outcome.speak == "Four cups." and calls == [HAIKU]  # a quick answer is the reply
     task = agent_runner.tasks.get(outcome.result["task_id"])
     assert task.model == HAIKU and task.cost_usd == pytest.approx((900 * 0.10 + 10 * 0.50) / 1e6)
-    assert [e.text for e in events if e.kind == "say"] == ["Four cups."]
+    assert [e.text for e in events if e.kind == "say"] == []
     with sqlite3.connect(database) as connection:
         row = connection.execute("SELECT pool, model, reason, decider_choice, confidence, input_tokens FROM spend").fetchone()
     assert row == ("claude", HAIKU, "decider", HAIKU, 0.92, 900)
@@ -177,9 +177,9 @@ def test_spoken_override_strips_the_word_and_skips_the_decider(config: AppConfig
 def test_a_decline_or_failure_escalates_once(config: AppConfig) -> None:
     async def scenario(replies):
         agent_runner, events, calls = _runner(config, replies, decider=FakeDecider(HAIKU, 0.9))
-        await agent_runner.ask("claude", "plan a dinner party", "web")
+        outcome = await agent_runner.ask("claude", "plan a dinner party", "web")
         await _settle(agent_runner)
-        return calls, [e.text for e in events if e.kind == "say"]
+        return calls, [outcome.speak, *(e.text for e in events if e.kind == "say")]
 
     declined = run(scenario({HAIKU: AgentReply("I can't plan parties."), SONNET: AgentReply("Here's a plan.")}))
     assert declined == ([HAIKU, SONNET], ["Here's a plan."])

@@ -10,6 +10,7 @@ from typing import Any
 
 LOGGED_FIELDS = (
     "config_revision",
+    "device",
     "config_dir",
     "database_path",
     "model",
@@ -30,6 +31,8 @@ LOGGED_FIELDS = (
     "timer",
     "timers",
     "count",
+    "peak",
+    "volume",
     "duration_s",
     "delta_s",
     "cert",

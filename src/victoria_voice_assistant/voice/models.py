@@ -12,7 +12,6 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 from functools import lru_cache
-from pathlib import Path
 
 import pipecat.services.kokoro.tts as kokoro_tts
 from pipecat.frames.frames import ErrorFrame, Frame, TranscriptionFrame
@@ -195,9 +194,3 @@ class LockedKokoroTTS(KokoroTTSService):
             self._model_lock.release()
         for frame in frames:
             yield frame
-
-
-def models_cached(config: SpeechConfig) -> bool:
-    """Whether the model files are already on disk (first start downloads them)."""
-    hub = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{config.stt.model.replace('/', '--')}"
-    return KOKORO_MODEL.exists() and KOKORO_VOICES.exists() and hub.exists()

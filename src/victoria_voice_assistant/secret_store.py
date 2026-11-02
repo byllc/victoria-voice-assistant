@@ -34,6 +34,9 @@ KNOWN = {
     "HA_TOKEN": "Home Assistant long-lived access token",
     "VAPID_PRIVATE_KEY": "Web Push signing key (`assistant push keys`)",
     "MUSIC_ASSISTANT_TOKEN": "Music Assistant token",
+    "SATELLITE1_API_KEY": "the Satellite1's ESPHome encryption key (services/satellite1/README.md)",
+    "WEATHER_HOME_LAT": "home latitude for weather (personal: kept out of tools.yaml)",
+    "WEATHER_HOME_LON": "home longitude for weather (personal: kept out of tools.yaml)",
 }
 
 

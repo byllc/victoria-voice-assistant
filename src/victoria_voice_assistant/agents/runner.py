@@ -1,10 +1,10 @@
 """Hands requests to agents by name (architecture §9, §10.1) and tracks each one as a task.
 
-The handoff is acknowledged at once ("Asking Helper."). The agent then runs in the
-background, and its result, a delay notice or an error reaches the requesting device as
-a `say` task event, which the chat and voice sessions deliver. `mode` decides the wording:
-`wait` gives the bare result, `background` says it will report back, and `auto` stays
-quiet for `wait_s` and then says it's still working.
+A quick answer is the reply, and only a long task is acknowledged (Bill, 2026-11-02): in
+`wait` mode, and in `auto` mode for up to `wait_s`, the turn waits and the agent's result (or
+error) is spoken as the reply. Once an `auto` task passes `wait_s`, or at once in `background`
+mode, the turn ends with "<Agent> is working on that for you.", and the result later reaches
+the requesting device as a notification ("Helper has finished.") through a `say` task event.
 """
 
 from __future__ import annotations
@@ -101,6 +101,8 @@ class AgentRunner:
         self._limits: dict[str, asyncio.Timeout] = {}
         self._restarts: set[asyncio.Task[bool]] = set()
         self._asked: set[str] = set()
+        # Tasks whose turn is waiting for the result, with what to say if it stops waiting.
+        self._inline: dict[str, tuple[asyncio.Future[ToolOutcome], ToolOutcome]] = {}
 
     def update_config(self, config: AppConfig) -> None:
         self.config = config
@@ -113,8 +115,9 @@ class AgentRunner:
             None,
         )
 
-    async def ask(self, name: str, request: str, device: str, model: str | None = None) -> ToolOutcome:
-        """Hand `request` to an agent. `model` picks a pool member directly (the dashboard's re-send)."""
+    async def ask(self, name: str, request: str, device: str, model: str | None = None, inline: bool = True) -> ToolOutcome:
+        """Hand `request` to an agent. `model` picks a pool member directly (the dashboard's re-send).
+        `inline=False` (the dashboard's buttons, not a voice or chat turn) acknowledges at once."""
         agent = self.find(name)
         if agent is None:
             return ToolOutcome(result={"error": f"no agent called {name!r}"}, speak=f"I don't know an agent called {name}.")
@@ -151,12 +154,25 @@ class AgentRunner:
             if model is not None:
                 override = model
         task = self.tasks.create(agent.name, device, request, agent.mode, model=agent.model or override)
+        acknowledged = ToolOutcome(
+            result={"task_id": task.id, "agent": agent.name, "mode": agent.mode},
+            speak=f"{label(agent.name)} is working on that for you.",
+        )
+        wait_s = {"wait": AGENT_TIMEOUT_S + 5, "auto": agent.wait_s or 0}.get(agent.mode, 0) if inline else 0
+        waiting = asyncio.get_running_loop().create_future() if wait_s else None
+        if waiting is not None:
+            self._inline[task.id] = (waiting, acknowledged)
         job = asyncio.create_task(self._run(agent, task, override), name=f"agent-{task.id}")
         self.tasks.attach(task, job)
-        ack = f"Asking {label(agent.name)}."
-        if agent.mode == "background":
-            ack += " I'll let you know when it's done."
-        return ToolOutcome(result={"task_id": task.id, "agent": agent.name, "mode": agent.mode}, speak=ack)
+        job.add_done_callback(lambda _job: self._release_inline(task))  # cancelled or timed out: stop waiting
+        if waiting is None:
+            return acknowledged
+        try:
+            return await asyncio.wait_for(asyncio.shield(waiting), wait_s)
+        except TimeoutError:
+            return acknowledged  # a long task: its result comes later as a notification
+        finally:
+            self._inline.pop(task.id, None)
 
     async def retry(self, task_id: str, agent: str | None = None, model: str | None = None) -> ToolOutcome:
         """Run an earlier task's request again: as it was, with another agent, or on another pool member."""
@@ -168,7 +184,7 @@ class AgentRunner:
             pool = self.config.models.pools.get(target.pool) if target and target.pool else None
             if pool is None or model not in [member.model for member in pool.members]:
                 return ToolOutcome(result={"error": f"{model!r} isn't in that agent's pool"}, speak="That model isn't available.")
-        return await self.ask(agent or task.agent, task.request, task.device, model=model)
+        return await self.ask(agent or task.agent, task.request, task.device, model=model, inline=False)
 
     def resend_choices(self, task: Task) -> dict[str, list[str]]:
         """Where the dashboard can re-send a task: other agents, and stronger members of its pool."""
@@ -213,6 +229,7 @@ class AgentRunner:
         notifications = self.services.notifications
         name = label(agent.name)
         self._asked.add(task.id)
+        self._release_inline(task)  # the question is delivered once the turn is over
         future = self.tasks.ask(task, question)
         self.tasks.progress(task, f"Asked: {question}")
         if notifications is not None:
@@ -287,11 +304,6 @@ class AgentRunner:
         name = label(agent.name)
         loop = asyncio.get_running_loop()
         started = loop.time()
-        notice = None
-        if agent.mode == "auto" and agent.wait_s:
-            notice = loop.call_later(
-                agent.wait_s, self.tasks.say, task, f"{name} is still working on it. I'll let you know when it's done."
-            )
         try:
             async with asyncio.timeout(AGENT_TIMEOUT_S) as limit:
                 self._limits[task.id] = limit
@@ -313,21 +325,37 @@ class AgentRunner:
             self.tasks.update(task, state="failed", error=str(exc) or type(exc).__name__)
             unreachable = "connection" in str(exc).lower()
             text = f"I can't reach {name} right now." if unreachable else f"{name} couldn't finish that."
-            self._report(agent, task, "error", text, delayed=self._delayed(agent, loop.time() - started))
+            if not self._answer_inline(task, ToolOutcome(result={"task_id": task.id, "agent": agent.name, "error": text}, speak=text, error=True)):
+                self._report(agent, task, "error", text, delayed=self._delayed(agent, loop.time() - started))
             return
         finally:
             self._limits.pop(task.id, None)
-            if notice is not None:
-                notice.cancel()
         delayed = self._delayed(agent, loop.time() - started) or task.id in self._asked
         self._asked.discard(task.id)
         self.tasks.progress(task, "Finished")
         self.tasks.update(task, state="finished", result=reply.text)
         spoken = await spoken_version(reply.text, self._summarizer())
+        full = reply.text if spoken != reply.text else None
+        if not delayed and self._answer_inline(task, ToolOutcome(result={"task_id": task.id, "agent": agent.name, "result": reply.text}, speak=spoken, chat=full)):
+            return
         if delayed:
             self._report(agent, task, "result", f"{name} has finished.", delayed=True, summary=spoken, full=reply.text)
         else:
             self.tasks.say(task, spoken, full=reply.text if spoken != reply.text else None)
+
+    def _answer_inline(self, task: Task, outcome: ToolOutcome) -> bool:
+        """Give the result to the turn still waiting for it, if there is one. Returns whether it was taken."""
+        entry = self._inline.pop(task.id, None)
+        if entry is None or entry[0].done():
+            return False
+        entry[0].set_result(outcome)
+        return True
+
+    def _release_inline(self, task: Task) -> None:
+        """Stop the turn waiting: it says the agent is working on it, and anything later is a notification."""
+        entry = self._inline.get(task.id)
+        if entry is not None:
+            self._answer_inline(task, entry[1])
 
     @staticmethod
     def _delayed(agent: AgentConfig, elapsed_s: float) -> bool:

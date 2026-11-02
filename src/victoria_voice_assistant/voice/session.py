@@ -52,7 +52,6 @@ from victoria_voice_assistant.chat.session import ChatHub, ChatSession
 from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcessor, TimingStartProcessor
 from victoria_voice_assistant.chat.tools import SessionState
 from collections import deque
-from collections.abc import Callable
 
 from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker, is_stop
 from victoria_voice_assistant.config.schema import AppConfig, SpeechConfig
@@ -463,7 +462,7 @@ async def run_voice_session(
             preprocessor,
             TimingStartProcessor(timer),
             router,
-            VoiceTurnTracker(state, preprocessor),
+            VoiceTurnTracker(state, preprocessor, retry=lambda: task.queue_frame(LLMRunFrame())),
             TimingEndProcessor(timer),
             speech.tts(),
             transport.output(),

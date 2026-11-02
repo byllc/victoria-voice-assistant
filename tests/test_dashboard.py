@@ -118,7 +118,7 @@ def test_retry_and_resend(config: AppConfig) -> None:
 
     calls, said, runner = asyncio.run(scenario())
     assert calls == ["claude-sonnet", "claude-sonnet", "claude-opus", "fast"]
-    assert said == ["Asking Claude.", "Asking Claude.", "Asking Helper.", "That model isn't available."]
+    assert said == ["Claude is working on that for you.", "Claude is working on that for you.", "Helper is working on that for you.", "That model isn't available."]
     assert {t.request for t in runner.tasks.recent()} == {"plan dinners"}
 
 
@@ -145,7 +145,7 @@ def test_dashboard_buttons_reach_the_runner(config: AppConfig) -> None:
         return notes, slow, services.notifications.unread(), calls
 
     notes, slow, unread, calls = asyncio.run(scenario())
-    assert notes == ["Cancelled Hermes's task.", "Asking Claude."] and slow.state == "cancelled"
+    assert notes == ["Cancelled Hermes's task.", "Claude is working on that for you."] and slow.state == "cancelled"
     assert unread == []  # opening the result read its notification
     assert calls == ["fast", "claude-sonnet"]
 

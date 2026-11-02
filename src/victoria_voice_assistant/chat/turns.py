@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from typing import Literal
 
 from collections import deque
@@ -291,15 +292,21 @@ class TurnTracker(FrameProcessor):
     When the last one finishes, the next waiting message is released. It also guards what the local
     model says (Stage 11): the start of each reply is held until it has a few real words, with leaked
     control tokens ("<|channel>::", "::user<channel|>user") removed, and a reply of nothing but those
-    (or nothing at all) becomes EMPTY_REPLY rather than silence or garbage.
+    (or nothing at all) is asked for once more with `retry` (the local model sometimes pads its
+    whole reply with blank lines: Bill, 2026-11-02), and only then becomes EMPTY_REPLY rather than
+    silence or garbage.
     """
 
-    def __init__(self, state: SessionState, preprocessor: TurnPreprocessor, **kwargs) -> None:
+    def __init__(
+        self, state: SessionState, preprocessor: TurnPreprocessor, retry: Callable[[], Awaitable[None]] | None = None, **kwargs
+    ) -> None:
         super().__init__(**kwargs)
         self.state = state
         self.preprocessor = preprocessor
+        self.retry = retry  # runs the model again on the same conversation
         self._held: list[str] | None = None  # the reply's opening text, until it has real words
         self._said_something = True
+        self._retried = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -320,16 +327,29 @@ class TurnTracker(FrameProcessor):
                 frame.text = CONTROL_TOKENS.sub("", frame.text)
         elif isinstance(frame, InterruptionFrame):
             self._held, self._said_something = None, True  # cut off by the user, not empty
+            self._retried = False
         elif isinstance(frame, FunctionCallsStartedFrame):
             self._held, self._said_something = None, True  # a tool call: whatever came before it was noise
             self.state.tools_busy += len(frame.function_calls)
         elif isinstance(frame, LLMFullResponseEndFrame):
             if self._held is not None:
                 await self._release(None)
+            if not self._said_something and self.retry is not None and not self._retried:
+                logger.warning("Model gave an empty reply; asking again", extra={"event": "empty_reply_retry"})
+                self._retried = self._said_something = True
+                await self.push_frame(frame, direction)
+                if not isinstance(frame, SpokenReplyEndFrame):
+                    # The retry goes through the preprocessor as a new request, so it must find the session
+                    # idle (or it would queue behind itself). Queued commands still wait: nothing releases
+                    # them until the retry's own reply ends.
+                    self.state.llm_busy -= 1
+                await self.retry()
+                return
             if not self._said_something:
                 logger.warning("Model gave an empty reply", extra={"event": "empty_reply"})
                 await self.push_frame(LLMTextFrame(EMPTY_REPLY))
                 self._said_something = True
+            self._retried = False
             await self.push_frame(frame, direction)
             if not isinstance(frame, SpokenReplyEndFrame):
                 self.state.llm_busy -= 1

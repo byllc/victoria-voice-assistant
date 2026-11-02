@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -265,7 +264,7 @@ def test_searxng_run_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     config = tmp_path / "config"
     monkeypatch.setenv("ASSISTANT_SEARXNG_DIR", str(source))
     monkeypatch.delenv("SEARXNG_SECRET", raising=False)
-    with pytest.raises(FileNotFoundError, match="settings.yml"):
+    with pytest.raises(FileNotFoundError, match=r"settings\.yml"):
         searxng.run_command(config)
     (config / "searxng").mkdir(parents=True)
     (config / "searxng" / "settings.yml").write_text("server: {}\n", encoding="utf-8")

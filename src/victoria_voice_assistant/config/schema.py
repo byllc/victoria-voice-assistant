@@ -40,6 +40,10 @@ class ModelConfig(Schema):
     params: dict[str, Any] = Field(default_factory=dict)
     timeout_s: float = Field(default=30, gt=0)
     pin: bool = False
+    # LM Studio loads one copy of each model for every entry that names it (and for Hermes), with the
+    # largest context any of them asks for (Bill, 2026-11-02: "if the same model is specified three
+    # times in config it should be the same model").
+    context_length: int | None = Field(default=None, gt=0)
     price: PriceConfig | None = None
 
 
@@ -288,6 +292,21 @@ class McpServerConfig(Schema):
     token: str | None = None
 
 
+class SatelliteConfig(Schema):
+    """An ESPHome voice satellite (Stage 12): the assistant connects to it with its API key."""
+
+    host: str
+    port: int = Field(default=6053, gt=0, lt=65536)
+    key: str | None = None  # the device's API encryption key, e.g. "${SATELLITE1_API_KEY}"
+    # Its microphone level is raised by this factor before speech detection: the Satellite1's clean
+    # (unclipped) channel is quiet (Stage 12 findings). At 8, speech sat at Pipecat's speech-detection
+    # loudness gate (`min_volume` 0.6, about -50 LUFS) and some turns heard no speech (2026-11-02).
+    gain: float = Field(default=24.0, gt=0, le=64)
+    # The LED ring's colour while notifications are unread for this satellite (architecture §10.3's
+    # pending indicator); null leaves the ring alone.
+    pending_color: str | None = Field(default="#FFA000", pattern=r"^#[0-9A-Fa-f]{6}$")
+
+
 class ToolTestGiven(Schema):
     timers: list[str] = Field(default_factory=list)
 
@@ -334,6 +353,8 @@ class ToolsConfig(Schema):
     music: MusicConfig | None = None
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    satellites: dict[str, SatelliteConfig] = Field(default_factory=dict)  # device name (as in music.rooms) -> satellite
+    satellite_audio_port: int = Field(default=8767, gt=0, lt=65536)  # where every satellite fetches replies (LAN, HTTP)
     tests: list[ToolTestConfig] = Field(default_factory=list)
 
     @field_validator("tools", mode="before")
