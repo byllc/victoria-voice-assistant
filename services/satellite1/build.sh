@@ -21,12 +21,14 @@ if [ -z "$key" ]; then
     printf '%s' "$key" | uv run --project "$project" --quiet assistant secrets set SATELLITE1_API_KEY >/dev/null
     echo "Generated a new SATELLITE1_API_KEY and stored it (Keychain and config/.env)."
 fi
+build=$here/Satellite1-ESPHome/config
+cp "$here/satellite1.yaml" "$build/victoria-satellite1.yaml"
 umask 077
-printf 'api_key: "%s"\n' "$key" > "$here/secrets.yaml"
+printf 'api_key: "%s"\n' "$key" > "$build/secrets.yaml"
 
-cd "$here"
+cd "$build"
 if [ "${1:-}" = "--flash" ]; then
-    uv tool run --from "$esphome_pin" esphome run satellite1.yaml --device "$2" --no-logs
+    uv tool run --from "$esphome_pin" esphome run victoria-satellite1.yaml --device "$2" --no-logs
 else
-    uv tool run --from "$esphome_pin" esphome compile satellite1.yaml
+    uv tool run --from "$esphome_pin" esphome compile victoria-satellite1.yaml
 fi
