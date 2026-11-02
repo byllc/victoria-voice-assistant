@@ -37,6 +37,7 @@ Restart the assistant (and the web process, for the web password) after changing
 | `HA_TOKEN` | Home Assistant long-lived access token | Home Assistant > your profile > Security > Long-lived access tokens > Create token | For home control |
 | `VAPID_PRIVATE_KEY` | Web Push signing key | Made for you: `uv run assistant push keys` ([push.md](push.md)) | Only for phone alerts |
 | `MUSIC_ASSISTANT_TOKEN` | Music Assistant token | Music Assistant settings | For music |
+| `WEATHER_HOME_LAT`, `WEATHER_HOME_LON` | Home's latitude and longitude for the weather (personal, so not in `tools.yaml`) | Two decimal places (about 1 km) are plenty for a forecast | For "the weather" with no place named |
 | `SATELLITE1_API_KEY` | The Satellite1's ESPHome API encryption key | Made for you the first time `services/satellite1/build.sh` runs ([its README](../services/satellite1/README.md)) | With a satellite (Stage 12) |
 
 Not secrets you set:

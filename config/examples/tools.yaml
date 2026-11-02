@@ -180,10 +180,10 @@ search:
 
 weather:
   provider: open-meteo
-  home:
+  home:                            # personal, so kept as secrets: `assistant secrets set WEATHER_HOME_LAT` (and _LON)
     name: Home
-    lat: 0      # set to our location
-    lon: 0
+    lat: "${WEATHER_HOME_LAT:-0}"
+    lon: "${WEATHER_HOME_LON:-0}"
   units: imperial
   cache_ttl_s: 600
 
