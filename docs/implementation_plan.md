@@ -1,6 +1,6 @@
-# Home Voice Assistant: Implementation Plan (v1.2)
+# Home Voice Assistant: Implementation Plan (v1.3)
 
-Owner: Bill · Updated: 2026-10-25 · Companion to: *Home Voice Assistant Architecture* (`voice-pipeline-architecture.md`, currently v2.7)
+Owner: Bill · Updated: 2026-11-02 (v1.3: Stage 13, satellites at household scale) · Companion to: *Home Voice Assistant Architecture* (`voice-pipeline-architecture.md`, currently v2.9)
 
 This plan is written for a coding agent. The pipeline is built first and is fully usable from the web client; the ESP32 satellites come last, as an optional stage. The architecture document says **what** to build and **why**; this plan says **in what order**, **what "done" means** at each stage, and **how approval works**. When the two disagree, stop and ask.
 
@@ -67,6 +67,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 10 | Music | not started | | | |
 | 11 | Hardening | not started | | | |
 | 12 | Satellites (optional) | not started | | | |
+| 13 | Satellites at household scale (optional) | not started | | | |
 
 ## Stage N: <name>
 - Status:
@@ -307,6 +308,115 @@ The LaunchAgent listens on `127.0.0.1:8765`; unload it with
 
 **Blocking decisions:** outcome of this stage's compatibility checks.
 
+### Stage 13: Satellites at household scale (optional)
+
+**Goal:** ten or more Satellite1s work together across the house. Any group of them can play one audio stream in sync, and the dashboard shows what each satellite is doing and adds satellites to a stream or removes them. Starts only after Stage 12 is approved, with one satellite fully working.
+
+**Why a stage of its own:** Stage 12 proves one satellite. At ten, problems appear that one device can't show. The 2026-11-02 review (decisions log) found these:
+- Turns in different rooms queue for one Whisper and one Kokoro.
+- An announcement to several rooms is synthesized once per satellite.
+- Two satellites can answer the same words.
+- Satellites are only read at startup.
+- Each satellite loads its own speech-detection and turn-detection models.
+- Rooms, players and satellites are mapped in separate places.
+- Nothing shows when a satellite goes offline.
+- The architecture still advises against playing music on the satellites' own speakers (§12, Sendspin).
+
+**Scope:**
+
+*Before the audio and dashboard work, perform targeted checks on two satellites and record the findings in this stage's evidence:*
+1. **Music to a satellite without Home Assistant:**
+   - Our firmware already includes a Sendspin player (FutureProofHomes v0.2.1, `common/sendspin.yaml`; Snapcast was removed).
+   - Music Assistant's built-in Sendspin provider finds it over mDNS and connects to it directly. That connection doesn't use the ESPHome API, so the assistant stays the API's only client.
+   - Confirm that Music Assistant (2.9.11, the Home Assistant add-on) lists each satellite as a player and plays to it.
+   - Check what it names the players, and whether the old Home Assistant players need removing.
+   - Check which audio format to prefer for ten streams over Wi-Fi: Opus rather than FLAC.
+   - Sendspin is a "technical preview" in Music Assistant, and only one Music Assistant server on the network may use it.
+2. **Synchronized groups:**
+   - Two satellites in one Music Assistant sync group stay in sync.
+   - `players.set_members(target, player_ids_to_add, player_ids_to_remove)` in `music-assistant-client` adds and removes members while the music plays.
+   - Known issue: music-assistant/support#4773 (playing to one speaker of a Sendspin group).
+3. **Voice while music plays:**
+   - The firmware lowers its own music by 20 dB during a voice turn and during announcements.
+   - Check that the wake word and transcription still work at normal volume, which is a test of the XMOS echo cancellation on its own playback.
+   - Check that ducking during a turn touches only the satellite that heard it, not its whole group.
+4. **Load:** with every satellite connected, measure on the Mac mini:
+   - the assistant's memory;
+   - event-loop lag;
+   - how long a turn waits for Whisper and Kokoro when two or three rooms speak at once;
+   - the LM Studio router's behaviour with parallel requests.
+5. **Which satellite heard it best:**
+   - Say the same requests from several places between two satellites, and record what each one sends.
+   - Does the speech level against each device's own background noise, over the first half second after the wake word, pick the satellite nearest the speaker?
+   - Does arrival order agree?
+   - Do the levels change with distance on the microphone channel we use, or does the XMOS processing even them out?
+   - Can a firmware configuration change send the wake-word score? It is computed on the device but not sent.
+
+*Then:*
+- **Device registry:**
+  - One place in `tools.yaml` maps each satellite to its room. Several satellites may share a room.
+  - Each room maps to its music player and its Home Assistant area, so "turn off the lights" means the lights in that room.
+  - The scattered mappings (`music.rooms[].satellite`, the relay's `targets`) read from it.
+- **Fleet management:**
+  - Satellites added to or removed from `tools.yaml` connect or disconnect without a restart.
+  - Each satellite's connection state goes into the health checks and the dashboard's health strip.
+  - An offline satellite raises a low-priority notice.
+  - One command builds the firmware once and updates every satellite over Wi-Fi, reporting each device's firmware version.
+- **Wake-word arbitration:** one turn per utterance, from the satellite that heard it best. Every candidate's audio is collected for a short window, and the arbitration finishes while the user is still speaking, so it adds no wait.
+  - When a satellite starts a turn, open a window (about 0.5 s, configurable) for other satellites reporting the same wake word.
+  - Score each candidate on the audio it streamed after the wake word: the speech level against that device's own background noise, plus a configured per-satellite offset for rooms that read loud or quiet.
+  - Add the wake-word score if the check finds a way to send it.
+  - The satellite with an open question or a ringing timer wins. Otherwise the highest score wins, and near-ties go to the first to report.
+  - The others end their turn quietly: their LED ring goes back to idle, and their audio never reaches Whisper.
+  - Every decision is logged with all the candidates' scores, for tuning.
+- **Concurrent turns:**
+  - Queue waits for the shared speech models are logged and shown.
+  - Turn-detection models are shared between satellites where Pipecat allows it.
+  - Replies to satellites start before the whole reply is synthesized (a streamed URL) if the measurements show the wait matters.
+- **Multi-satellite audio:**
+  - Satellites become Music Assistant players (Sendspin, if the checks confirm it), and Music Assistant's sync groups play one stream in sync.
+  - By voice: "play … everywhere", "play … in the kitchen and the office", "add the bedroom", "take the office out", "stop the music in the kitchen".
+  - Ducking during a voice turn ducks only the satellite that heard it.
+- **Announcements to several rooms:**
+  - "Announce dinner's ready everywhere" or "in the kitchen and the office" synthesizes once and sends the same audio to each satellite: over ESPHome, one device at a time, roughly aligned.
+  - Or, if the check shows it works with these satellites, through Music Assistant's `play_announcement` on a group.
+  - Timers and notifications keep going only to their own room.
+- **Satellite dashboard:** a view in the example client beside the task dashboard, updated live over the client's websocket.
+  - For each satellite:
+    - its room and whether it's online;
+    - its voice state: idle, listening, thinking, replying, or announcing;
+    - its latest request and reply;
+    - its running timers;
+    - what it is playing, at what volume, and in which group.
+  - Actions:
+    - add a satellite to the stream another one is playing, or remove it;
+    - start or stop playback on it;
+    - set its volume.
+
+**Out of scope:**
+- The custom satellite protocol and firmware (architecture Appendix A).
+- Speaker identification.
+- Sample-accurate sync for announcements: each satellite fetches the same audio, close enough for speech.
+- Intercom (live audio from one satellite to another).
+
+**Done criteria:**
+- [ ] Check findings reviewed by Bill, and the music route agreed, before the audio work starts.
+- [ ] With every satellite connected, memory, event-loop lag and the queue waits for simultaneous turns are measured on the Mac mini and accepted by Bill. A turn in one room is unaffected by the idle satellites.
+- [ ] Words heard by several satellites are answered once, by the one nearest the speaker in at least 9 of 10 tries from mixed positions. Each decision and its scores are logged.
+- [ ] A satellite added to or removed from `tools.yaml` connects or disconnects without a restart. An offline satellite shows in the health strip and the dashboard.
+- [ ] One command updates the firmware of every satellite and reports each one's version.
+- [ ] "Play … in the kitchen and the office" plays in sync. Adding and removing satellites by voice works while the music plays, and ducking affects only the room that is talking.
+- [ ] An announcement to several rooms is synthesized once and plays in each.
+- [ ] The dashboard shows every satellite's room, online state, voice state, latest request, timers, and what it is playing in which group, updated live. A satellite can be added to or removed from a stream from the dashboard.
+- [ ] "Turn off the lights" from a satellite acts on that room's Home Assistant area.
+
+**Blocking decisions:**
+- the outcome of this stage's checks (the music route);
+- music on the satellites' own speakers, on existing speakers, or both (architecture open question 1);
+- whether dashboard controls are open to every household login;
+- the wake-word arbitration window;
+- the architecture changes proposed in the decisions log (2026-11-02).
+
 ## 5. Later (not scheduled)
 
-Each needs its own approved stage before work begins: the backend-neutral satellite protocol and custom ESPHome component (architecture Appendix A); the optional decision-engine pre-router (architecture §7.1); speaker identification; A2A agents; additional relay agents.
+Each needs its own approved stage before work begins: the backend-neutral satellite protocol and custom ESPHome component (architecture Appendix A); intercom between satellites; the optional decision-engine pre-router (architecture §7.1); speaker identification; A2A agents; additional relay agents.

@@ -17,6 +17,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 10 | Music | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 11 | Hardening | approved | 2026-11-01 | 2026-11-01 | Bill / 2026-11-01 |
 | 12 | Satellites (optional) | in progress | 2026-11-01 | | |
+| 13 | Satellites at household scale (optional) | not started | | | |
 
 ## Stage 0: Tracker, instructions, repo
 - Status: approved
@@ -306,6 +307,27 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - Review and cleanup pass (2026-11-02): tests no longer restart the real Hermes LaunchAgent (the example config's `restart_on_cancel` made the Hermes cancel and timeout tests run `launchctl kickstart -k`; now stubbed for every test); a reconnect could be ended by the previous connection's late stop (fixed); README, `docs/secrets.md` (`SATELLITE1_API_KEY`), the Satellite1 README (Home Assistant doesn't connect; the microphone channel change) and the example `tools.yaml` (no satellite on by default) brought up to date. Noted for later, not done: Pipecat 1.15 deprecates `PipelineTask`/`PipelineRunner` for `PipelineWorker`/`WorkerRunner` (removed in 2.0); moving the chat, voice, agent and satellite pipelines needs a live voice check.
 - Bill's review notes:
 
+## Stage 13: Satellites at household scale (optional)
+- Status: not started
+- Done criteria:
+  - [ ] Check findings reviewed by Bill, and the music route agreed, before the audio work starts.
+  - [ ] With every satellite connected, memory, event-loop lag and the queue waits for simultaneous turns are measured on the Mac mini and accepted by Bill. A turn in one room is unaffected by the idle satellites.
+  - [ ] Words heard by several satellites are answered once, by the one nearest the speaker in at least 9 of 10 tries from mixed positions. Each decision and its scores are logged.
+  - [ ] A satellite added to or removed from `tools.yaml` connects or disconnects without a restart. An offline satellite shows in the health strip and the dashboard.
+  - [ ] One command updates the firmware of every satellite and reports each one's version.
+  - [ ] "Play … in the kitchen and the office" plays in sync. Adding and removing satellites by voice works while the music plays, and ducking affects only the room that is talking.
+  - [ ] An announcement to several rooms is synthesized once and plays in each.
+  - [ ] The dashboard shows every satellite's room, online state, voice state, latest request, timers, and what it is playing in which group, updated live. A satellite can be added to or removed from a stream from the dashboard.
+  - [ ] "Turn off the lights" from a satellite acts on that room's Home Assistant area.
+- Blocking decisions:
+  - the outcome of this stage's checks (the music route);
+  - music on the satellites' own speakers, on existing speakers, or both (architecture open question 1);
+  - whether dashboard controls are open to every household login;
+  - the wake-word arbitration window;
+  - the architecture changes proposed in the decisions log (2026-11-02).
+- Evidence:
+- Bill's review notes:
+
 ## Decisions log
 | Date | Stage | Proposal or decision | Bill's answer |
 |---|---|---|---|
@@ -396,3 +418,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-01 | 12 | The assistant alone connects to the Satellite1; Home Assistant doesn't (it doesn't get the new key). So the satellite's voice, LEDs, button, sensors, timers and announcements are the assistant's; its entities leave Home Assistant; music through Music Assistant needs a direct route (Snapcast, in the firmware) to be checked. Home Assistant's old ESPHome entry will fail to connect until deleted (Bill's call). | Bill / 2026-11-01: "I don't want home assistant to connect to it, I want this assistant to connect to it" |
 | 2026-11-01 | 12 | Compatibility findings reviewed and the adapter approach agreed (the proposed approach in the Stage 12 evidence): the assistant keeps the satellite's connection and runs its voice turns through the browser-voice pipeline, with FLAC replies, LED states from voice events, follow-ups, timers on the device and the office room. | Bill / 2026-11-01: "Yes, build it" |
 | 2026-11-02 | 12 | Docs brought in line with the code after a review pass: the architecture (secrets in the Keychain and `config/.env`; Stage 12 outcomes for satellite ownership, follow-up listening, announcements and the "stop" word; FLAC replies; music room satellite names) and the plan (Stage 2 setup uses `assistant secrets set`; the Stage 12 compatibility outcome; stock-firmware configuration changes in scope; Apple `container` from Stage 7), plus README, secrets, music, the Satellite1 README and the example `tools.yaml`. | Bill / 2026-11-02: "let fix the docs before we commit" |
+| 2026-11-02 | 13 | Stage 13 added to the plan (v1.3) and the tracker, as Bill asked ("at least 10 satellites"; stream audio to several at once; the dashboard shows what is active on each and adds or removes satellites from a stream). **Architecture proposals, for Bill's answer before the architecture document changes:** (1) satellites may play music: they are Music Assistant players through the Sendspin player already in our firmware, and Music Assistant connects to them directly over Sendspin, not through Home Assistant or the ESPHome API; this replaces §12's "prefer existing speakers for music in version 1" and answers open question 1 with "both". (2) a device registry in `tools.yaml`: satellite → room (several per room); room → music player, Home Assistant area, Echo; `music.rooms[].satellite` and relay `targets` read from it. (3) wake-word arbitration across satellites (one turn per utterance). (4) announcements to several rooms synthesized once, sent to each. (5) satellites added or removed without a restart; satellite connection state in the health checks. (6) a satellite view in the example client (§4.1) beside the task dashboard, with add to/remove from a stream. (7) §4.2: shared turn-detection models across satellites where Pipecat allows, and streamed replies to satellites if the queue measurements call for it. Also for Bill: should Stage 12's last criterion ("all satellites are moved over") move to Stage 13? | |
