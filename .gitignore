@@ -24,3 +24,8 @@ node_modules/
 
 # --- Local editor state (machine-specific) ---
 .vscode/
+
+# --- Satellite1 firmware: upstream source, build output, generated secrets (services/satellite1) ---
+services/satellite1/Satellite1-ESPHome/
+services/satellite1/.esphome/
+services/satellite1/secrets.yaml

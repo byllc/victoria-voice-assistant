@@ -1,0 +1,10 @@
+# Our Satellite1 build (Stage 12): FutureProofHomes' stable firmware (v0.2.1, their `main` branch, cloned
+# into Satellite1-ESPHome/ by build.sh) with one change: a fixed API encryption key that we hold, so the
+# assistant can connect as well as Home Assistant. Stock firmware leaves the key for Home Assistant to set.
+# The key comes from the Keychain (SATELLITE1_API_KEY) through secrets.yaml, which build.sh writes and git ignores.
+packages:
+  satellite1: !include Satellite1-ESPHome/config/satellite1.yaml
+
+api:
+  encryption:
+    key: !secret api_key
