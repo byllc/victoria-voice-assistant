@@ -122,7 +122,7 @@ The Mac mini runs the assistant in the end; the satellites don't change.
 - **Timers** ring on the satellite that set them, and its LED ring shows the time left. To stop one, say "stop" without the wake word (the firmware listens for it only while a timer rings), or press the action button. *Not yet tried by voice.*
 - **Volume:** the up and down buttons. The LED ring shows the level.
 - **Mute:** the left button mutes the microphones in hardware. A red light by the microphones shows it's muted.
-- **Announcements:** "announce dinner's ready" says it on every satellite; "tell the kitchen I'm on my way" only in the rooms named (by name or alias from `rooms`). The message is synthesized once and the same audio goes to each satellite, close together but not sample-accurate. *Not yet heard on more than one satellite.*
+- **Announcements:** "announce dinner's ready" says it on every satellite; "tell the kitchen I'm on my way" only in the rooms named (by name or alias from `rooms`). The message is synthesized once and the same audio goes to each satellite, close together but not sample-accurate. Announcements and notifications queue: each satellite plays one at a time, after any conversation in progress there, and if the room's music is playing it pauses for the announcement and resumes after (once per room, however many satellites it has). *Not yet heard on more than one satellite.*
 - **Notifications** are read out as announcements when they arrive. While any are unread for the satellite's room, its LED ring glows amber (`pending_color`; `null` turns it off). "Any notifications?" reads them, and the ring goes off.
 
 ### The LED ring

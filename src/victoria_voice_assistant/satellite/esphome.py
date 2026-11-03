@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from contextlib import asynccontextmanager
 import logging
 import secrets
 import socket
@@ -73,6 +74,7 @@ REPLY_WAIT_S = 30.0  # after the user stops, a reply is expected within this lon
 REPLY_SETTLE_S = 0.6  # the reply is sent once no speech audio has come for this long and the request is done
 AUDIO_KEEP_S = 300.0  # how long a reply stays fetchable
 RECONNECT_MAX_S = 60.0
+ANNOUNCE_WAIT_S = 60.0  # an announcement waits up to this long for a conversation turn to finish
 
 
 # The reply audio server --------------------------------------------------------------------------
@@ -301,6 +303,7 @@ class SatelliteSession:
     ) -> None:
         self.name = name
         self.arbiter = arbiter  # decides which satellite answers when several wake together
+        self._playback = asyncio.Lock()  # one announcement at a time; the next waits its turn
         self.ring_key = ring_key  # the device's user-facing "LED Ring" light, for the pending indicator
         self._ring_on: bool | None = None
         self.settings = settings
@@ -384,16 +387,34 @@ class SatelliteSession:
         if self.services.satellites is not None:
             self.services.satellites.update(self.name, **changes)
 
+    @asynccontextmanager
+    async def _announcing(self):
+        """Announcements and notifications play one at a time, after any conversation turn here, with
+        the room's music paused meanwhile and resumed after (Bill, 2026-11-03)."""
+        async with self._playback:
+            waited = 0.0
+            while self.run is not None and waited < ANNOUNCE_WAIT_S:  # someone is talking to it
+                await asyncio.sleep(0.2)
+                waited += 0.2
+            music = self.services.music
+            held = await music.hold(self.name) if music is not None else None
+            try:
+                yield
+            finally:
+                if held is not None and music is not None:
+                    await music.release(held)
+
     async def play_announcement(self, url: str, text: str, seconds: float) -> None:
         """Play audio already encoded and served (an announcement to several rooms)."""
-        self._status(state="announcing", reply=text)
-        try:
-            await self.client.send_voice_assistant_announcement_await_response(url, max(30.0, seconds + 15.0), text=text)
-        except Exception as exc:  # noqa: BLE001 - one satellite failing mustn't stop the others
-            logger.warning("Satellite announcement failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
-        finally:
-            if self.run is None and self._board_state() == "announcing":
-                self._status(state="idle")
+        async with self._announcing():
+            self._status(state="announcing", reply=text)
+            try:
+                await self.client.send_voice_assistant_announcement_await_response(url, max(30.0, seconds + 15.0), text=text)
+            except Exception as exc:  # noqa: BLE001 - one satellite failing mustn't stop the others
+                logger.warning("Satellite announcement failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
+            finally:
+                if self.run is None and self._board_state() == "announcing":
+                    self._status(state="idle")
 
     def _board_state(self) -> str | None:
         board = self.services.satellites
@@ -594,11 +615,12 @@ class SatelliteSession:
                 self._idle_after(seconds)
                 logger.info("Satellite reply", extra={"event": "satellite_reply", "device": self.name, "duration_s": round(seconds, 1), "text": text})
                 return
-            logger.info("Satellite announcement", extra={"event": "satellite_announce", "device": self.name, "duration_s": round(seconds, 1), "text": text})
-            self._status(state="announcing", reply=text)
-            await self.client.send_voice_assistant_announcement_await_response(
-                url, max(30.0, seconds + 15.0), text=text, start_conversation=follow_up
-            )
+            async with self._announcing():
+                logger.info("Satellite announcement", extra={"event": "satellite_announce", "device": self.name, "duration_s": round(seconds, 1), "text": text})
+                self._status(state="announcing", reply=text)
+                await self.client.send_voice_assistant_announcement_await_response(
+                    url, max(30.0, seconds + 15.0), text=text, start_conversation=follow_up
+                )
         except Exception as exc:  # noqa: BLE001 - a reply that can't be sent is logged, never raised into the pipeline
             logger.warning("Satellite reply failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
         finally:

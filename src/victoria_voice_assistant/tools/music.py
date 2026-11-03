@@ -256,6 +256,7 @@ class MusicService:
         self._waiting: dict[str, tuple[str, str, float]] = {}  # browser -> (uri, last_player key, asked at)
         self._tasks: set[asyncio.Task[None]] = set()
         self._ducked: dict[str, int] = {}  # player -> volume before ducking
+        self._held: dict[str, int] = {}  # player paused for announcements -> how many are playing there
 
     def update_settings(self, config: MusicConfig | None) -> None:
         self.config = config
@@ -553,6 +554,47 @@ class MusicService:
                 await self.backend.command(player_id, "volume", volume)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Unducking failed", extra={"event": "music_duck_failed", "reason": str(exc) or type(exc).__name__})
+
+    # Pausing for announcements (Bill, 2026-11-03: an announcement pauses the room's music) -------
+
+    async def hold(self, device: str) -> str | None:
+        """Pause the music in this device's room for an announcement. Returns the player to `release`
+        afterwards, or None (nothing playing). Several announcements in one room pause it once."""
+        if self.backend is None or self.config is None:
+            return None
+        try:
+            players = await self.backend.players()
+            player = self._where(device, players)
+            if player is None:
+                return None
+            player_id = player["player_id"]
+            if player_id in self._held:
+                self._held[player_id] += 1
+                return player_id
+            if player["state"] != "playing":
+                return None
+            self._held[player_id] = 1
+            await self.backend.command(player_id, "pause")
+            logger.info("Music paused for an announcement", extra={"event": "music_hold", "device": device})
+            return player_id
+        except Exception as exc:  # noqa: BLE001 - best-effort; the announcement still plays
+            logger.warning("Pausing for an announcement failed", extra={"event": "music_hold_failed", "reason": str(exc) or type(exc).__name__})
+            return None
+
+    async def release(self, player_id: str) -> None:
+        """After an announcement: the music resumes once the last one in its room has played."""
+        count = self._held.get(player_id)
+        if count is None or self.backend is None:
+            return
+        if count > 1:
+            self._held[player_id] = count - 1
+            return
+        del self._held[player_id]
+        try:
+            await self.backend.command(player_id, "resume")
+            logger.info("Music resumed after an announcement", extra={"event": "music_release"})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Resuming after an announcement failed", extra={"event": "music_hold_failed", "reason": str(exc) or type(exc).__name__})
 
     async def close(self) -> None:
         if isinstance(self.backend, AssistantBackend):

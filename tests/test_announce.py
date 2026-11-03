@@ -76,3 +76,91 @@ def test_the_manager_synthesizes_once_and_sends_the_same_audio_to_each(example_c
     reached = asyncio.run(scenario())
     assert reached == ["kitchen-1", "kitchen-2", "office"] and synthesized == ["dinner's ready"]
     assert len({audio for _, audio, _ in played}) == 1  # one file, the same for every satellite
+
+
+def test_announcements_on_one_satellite_queue_and_wait_for_a_turn(example_config_dir: Path) -> None:
+    from test_satellite import _session
+
+    async def scenario() -> list[tuple[str, str, float]]:
+        session, client = _session(example_config_dir)
+        loop = asyncio.get_running_loop()
+        log: list[tuple[str, str, float]] = []
+
+        async def announcement(url: str, timeout: float, **kwargs: Any) -> None:
+            log.append(("start", kwargs["text"], loop.time()))
+            await asyncio.sleep(0.1)
+            log.append(("end", kwargs["text"], loop.time()))
+
+        client.send_voice_assistant_announcement_await_response = announcement  # type: ignore[method-assign]
+        await session.handle_start("c1", 0, None, "Victoria")  # someone is talking to it
+        first = asyncio.create_task(session.play_announcement("u1", "dinner's ready", 0.1))
+        second = asyncio.create_task(session.play_announcement("u2", "the door is open", 0.1))
+        await asyncio.sleep(0.3)
+        assert log == []  # nothing plays over the turn
+        session._end_run()
+        await asyncio.gather(first, second)
+        return log
+
+    log = asyncio.run(scenario())
+    assert [(event, text) for event, text, _ in log] == [
+        ("start", "dinner's ready"), ("end", "dinner's ready"), ("start", "the door is open"), ("end", "the door is open")
+    ]
+
+
+def test_an_announcement_pauses_the_rooms_music_then_resumes_it(example_config_dir: Path) -> None:
+    from test_satellite import _session
+
+    calls: list[tuple[str, str]] = []
+
+    class Music:
+        async def hold(self, device: str) -> str | None:
+            calls.append(("hold", device))
+            return "player-1"
+
+        async def release(self, player_id: str) -> None:
+            calls.append(("release", player_id))
+
+    async def scenario() -> None:
+        session, client = _session(example_config_dir)
+
+        async def announcement(url: str, timeout: float, **kwargs: Any) -> None:
+            calls.append(("play", kwargs["text"]))
+
+        client.send_voice_assistant_announcement_await_response = announcement  # type: ignore[method-assign]
+        session.services.music = Music()  # type: ignore[assignment]
+        await session.play_announcement("u1", "dinner's ready", 0.1)
+
+    asyncio.run(scenario())
+    assert calls == [("hold", "office"), ("play", "dinner's ready"), ("release", "player-1")]
+
+
+def test_music_pauses_once_for_several_announcements_in_a_room() -> None:
+    from victoria_voice_assistant.config.schema import MusicConfig
+    from victoria_voice_assistant.tools.music import MusicService
+
+    class Backend:
+        def __init__(self, state: str) -> None:
+            self.state = state
+            self.commands: list[tuple[str, str]] = []
+
+        async def players(self) -> list[dict[str, Any]]:
+            return [{"player_id": "kitchen-speaker", "name": "Kitchen speaker", "available": True, "volume": 40, "state": self.state}]
+
+        async def command(self, player_id: str, action: str, level: int | None = None) -> None:
+            self.commands.append((player_id, action))
+
+    config = MusicConfig.model_validate({"server": "http://music.test:8095", "rooms": {"kitchen": {"player": "kitchen-speaker", "satellite": "kitchen-1"}}})
+    config.rooms["kitchen"].satellites = ["kitchen-1", "kitchen-2"]
+
+    async def scenario(state: str) -> list[tuple[str, str]]:
+        backend = Backend(state)
+        music = MusicService(config, backend)  # type: ignore[arg-type]
+        first = await music.hold("kitchen-1")
+        second = await music.hold("kitchen-2")
+        for held in (first, second):
+            if held:
+                await music.release(held)
+        return backend.commands
+
+    assert asyncio.run(scenario("playing")) == [("kitchen-speaker", "pause"), ("kitchen-speaker", "resume")]
+    assert asyncio.run(scenario("paused")) == []  # nothing playing: nothing paused or resumed
