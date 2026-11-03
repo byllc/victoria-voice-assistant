@@ -189,6 +189,7 @@ With gemma models, keep `reasoning_effort: none` in each model's `params`. Witho
 | `assistant daily` | A backup, then log rotation (what the backup LaunchAgent runs) |
 | `assistant voice bench` | Speak 20 commands over WebRTC and report latency by stage (for the target machine) |
 | `assistant searxng install` / `run` | Check out the pinned SearXNG and build its environment / run it |
+| `assistant satellites status` / `update` | Each satellite's firmware version / build once and update every satellite over Wi-Fi ([docs/satellites.md](docs/satellites.md)) |
 | `assistant decider install` / `run` | Build the decider's mlx-lm environment / run it |
 | `assistant launchd install` / `install-web` / `install-searxng` / `install-decider` / `install-backup` | Write (and with `--load`, start) the LaunchAgents |
 

@@ -79,6 +79,16 @@ grep satellite_connected ~/Library/Logs/"Victoria Voice Assistant"/assistant-err
 
 If the satellite was in Home Assistant before, Home Assistant's ESPHome entry for it can no longer connect (it doesn't have the new key), and its entities show as unavailable. Delete it: **Settings > Devices & services > ESPHome**, the device, **⋮ > Delete**. Whether and when to do this is Bill's call. While Home Assistant isn't connected, the device's sensors, LED ring and buttons aren't available to Home Assistant automations.
 
+## Updating every satellite's firmware
+
+```sh
+uv run assistant satellites status              # each satellite's firmware version and build time
+uv run assistant satellites update              # build once, then update every satellite over Wi-Fi
+uv run assistant satellites update --only office
+```
+
+`update` builds the firmware once (`services/satellite1/build.sh`), uploads it to each satellite in `tools.yaml` in turn (`build.sh --upload HOST`), and then reads back each one's version. A satellite that's offline or fails is reported and the rest go ahead. The assistant reconnects to each one as it restarts.
+
 ## Moving to the Mac mini (deployment)
 
 The Mac mini runs the assistant in the end; the satellites don't change.
@@ -136,6 +146,7 @@ Holding the action button for 10 seconds warns (a sound and the LED ring); keep 
 
 | Symptom | Check |
 |---|---|
+| Red in the dashboard's health strip, or "The office satellite is offline." in Alerts | The assistant has had no connection to it for about a minute: check its power and Wi-Fi (`uv run assistant satellites status` tries it directly). One notice per time it goes offline. |
 | Red twinkle | Is the assistant running (`curl http://127.0.0.1:8765/health`)? Is the device under `satellites:` with the right host? The log shows `satellite_unreachable` with a reason: a wrong key, or a host that can't be resolved or reached. |
 | It wakes but says nothing | Look for `satellite_reply` (with a `duration_s`) or `satellite_reply_failed`. A reply it can't fetch plays as silence: is the Mac reachable from the satellite on port 8767 (firewall, network)? |
 | It wakes, then gives up | `satellite_no_speech`: no speech was detected within 8 seconds of the wake word. Speak sooner, or check `gain` if it keeps happening. |

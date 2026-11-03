@@ -155,6 +155,14 @@ def _build_parser() -> argparse.ArgumentParser:
     install_backup.add_argument("--output", type=Path, help="plist path (default: ~/Library/LaunchAgents)")
     install_backup.add_argument("--load", action="store_true", help="load it with launchctl now")
 
+    satellites = commands.add_parser("satellites", help="the voice satellites' firmware (docs/satellites.md)")
+    satellites_subcommands = satellites.add_subparsers(dest="satellites_command", required=True)
+    satellites_status = satellites_subcommands.add_parser("status", help="each satellite's firmware version, read from the device")
+    satellites_status.add_argument("--config-dir", help="configuration directory (default: config/)")
+    satellites_update = satellites_subcommands.add_parser("update", help="build the firmware once and update every satellite over Wi-Fi")
+    satellites_update.add_argument("--config-dir", help="configuration directory (default: config/)")
+    satellites_update.add_argument("--only", help="only this satellite (its name in tools.yaml)")
+
     decider = commands.add_parser("decider", help="the local decision model (mlx-lm)")
     decider_subcommands = decider.add_subparsers(dest="decider_command", required=True)
     decider_subcommands.add_parser("install", help="build the pinned mlx-lm environment")
@@ -278,6 +286,31 @@ def _rotate_logs() -> int:
     return 0
 
 
+def _satellites_command(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from victoria_voice_assistant.config.loader import load_config
+    from victoria_voice_assistant.satellite import fleet
+
+    satellites = load_config(_config_dir(args.config_dir)).tools.satellites
+    if getattr(args, "only", None):
+        if args.only not in satellites:
+            print(f"No satellite called {args.only!r} in tools.yaml.")
+            return 2
+        satellites = {args.only: satellites[args.only]}
+    status = 0
+    if args.satellites_command == "update":
+        uploaded = fleet.update(satellites)
+        if not uploaded and satellites:
+            print("The firmware build failed; nothing was uploaded.")
+            return 1
+        for name, ok in uploaded.items():
+            print(f"{name}: {'updated' if ok else 'update failed'}")
+        status = 0 if all(uploaded.values()) else 1
+    print(fleet.report(asyncio.run(fleet.versions(satellites))))
+    return status
+
+
 def _backup_command(args: argparse.Namespace) -> int:
     from victoria_voice_assistant.storage import backup
     from victoria_voice_assistant.storage.db import default_database_path
@@ -399,6 +432,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "logs":
         return _rotate_logs()
+
+    if args.command == "satellites":
+        return _satellites_command(args)
 
     if args.command == "daily":
         args.backup_command, args.dest, args.keep = "create", None, 14

@@ -337,3 +337,59 @@ def test_a_turn_shows_on_the_board(example_config_dir: Path) -> None:
         ("thinking", "what time is it", None),
         ("replying", "what time is it", "It's noon."),
     ]
+
+
+def test_an_offline_satellite_shows_red_and_posts_one_notice(example_config_dir: Path) -> None:
+    from victoria_voice_assistant.health import SATELLITE_NOTICE_CHECKS, HealthMonitor
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
+
+    posted: list[dict[str, Any]] = []
+
+    class Notices:
+        def post(self, **kwargs: Any) -> None:
+            posted.append(kwargs)
+
+    health = HealthMonitor(load_config(example_config_dir))
+    board = SatelliteBoard()
+    health.satellites, health.notifications = board, Notices()
+    board.configured({"office": "office", "kitchen": "kitchen"})
+    board.update("office", online=True)
+    first = health.satellite_health()
+    for _ in range(SATELLITE_NOTICE_CHECKS + 2):  # the kitchen stays offline
+        health.satellite_health()
+    board.update("kitchen", online=True)
+    back = health.satellite_health()
+    assert [(h.name, h.ok) for h in first] == [("satellite kitchen", False), ("satellite office", True)]
+    assert len(posted) == 1 and posted[0]["headline"] == "The kitchen satellite is offline."
+    assert posted[0]["priority"] == "low" and posted[0]["target"] == "web"
+    assert all(h.ok for h in back) and health._offline == {}
+
+
+def test_fleet_update_builds_once_then_uploads_to_each_satellite() -> None:
+    from victoria_voice_assistant.satellite import fleet
+
+    satellites = {"office": SatelliteConfig(host="o.local"), "kitchen": SatelliteConfig(host="k.local")}
+    commands: list[list[str]] = []
+
+    def run(command: list[str]) -> int:
+        commands.append(command)
+        return 1 if command[-1] == "k.local" else 0  # the kitchen's upload fails
+
+    assert fleet.update(satellites, run=run) == {"office": True, "kitchen": False}
+    assert [c[2:] for c in commands] == [[], ["--upload", "o.local"], ["--upload", "k.local"]]
+    assert fleet.update(satellites, run=lambda _c: 1) == {}  # a failed build uploads nothing
+
+
+def test_fleet_status_reads_each_version_and_reports_the_unreachable() -> None:
+    from victoria_voice_assistant.satellite import fleet
+
+    async def read(name: str, settings: SatelliteConfig) -> fleet.DeviceVersion:
+        if name == "kitchen":
+            return fleet.DeviceVersion(name, settings.host, False, error="Host is down")
+        return fleet.DeviceVersion(name, settings.host, True, "v0.2.1", "2026.7.3", "2026-11-02 10:54")
+
+    found = asyncio.run(fleet.versions({"office": SatelliteConfig(host="o.local"), "kitchen": SatelliteConfig(host="k.local")}, read=read))
+    assert fleet.report(found).splitlines() == [
+        "office (o.local): firmware v0.2.1, ESPHome 2026.7.3, built 2026-11-02 10:54",
+        "kitchen (k.local): unreachable (Host is down)",
+    ]
