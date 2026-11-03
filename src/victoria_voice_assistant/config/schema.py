@@ -319,6 +319,9 @@ class SatelliteConfig(Schema):
     # pending indicator); null leaves the ring alone.
     pending_color: str | None = Field(default="#FFA000", pattern=r"^#[0-9A-Fa-f]{6}$")
     room: str | None = None  # its room in `rooms`; default: the room with the satellite's own name
+    # When several satellites hear the same words, added to this one's score (dB): for a room that reads
+    # loud or quiet, so the nearest satellite answers (architecture §4, wake-word arbitration).
+    arbitration_offset_db: float = 0.0
 
 
 class ToolTestGiven(Schema):
@@ -370,6 +373,7 @@ class ToolsConfig(Schema):
     rooms: dict[str, RoomConfig] = Field(default_factory=dict)  # the device registry: room -> what it has
     satellites: dict[str, SatelliteConfig] = Field(default_factory=dict)  # device name -> satellite
     satellite_audio_port: int = Field(default=8767, gt=0, lt=65536)  # where every satellite fetches replies (LAN, HTTP)
+    satellite_arbitration_s: float = Field(default=0.5, ge=0, le=3)  # how long to wait for other satellites waking on the same words
     tests: list[ToolTestConfig] = Field(default_factory=list)
 
     @field_validator("tools", mode="before")

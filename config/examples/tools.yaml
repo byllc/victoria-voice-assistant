@@ -224,9 +224,11 @@ satellites: {}
 #    host: satellite1-xxxxxx.local
 #    key: "${SATELLITE1_API_KEY:-}"
 #    room: office      # its room in `rooms`; default: the room with its own name
+#    arbitration_offset_db: 0   # added to its score when several satellites hear the same words
 #    gain: 24          # its microphone is raised by this before speech detection
 #    pending_color: "#FFA000"   # its LED ring while notifications are unread (null: leave it alone)
 # satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)
+# satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words
 
 mcp_servers:
   homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration

@@ -56,6 +56,7 @@ from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcesso
 from victoria_voice_assistant.chat.tools import SessionState
 from victoria_voice_assistant.config.schema import AppConfig, SatelliteConfig
 from victoria_voice_assistant.notifications.service import Announcement, Notification
+from victoria_voice_assistant.satellite.arbiter import Arbiter, speech_over_noise_db
 from victoria_voice_assistant.satellite.status import SatelliteBoard
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
@@ -172,6 +173,9 @@ class Run:
     audio_s: float = 0.0  # audio received this turn, and its raw peak level (before `gain`), for the log
     peak: int = 0
     audio: bytearray = field(default_factory=bytearray)  # after `gain`: its loudness is logged too
+    arbitrating: bool = False  # waiting to hear whether this satellite answers (several woke)
+    held: list[bytes] = field(default_factory=list)  # audio after `gain`, held until then
+    raw: bytearray = field(default_factory=bytearray)  # the same, before `gain`, for its score
     timers: list[asyncio.TimerHandle] = field(default_factory=list)
 
 
@@ -293,8 +297,10 @@ class SatelliteSession:
         audio: AudioServer,
         audio_host: str,
         ring_key: int | None = None,
+        arbiter: Arbiter | None = None,
     ) -> None:
         self.name = name
+        self.arbiter = arbiter  # decides which satellite answers when several wake together
         self.ring_key = ring_key  # the device's user-facing "LED Ring" light, for the pending indicator
         self._ring_on: bool | None = None
         self.settings = settings
@@ -431,6 +437,11 @@ class SatelliteSession:
         self.send(E.VOICE_ASSISTANT_STT_START)
         self._status(state="listening")
         self.run.timers.append(asyncio.get_running_loop().call_later(NO_SPEECH_S, self._no_speech))
+        if self.arbiter is not None and self.arbiter.satellites > 1:
+            self.run.arbitrating = True
+            task = asyncio.get_running_loop().create_task(self._arbitrate(self.run))
+            self.output._tasks.add(task)
+            task.add_done_callback(self.output._tasks.discard)
         return 0  # stream the audio over this connection
 
     async def handle_audio(self, data: bytes, _extra: bytes | None = None) -> None:
@@ -442,8 +453,31 @@ class SatelliteSession:
             self.run.peak = max(self.run.peak, int(np.abs(samples.astype(np.int32)).max()))
         raised = raise_level(data, self.settings.gain)
         self.run.audio += raised
-        frame = InputAudioRawFrame(audio=raised, sample_rate=SAMPLE_RATE_IN, num_channels=1)
-        await self.task.queue_frame(frame)
+        if self.run.arbitrating:
+            self.run.held.append(raised)
+            self.run.raw += data
+            return
+        await self.task.queue_frame(InputAudioRawFrame(audio=raised, sample_rate=SAMPLE_RATE_IN, num_channels=1))
+
+    def arbitration_score(self) -> tuple[bool, float]:
+        """For the arbiter: priority (a question open here, or a timer ringing here), and how far this
+        turn's speech stands above the satellite's own background noise, plus its configured offset."""
+        priority = self.state.pending is not None or bool(self.services.timers.ringing(self.name))
+        raw = bytes(self.run.raw) if self.run is not None else b""
+        return priority, speech_over_noise_db(raw) + self.settings.arbitration_offset_db
+
+    async def _arbitrate(self, run: Run) -> None:
+        won = await self.arbiter.join(self)  # type: ignore[union-attr]
+        if self.run is not run:
+            return
+        if not won:
+            logger.info("Satellite stood down: another answers", extra={"event": "satellite_stood_down", "device": self.name})
+            self._end_run()  # RUN_END while streaming: the device goes back to idle
+            return
+        run.arbitrating = False
+        for chunk in run.held:  # the speech heard during the window, then the rest live
+            await self.task.queue_frame(InputAudioRawFrame(audio=chunk, sample_rate=SAMPLE_RATE_IN, num_channels=1))
+        run.held.clear()
 
     async def handle_stop(self, abort: bool) -> None:
         if self.run is not None and abort:
@@ -640,7 +674,11 @@ class SatelliteSession:
 class SatelliteLink:
     """Keeps one satellite connected: connect, serve until it drops, wait, reconnect."""
 
-    def __init__(self, name: str, settings: SatelliteConfig, config: AppConfig, services: Services, speech: SpeechModels, audio: AudioServer) -> None:
+    def __init__(
+        self, name: str, settings: SatelliteConfig, config: AppConfig, services: Services, speech: SpeechModels, audio: AudioServer,
+        arbiter: Arbiter | None = None,
+    ) -> None:
+        self.arbiter = arbiter
         self.name = name
         self.settings = settings
         self.config = config
@@ -678,7 +716,7 @@ class SatelliteLink:
                 ring = next((e.key for e in entities if type(e).__name__ == "LightInfo" and e.object_id == "led_ring"), None)
                 session = SatelliteSession(
                     self.name, self.settings, client, self.config, self.services, self.speech, self.audio,
-                    await asyncio.to_thread(local_address, self.settings.host), ring_key=ring,
+                    await asyncio.to_thread(local_address, self.settings.host), ring_key=ring, arbiter=self.arbiter,
                 )
                 self.session = session
                 self.services.satellites.update(self.name, online=True, state="idle")
@@ -722,6 +760,7 @@ class SatelliteManager:
         if services.satellites is None:
             services.satellites = SatelliteBoard()
         self.board = services.satellites
+        self.arbiter = Arbiter(config.tools.satellite_arbitration_s)
         self.links: dict[str, SatelliteLink] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._audio_started = False
@@ -735,6 +774,8 @@ class SatelliteManager:
             self.config = config
             wanted = config.tools.satellites
             self.board.configured({name: settings.room for name, settings in wanted.items()})
+            self.arbiter.satellites = len(wanted)
+            self.arbiter.window_s = config.tools.satellite_arbitration_s
             for name in list(self.links):
                 if name not in wanted or _connection(wanted[name]) != _connection(self.links[name].settings):
                     await self._stop(name)
@@ -746,7 +787,7 @@ class SatelliteManager:
                 if not self._audio_started:
                     await self.audio.start()
                     self._audio_started = True
-                link = SatelliteLink(name, settings, config, self.services, self.speech, self.audio)
+                link = SatelliteLink(name, settings, config, self.services, self.speech, self.audio, arbiter=self.arbiter)
                 self.links[name] = link
                 self._tasks[name] = asyncio.create_task(link.run(), name=f"satellite-{name}")
                 logger.info("Satellite added", extra={"event": "satellite_added", "device": name})

@@ -49,8 +49,10 @@ satellites:
 #   port: 6053      # the ESPHome API port
 #   gain: 24        # the microphone is raised by this before speech detection (its clean channel is quiet)
 #   room: office    # its room in `rooms`; default: the room with its own name
+#   arbitration_offset_db: 0   # added to its score when several hear the same words
 #   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
+# satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words
 ```
 
 Saving `tools.yaml` is enough; no restart (Stage 13). A satellite added under `satellites:` connects, one removed disconnects, one whose `host`, `port` or `key` changed reconnects, and other changes (its `gain`, `room` or `pending_color`, and tool changes) reach it while connected. Only `satellite_audio_port` needs a restart.
@@ -78,6 +80,12 @@ grep satellite_connected ~/Library/Logs/"Victoria Voice Assistant"/assistant-err
 ### 5. Home Assistant
 
 If the satellite was in Home Assistant before, Home Assistant's ESPHome entry for it can no longer connect (it doesn't have the new key), and its entities show as unavailable. Delete it: **Settings > Devices & services > ESPHome**, the device, **⋮ > Delete**. Whether and when to do this is Bill's call. While Home Assistant isn't connected, the device's sensors, LED ring and buttons aren't available to Home Assistant automations.
+
+## Several satellites in earshot
+
+When more than one satellite hears the same words, one answers (Stage 13). The first to wake opens a short window (`satellite_arbitration_s`, 0.5 s) for others waking too, and each one's audio is held meanwhile, not transcribed. Then a satellite with an open question or a ringing timer answers; otherwise the one whose speech stands highest above its own background noise, with near-ties (within 1.5 dB) going to the first to wake. The others go quietly back to idle. The window passes while you're still speaking, so the reply isn't slower. With one satellite configured, nothing is held.
+
+If the wrong one keeps answering in some spot, give the satellite that should a head start (`arbitration_offset_db: 3` under it) or the other a handicap (a negative value). The log shows each decision: `satellite_arbitration`, with every candidate's score.
 
 ## Updating every satellite's firmware
 
