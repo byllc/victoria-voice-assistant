@@ -655,3 +655,34 @@ def test_an_agent_question_gets_a_longer_answer_window() -> None:
     other = SessionState(pending_window_s=VOICE_PENDING_S)
     other.set_pending(yes_no)
     assert question.expires_at - yes_no.expires_at == pytest.approx(ANSWER_WINDOW_S - VOICE_PENDING_S, abs=0.5)
+
+
+def test_waiting_questions_are_asked_one_at_a_time() -> None:
+    from victoria_voice_assistant.notifications.service import QUESTION_ANSWER_S
+
+    async def scenario() -> list[list[str]]:
+        service, clock = service_at(AFTERNOON)
+        outlet = FakeOutlet(speaks=True)
+        service.attach(outlet)
+        asked: list[list[str]] = []
+
+        def note() -> None:
+            asked.append([a.question.task_id for a in outlet.announced if a.question is not None and a.question.kind == "answer"])
+
+        for task in ("t1", "t2", "t3"):  # three tasks' questions, waiting together
+            service.post(source="claude", kind="question", headline="Claude has a question.", summary=f"Question {task}?", full=None,
+                         target="web", priority="urgent", task_id=task)
+            clock.now += 0.01
+        await settle(service, clock)
+        note()  # only the oldest is asked
+        await service.tick()
+        note()  # still waiting for its answer
+        service.close_question("t1", answered=True)
+        await service.tick()
+        note()  # answered: the next one
+        clock.now += QUESTION_ANSWER_S + 1  # nobody answers t2
+        await service.tick()
+        note()  # the last one, once t2's window has passed
+        return asked
+
+    assert asyncio.run(scenario()) == [["t1"], ["t1"], ["t1", "t2"], ["t1", "t2", "t3"]]
