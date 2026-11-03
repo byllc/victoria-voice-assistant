@@ -68,6 +68,7 @@ class Services:
     home: HomeAssistantHub | None = None
     music: MusicService | None = None
     satellites: SatelliteBoard | None = None  # what each satellite is doing, for the dashboard
+    announcer: Any = None  # says a message on satellites in several rooms (the satellite manager)
 
 
 @dataclass
@@ -419,6 +420,17 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
             return await services.music.handle(ctx.device, arguments, client_id=ctx.client_id)
 
         return music
+    if service == "announce":
+        if not tools.satellites:
+            raise Unresolved("announcements need voice satellites (`satellites:` in tools.yaml)")
+        from victoria_voice_assistant.tools.announce import announce
+
+        async def announce_handler(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            if services.announcer is None:  # speech is off, so the satellites aren't running
+                return ToolOutcome(result={"error": "satellites not running"}, speak="I can't make announcements right now.", error=True)
+            return await announce(arguments, tools, services.announcer)
+
+        return announce_handler
     raise Unresolved(f"built-in service `{service}` isn't available yet")
 
 

@@ -174,6 +174,7 @@ def create_app(
             satellites = SatelliteManager(manager.current, services, app.state.speech)
             app.state.satellites = satellites
             services.health.satellites = services.satellites  # each satellite in the health strip
+            services.announcer = satellites  # "announce dinner's ready everywhere"
             services.health.notifications = services.notifications
             await satellites.start()
 

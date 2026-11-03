@@ -89,6 +89,21 @@ class SpeechModels:
             raise ValueError(f"Kokoro voice {self.config.tts.voice!r} is not in {KOKORO_VOICES}")
         kokoro.create(".", voice=self.config.tts.voice, lang="en-us")
 
+    async def synthesize(self, text: str) -> tuple[bytes, int]:
+        """Speech for `text` outside any voice session (an announcement to several rooms, synthesized
+        once): 16-bit mono audio and its sample rate, under the same lock the sessions use."""
+        import numpy as np
+
+        kokoro = _shared_kokoro(str(KOKORO_MODEL), str(KOKORO_VOICES))
+        await _acquire(self.kokoro_lock, "kokoro")
+        try:
+            samples, rate = await asyncio.to_thread(
+                kokoro.create, text, voice=self.config.tts.voice, speed=self.config.tts.speed, lang="en-us"
+            )
+        finally:
+            self.kokoro_lock.release()
+        return (np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes(), rate
+
     def stt(self, prompt: str | None = None) -> LockedWhisperSTT:
         return LockedWhisperSTT(
             self.whisper_lock,

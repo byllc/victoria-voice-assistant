@@ -125,6 +125,23 @@ tools:
     examples:
       - lock the front door
 
+  - name: announce
+    description: Say a message out loud on the satellites in other rooms, or everywhere ("announce dinner's ready", "tell the kitchen I'm on my way").
+    kind: builtin
+    service: announce                # Stage 13; a stub until voice satellites are set up
+    reply: { template: true }        # "Announced everywhere."
+    params:
+      message:
+        type: string
+        description: the words to say, as the user put them (e.g. "dinner's ready")
+        required: true
+      rooms:
+        type: string
+        description: rooms to say it in, comma-separated; leave out for everywhere
+    examples:
+      - announce dinner's ready
+      - tell the kitchen I'm on my way
+
   - name: music
     description: "Music and what's playing: play, pause, resume, skip this song (next), go back, change the volume, or say what's playing."
     kind: builtin

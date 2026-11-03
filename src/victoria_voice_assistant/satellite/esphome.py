@@ -384,6 +384,17 @@ class SatelliteSession:
         if self.services.satellites is not None:
             self.services.satellites.update(self.name, **changes)
 
+    async def play_announcement(self, url: str, text: str, seconds: float) -> None:
+        """Play audio already encoded and served (an announcement to several rooms)."""
+        self._status(state="announcing", reply=text)
+        try:
+            await self.client.send_voice_assistant_announcement_await_response(url, max(30.0, seconds + 15.0), text=text)
+        except Exception as exc:  # noqa: BLE001 - one satellite failing mustn't stop the others
+            logger.warning("Satellite announcement failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
+        finally:
+            if self.run is None and self._board_state() == "announcing":
+                self._status(state="idle")
+
     def _board_state(self) -> str | None:
         board = self.services.satellites
         return next((s["state"] for s in board.snapshot() if s["name"] == self.name), None) if board else None
@@ -791,6 +802,28 @@ class SatelliteManager:
                 self.links[name] = link
                 self._tasks[name] = asyncio.create_task(link.run(), name=f"satellite-{name}")
                 logger.info("Satellite added", extra={"event": "satellite_added", "device": name})
+
+    async def announce(self, text: str, rooms: list[str] | None = None) -> list[str]:
+        """Say `text` on every connected satellite in `rooms` (None: everywhere), synthesized once and
+        sent to each as the same audio. Returns the satellites it played on."""
+        sessions = [
+            link.session for link in self.links.values()
+            if link.session is not None and (rooms is None or link.settings.room in rooms)
+        ]
+        if not sessions:
+            return []
+        audio, rate = await self.speech.synthesize(text)
+        data, seconds = await asyncio.to_thread(to_flac, [(audio, rate)])
+        name = self.audio.add(data)
+        logger.info(
+            "Satellite announcement to several rooms",
+            extra={"event": "satellite_broadcast", "count": len(sessions), "duration_s": round(seconds, 1), "text": text},
+        )
+        await asyncio.gather(*(
+            session.play_announcement(f"http://{session.audio_host}:{self.audio.port}/satellite-audio/{name}", text, seconds)
+            for session in sessions
+        ))
+        return [session.name for session in sessions]
 
     async def _stop(self, name: str) -> None:
         self.links.pop(name, None)
