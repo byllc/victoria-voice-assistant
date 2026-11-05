@@ -41,6 +41,46 @@ def _shared_kokoro(model_path: str, voices_path: str):
 kokoro_tts.Kokoro = _shared_kokoro  # type: ignore[assignment]
 
 
+class _SharedOnnxRuntime:
+    """onnxruntime as seen by Pipecat's Silero VAD and Smart Turn: one InferenceSession per model file.
+
+    Each voice session (every satellite, every browser) builds its own VAD and Smart Turn
+    analyzer, and each loaded its own ONNX session, about 19 MB a pair. Neither keeps stream
+    state in the session: Silero's recurrent state lives on its wrapper, per analyzer, and Smart
+    Turn runs each segment on its own. ONNX Runtime allows concurrent `run` calls on one session,
+    so the sessions are shared (architecture §4.2) and everything else passes through.
+    """
+
+    def __init__(self, module) -> None:
+        self._module = module
+        self._sessions: dict[tuple, object] = {}
+
+    def __getattr__(self, name: str):
+        return getattr(self._module, name)
+
+    def InferenceSession(self, path, sess_options=None, providers=None, **kwargs):  # noqa: N802 - mirrors onnxruntime
+        key = (str(path), tuple(providers or ()))
+        session = self._sessions.get(key)
+        if session is None:
+            session = self._module.InferenceSession(path, sess_options=sess_options, providers=providers, **kwargs)
+            self._sessions[key] = session
+        return session
+
+
+def _share_turn_models() -> _SharedOnnxRuntime:
+    import onnxruntime
+    import pipecat.audio.turn.smart_turn.local_smart_turn_v3 as smart_turn
+    import pipecat.audio.vad.silero as silero
+
+    shared = _SharedOnnxRuntime(onnxruntime)
+    smart_turn.ort = shared  # type: ignore[assignment]
+    silero.onnxruntime = shared  # type: ignore[assignment]
+    return shared
+
+
+shared_onnx = _share_turn_models()
+
+
 class SpeechModels:
     """Loads the speech models once, before any voice session is accepted."""
 
