@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -199,3 +200,28 @@ def test_the_asking_satellite_gets_its_reply_first_then_the_announcement(example
 
     asyncio.run(scenario())
     assert order == ["reply: Announced everywhere.", "announcement: dinner's ready"]
+
+
+def test_an_announcement_waits_for_the_reply_to_finish_playing(example_config_dir: Path) -> None:
+    """The turn ends when its reply is sent, but the device is still playing it; an announcement sent then
+    is dropped (2026-11-05). It waits until the reply has had time to play."""
+    from test_satellite import _session
+
+    async def scenario() -> tuple[float, float]:
+        session, client = _session(example_config_dir)
+        started: list[float] = []
+
+        async def announcement(url: str, timeout: float, **kwargs: Any) -> None:
+            started.append(time.monotonic())
+
+        client.send_voice_assistant_announcement_await_response = announcement  # type: ignore[method-assign]
+        await session.handle_start("c1", 0, None, "Victoria")
+        queued = asyncio.create_task(session.play_announcement("u1", "dinner's ready", 0.1))
+        await asyncio.sleep(0.05)
+        await session.deliver([((np.zeros(9600, dtype=np.int16)).tobytes(), 24000)], "Announced everywhere.")  # 0.4 s
+        replied = time.monotonic()
+        await asyncio.wait_for(queued, 3.0)
+        return replied, started[0]
+
+    replied, announced = asyncio.run(scenario())
+    assert announced - replied >= 0.4 + esphome.REPLY_GAP_S - 0.05  # after the reply, not over it

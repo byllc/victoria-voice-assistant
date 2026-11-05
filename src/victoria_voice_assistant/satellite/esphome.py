@@ -75,6 +75,10 @@ REPLY_SETTLE_S = 0.6  # the reply is sent once no speech audio has come for this
 AUDIO_KEEP_S = 300.0  # how long a reply stays fetchable
 RECONNECT_MAX_S = 60.0
 ANNOUNCE_WAIT_S = 60.0  # an announcement waits up to this long for a conversation turn to finish
+# A turn ends as soon as its reply's URL is sent, while the device is still playing it; an announcement sent
+# then is dropped (2026-11-05: the asking satellite said "Announced everywhere." and never "dinner's ready").
+# So it also waits for the reply to have played, plus this.
+REPLY_GAP_S = 0.5
 
 
 # The reply audio server --------------------------------------------------------------------------
@@ -304,6 +308,7 @@ class SatelliteSession:
         self.name = name
         self.arbiter = arbiter  # decides which satellite answers when several wake together
         self._playback = asyncio.Lock()  # one announcement at a time; the next waits its turn
+        self._reply_until = 0.0  # time.monotonic() when the reply the device is playing has finished
         self.ring_key = ring_key  # the device's user-facing "LED Ring" light, for the pending indicator
         self._ring_on: bool | None = None
         self.settings = settings
@@ -393,7 +398,8 @@ class SatelliteSession:
         the room's music paused meanwhile and resumed after (Bill, 2026-11-03)."""
         async with self._playback:
             waited = 0.0
-            while self.run is not None and waited < ANNOUNCE_WAIT_S:  # someone is talking to it
+            # someone is talking to it, or it is still playing their reply
+            while (self.run is not None or time.monotonic() < self._reply_until) and waited < ANNOUNCE_WAIT_S:
                 await asyncio.sleep(0.2)
                 waited += 0.2
             music = self.services.music
@@ -611,6 +617,7 @@ class SatelliteSession:
                 self.send(E.VOICE_ASSISTANT_TTS_START, {"text": text})
                 self.send(E.VOICE_ASSISTANT_TTS_END, {"url": url})
                 self._status(state="replying", reply=text)
+                self._reply_until = time.monotonic() + seconds + REPLY_GAP_S
                 self._end_run()
                 self._idle_after(seconds)
                 logger.info("Satellite reply", extra={"event": "satellite_reply", "device": self.name, "duration_s": round(seconds, 1), "text": text})
