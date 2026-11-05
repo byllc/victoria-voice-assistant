@@ -71,7 +71,9 @@ def test_the_manager_synthesizes_once_and_sends_the_same_audio_to_each(example_c
             for name, room in {"kitchen-1": "kitchen", "kitchen-2": "kitchen", "office": "office", "den": "den"}.items()
         }
         manager.links["den"].session = None  # offline
-        return await manager.announce("dinner's ready", ["kitchen", "office", "den"])
+        reached = await manager.announce("dinner's ready", ["kitchen", "office", "den"])
+        await asyncio.gather(*manager._playing)
+        return reached
 
     reached = asyncio.run(scenario())
     assert reached == ["kitchen-1", "kitchen-2", "office"] and synthesized == ["dinner's ready"]
@@ -164,3 +166,36 @@ def test_music_pauses_once_for_several_announcements_in_a_room() -> None:
 
     assert asyncio.run(scenario("playing")) == [("kitchen-speaker", "pause"), ("kitchen-speaker", "resume")]
     assert asyncio.run(scenario("paused")) == []  # nothing playing: nothing paused or resumed
+
+
+def test_the_asking_satellite_gets_its_reply_first_then_the_announcement(example_config_dir: Path) -> None:
+    """The announce tool runs inside the asking satellite's turn, and that satellite waits for its turn to
+    end before playing an announcement. The tool must not wait for the playback, or the turn waits on itself
+    (2026-11-05: 27 s, until the turn gave up)."""
+    from test_satellite import FakeSpeech
+
+    class Speech(FakeSpeech):
+        async def synthesize(self, text: str) -> tuple[bytes, int]:
+            return (np.zeros(2400, dtype=np.int16)).tobytes(), 24000
+
+    order: list[str] = []
+    turn_open = asyncio.Event()
+
+    async def scenario() -> None:
+        turn_open.set()
+
+        async def play(url: str, text: str, seconds: float) -> None:
+            while turn_open.is_set():  # as SatelliteSession waits for a turn in progress
+                await asyncio.sleep(0.01)
+            order.append(f"announcement: {text}")
+
+        manager = esphome.SatelliteManager(load_config(example_config_dir), SimpleNamespace(satellites=None), Speech())  # type: ignore[arg-type]
+        manager.links = {"office": SimpleNamespace(session=SimpleNamespace(name="office", audio_host="10.0.0.5", play_announcement=play), settings=SimpleNamespace(room="office"))}
+        reached = await asyncio.wait_for(manager.announce("dinner's ready"), 1.0)  # the tool returns at once
+        order.append("reply: Announced everywhere.")
+        turn_open.clear()  # the turn ends
+        await asyncio.wait_for(asyncio.gather(*manager._playing), 1.0)
+        assert reached == ["office"]
+
+    asyncio.run(scenario())
+    assert order == ["reply: Announced everywhere.", "announcement: dinner's ready"]

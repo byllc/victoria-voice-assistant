@@ -796,6 +796,7 @@ class SatelliteManager:
         self.arbiter = Arbiter(config.tools.satellite_arbitration_s)
         self.links: dict[str, SatelliteLink] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        self._playing: set[asyncio.Task] = set()  # announcements queued or playing on the satellites
         self._audio_started = False
         self._lock = asyncio.Lock()
 
@@ -827,7 +828,9 @@ class SatelliteManager:
 
     async def announce(self, text: str, rooms: list[str] | None = None) -> list[str]:
         """Say `text` on every connected satellite in `rooms` (None: everywhere), synthesized once and
-        sent to each as the same audio. Returns the satellites it played on."""
+        sent to each as the same audio. Returns the satellites it was sent to, without waiting for them to
+        play it: each satellite queues it after its own turn, and when the asking satellite is one of them,
+        that turn is the one waiting for this tool (2026-11-05: waiting here held its turn 27 s)."""
         sessions = [
             link.session for link in self.links.values()
             if link.session is not None and (rooms is None or link.settings.room in rooms)
@@ -841,10 +844,11 @@ class SatelliteManager:
             "Satellite announcement to several rooms",
             extra={"event": "satellite_broadcast", "count": len(sessions), "duration_s": round(seconds, 1), "text": text},
         )
-        await asyncio.gather(*(
-            session.play_announcement(f"http://{session.audio_host}:{self.audio.port}/satellite-audio/{name}", text, seconds)
-            for session in sessions
-        ))
+        for session in sessions:
+            url = f"http://{session.audio_host}:{self.audio.port}/satellite-audio/{name}"
+            task = asyncio.create_task(session.play_announcement(url, text, seconds), name=f"announce-{session.name}")
+            self._playing.add(task)
+            task.add_done_callback(self._playing.discard)
         return [session.name for session in sessions]
 
     async def _stop(self, name: str) -> None:
