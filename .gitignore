@@ -29,3 +29,6 @@ node_modules/
 services/satellite1/Satellite1-ESPHome/
 services/satellite1/.esphome/
 services/satellite1/secrets.yaml
+# --- Waveshare test satellite: build output, generated secrets (services/waveshare) ---
+services/waveshare/.esphome/
+services/waveshare/secrets.yaml
