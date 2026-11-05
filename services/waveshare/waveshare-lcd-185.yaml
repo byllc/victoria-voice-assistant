@@ -318,14 +318,25 @@ script:
             - light.turn_on:
                 id: backlight
                 brightness: 100%
-  # The turn or the reply ended: dark, unless the other is still going.
-  - id: screen_idle
+  # The turn ended: dark, unless the reply is still playing (its end turns it dark then). Not checking
+  # voice_assistant.is_running here: it still reads true inside on_end.
+  - id: screen_turn_ended
     then:
+      - delay: 100ms
       - if:
           condition:
-            and:
-              - not: voice_assistant.is_running
-              - not: media_player.is_announcing
+            not: media_player.is_announcing
+          then:
+            - script.execute:
+                id: screen
+                mode: 0
+  # The reply finished playing: dark, unless a turn is still going (a follow-up question listens again).
+  - id: screen_reply_ended
+    then:
+      - delay: 100ms
+      - if:
+          condition:
+            not: voice_assistant.is_running
           then:
             - script.execute:
                 id: screen
@@ -414,7 +425,7 @@ media_player:
           id: media_mixer_input
           decibel_reduction: 0
           duration: 1.0s
-      - script.execute: screen_idle
+      - script.execute: screen_reply_ended
 
 micro_wake_word:
   id: mww
@@ -455,9 +466,9 @@ voice_assistant:
   auto_gain: 31dBFS
   volume_multiplier: 2.0
   on_end:
-    - script.execute: screen_idle
+    - script.execute: screen_turn_ended
   on_error:
-    - script.execute: screen_idle
+    - script.execute: screen_turn_ended
   on_timer_finished:
     - lambda: id(ringing) = true;
     - repeat:
