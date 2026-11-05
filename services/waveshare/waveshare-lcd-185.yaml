@@ -46,9 +46,14 @@ api:
     key: !secret api_key
   on_client_connected:
     - micro_wake_word.start:
+  # Any client leaving fires this (an `esphome logs` session too), so stop listening only when none is left.
   on_client_disconnected:
-    - voice_assistant.stop:
-    - micro_wake_word.stop:
+    - if:
+        condition:
+          not: api.connected
+        then:
+          - voice_assistant.stop:
+          - micro_wake_word.stop:
 
 ota:
   - platform: esphome
