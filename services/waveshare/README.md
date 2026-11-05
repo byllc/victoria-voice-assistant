@@ -3,8 +3,9 @@
 A second voice satellite for the Stage 13 checks while only one Satellite1 exists: the Waveshare
 ESP32-S3-LCD-1.85 with its speaker box, on ESPHome (`waveshare-lcd-185.yaml`). It has the same API key
 (`SATELLITE1_API_KEY`) and wake words ("Victoria", "Hey Viki") as our Satellite1 build. It is not a
-Satellite1: one microphone, no XMOS echo cancellation, and no LED ring. The screen stays off for now, and
-the BOOT button starts or stops a turn and silences a ringing timer.
+Satellite1: one microphone, no XMOS echo cancellation, and no LED ring. Its screen glows green from the wake
+word until the reply, blue while it speaks (replies, announcements, a ringing timer), and is dark otherwise. The
+BOOT button starts or stops a turn and silences a ringing timer.
 
 ```sh
 sh services/waveshare/build.sh                                   # compile only

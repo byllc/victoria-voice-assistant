@@ -345,6 +345,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
     - First two-satellite turn: both heard "Victoria" 0.23 s apart; `satellite_arbitration` chose the Waveshare (9.3 dB against the office's 5.6 dB; Bill was beside the Waveshare, so the nearer one answered) and the office stood down. One try; the 9-of-10 check from mixed positions is still to do.
     - At `gain` 1 its speech was too quiet (volume 0.56 to 0.67; Whisper heard only "Victoria."). Its raw peaks match the office satellite's, so it now has the same `gain` (24, reloaded live, revision 3, no reconnect); "What time is it?" then came through (volume 0.85) and the clock answered.
     - Found: on near-silence Whisper returned its own prompt repeated ("Ask Claude, ask Claude, ..."), which was handled as a request to Claude ("Claude isn't set up yet."). Not specific to the Waveshare. Moved to Stage 14 (Bill, 2026-11-05).
+    - The Waveshare's screen shows its state (Bill, 2026-11-05: "make the waveshare screen glow green when it hears a wakeword and blue when it speaks"): green from the wake word until the reply, blue while it speaks, dark otherwise; the ST77916 started with the Spotpear (same board) config's init sequence. Uploaded over Wi-Fi; Bill saw green, then blue, on "What time is it?".
     - My USB chip reads reset the office satellite three times (01:44 to 01:51 UTC), while it was the board on the port; it reconnected within about 2 s each time.
 - Bill's review notes:
 
