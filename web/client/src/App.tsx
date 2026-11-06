@@ -23,6 +23,8 @@ import { AlertsView } from "./AlertsView";
 import { MusicPlayer } from "./MusicPlayer";
 import { useSpeaker } from "./useSpeaker";
 import { ChatView } from "./ChatView";
+import { DocumentPanel, usePanel } from "./DocumentPanel";
+import { SatellitesView } from "./SatellitesView";
 import { TasksView } from "./TasksView";
 import { Timers } from "./Timers";
 import { useChat } from "./useChat";
@@ -80,8 +82,16 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
   const chat = useChat(onSignedOut);
   const speaker = useSpeaker(chat); // here, not in a tab: switching tabs mustn't cut the music off
   const [tab, setTab] = useState("chat");
+  const panel = usePanel();
+  const { open: openPage } = panel;
+  // Victoria opened a page here (show_page).
+  useEffect(() => {
+    if (chat.page) openPage(chat.page.url, chat.page.title);
+  }, [chat.page, openPage]);
   const active = chat.dashboard?.tasks.filter((t) => ACTIVE_STATES.includes(t.state)).length ?? 0;
   const waiting = chat.dashboard?.summary.waiting ?? 0;
+  const satellites = chat.dashboard?.satellites?.length ?? 0;
+  const offline = chat.dashboard?.satellites?.filter((s) => !s.online).length ?? 0;
   const unread = chat.notifications.length;
 
   const signOut = async () => {
@@ -92,7 +102,9 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
   };
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-2 p-3 sm:p-4">
+    // One tree whether or not the panel is open, so opening it never restarts voice or music.
+    <div className="flex h-full w-full">
+    <div className={`flex h-full w-full min-w-0 flex-col gap-2 p-3 sm:p-4 ${panel.visible ? "lg:w-1/2" : "mx-auto max-w-3xl"}`}>
       {insecure && (
         <Banner variant="destructive" inset>
           <BannerTitle>Open to the network: no household password is set (ASSISTANT_WEB_PASSWORD).</BannerTitle>
@@ -103,6 +115,11 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
         <Badge color={chat.status === "connected" ? "active" : chat.status === "thinking" ? "warning" : "inactive"} variant="outline">
           {chat.status}
         </Badge>
+        {!panel.visible && (
+          <Button size="sm" variant="ghost" onClick={panel.show} aria-label="Open the document panel">
+            Browser
+          </Button>
+        )}
         <ThemeModeToggle />
         {!insecure && (
           <Button size="sm" variant="ghost" onClick={() => void signOut()}>
@@ -136,9 +153,14 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
           <TabsTrigger value="alerts" className="flex-1 gap-2">
             Alerts {unread > 0 && <Badge color="warning" size="sm">{unread}</Badge>}
           </TabsTrigger>
+          {satellites > 0 && (
+            <TabsTrigger value="satellites" className="flex-1 gap-2">
+              Satellites {offline > 0 && <Badge color="destructive" size="sm">{offline}</Badge>}
+            </TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
-          <ChatView chat={chat} voice={voice} onOpenAlerts={() => setTab("alerts")} />
+          <ChatView chat={chat} voice={voice} onOpenAlerts={() => setTab("alerts")} onOpenPage={openPage} />
         </TabsContent>
         <TabsContent value="tasks" className="min-h-0 flex-1 overflow-y-auto">
           <TasksView chat={chat} />
@@ -146,7 +168,12 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
         <TabsContent value="alerts" className="min-h-0 flex-1 overflow-y-auto">
           <AlertsView chat={chat} />
         </TabsContent>
+        <TabsContent value="satellites" className="min-h-0 flex-1 overflow-y-auto">
+          <SatellitesView chat={chat} />
+        </TabsContent>
       </Tabs>
+    </div>
+    {panel.visible && <DocumentPanel panel={panel} />}
     </div>
   );
 }

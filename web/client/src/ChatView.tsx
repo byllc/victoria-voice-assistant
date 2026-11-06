@@ -5,6 +5,7 @@ import { usePipecatClientMicControl, usePipecatClientTransportState, useRTVIClie
 import { Button, ConnectButton, TextInputComponent, UserAudioControl } from "@pipecat-ai/voice-ui-kit";
 
 import type { VoiceHandlers } from "./App";
+import { Linked } from "./links";
 import { NotificationCard } from "./NotificationCard";
 import type { Chat } from "./useChat";
 import type { ServerMessage } from "./types";
@@ -17,7 +18,17 @@ function voiceUnavailable(): string | null {
   return null;
 }
 
-export function ChatView({ chat, voice, onOpenAlerts }: { chat: Chat; voice: VoiceHandlers; onOpenAlerts: () => void }) {
+export function ChatView({
+  chat,
+  voice,
+  onOpenAlerts,
+  onOpenPage,
+}: {
+  chat: Chat;
+  voice: VoiceHandlers;
+  onOpenAlerts: () => void;
+  onOpenPage: (url: string) => void;
+}) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" }); // returns a promise in newer browsers: not an effect cleanup
@@ -39,12 +50,14 @@ export function ChatView({ chat, voice, onOpenAlerts }: { chat: Chat; voice: Voi
                 </div>
               ) : entry.kind === "victoria" ? (
                 <div className="w-fit max-w-[85%] rounded-2xl bg-black/5 px-3 py-2 whitespace-pre-wrap dark:bg-white/10">
-                  {entry.text || "…"}
+                  {entry.text ? <Linked text={entry.text} onOpen={onOpenPage} /> : "…"}
                 </div>
               ) : entry.kind === "notice" ? (
                 <div className="rounded-lg border border-current/20 px-3 py-2 text-sm">
                   <strong>{entry.title}</strong>
-                  <p className="mt-1 whitespace-pre-wrap">{entry.text}</p>
+                  <p className="mt-1 whitespace-pre-wrap">
+                    <Linked text={entry.text} onOpen={onOpenPage} />
+                  </p>
                 </div>
               ) : (
                 <NotificationCard item={entry.item} chat={chat} />

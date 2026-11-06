@@ -34,6 +34,9 @@ UNREAD = ("pending", "delivered")
 GROUP_WINDOW_S = 1.5
 # "Want to hear it?" after an announcement stays open this long: it comes unprompted, often mid-thought.
 ANNOUNCEMENT_ANSWER_S = 20.0
+# An agent question being asked holds back the next one (and other spoken notifications) until it's
+# answered or closed, or for this long if nobody answers: the longest a reply still counts as its answer.
+QUESTION_ANSWER_S = 60.0
 TICK_S = 0.5
 NUMBERS = {2: "Two", 3: "Three", 4: "Four", 5: "Five"}
 
@@ -127,6 +130,7 @@ class NotificationService:
         self._items: dict[str, Notification] = {}
         self._outlets: list[Outlet] = []
         self._ready_at: dict[str, float] = {}  # device -> when its pending items may be announced
+        self._asked_at: dict[str, float] = {}  # agent question -> when it was asked
         self._seen_requests: dict[int, int] = {}  # outlet id -> request count at the last check
         self._dnd_until: float | None = None
         self._ticker: asyncio.Task | None = None
@@ -351,9 +355,19 @@ class NotificationService:
         outlets = self.outlets(device)
         if not outlets:
             return False  # kept for when a client connects (and for phone push, later)
+        now = self._clock()
+        asking = [
+            i for i in self.unread(device)
+            if i.kind == "question" and i.state == "delivered" and now - self._asked_at.get(i.id, 0.0) < QUESTION_ANSWER_S
+        ]
+        if asking and not self.quiet():
+            return False  # a question is waiting for its answer: nothing else is spoken over it
         questions = [i for i in pending if i.kind == "question"]
-        if questions and not await self._ask(questions, outlets):
-            return False
+        if questions:
+            if not await self._ask(questions[-1:], outlets):  # the oldest; the others after it
+                return False
+            if len(questions) > 1:
+                return False
         items = [i for i in pending if i.kind != "question"]
         if not items:
             return True
@@ -409,7 +423,8 @@ class NotificationService:
         return True
 
     async def _ask(self, questions: list[Notification], outlets: list[Outlet]) -> bool:
-        """Agent questions are urgent: asked as soon as the assistant isn't speaking there, one at a time.
+        """Agent questions are urgent: asked as soon as the assistant isn't speaking there, one at a time
+        (the caller passes one, and holds the next until it's answered, closed, or QUESTION_ANSWER_S passes).
         During quiet hours they only wait in the list (Bill, 2026-10-31): no sound, no announcement."""
         if self.quiet():
             for item in questions:
@@ -431,6 +446,7 @@ class NotificationService:
             for outlet in outlets:
                 await outlet.announce(announcement)
             self._set(item, state="delivered", mentioned=True)
+            self._asked_at[item.id] = self._clock()
         self._refresh(questions[0].target)
         logger.info("Agent question asked", extra={"event": "notification_question", "count": len(questions)})
         return True

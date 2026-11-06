@@ -18,7 +18,6 @@ Music runs through **Music Assistant**, which streams Plex (and Spotify, when co
      server: http://homeassistant.local:8095
      token: "${MUSIC_ASSISTANT_TOKEN:-}"
      source_order: [plex, spotify]   # searched in this order unless the request names a source
-     rooms: {}                         # optional, see below
      duck_level: 20
    ```
 
@@ -28,13 +27,15 @@ Music runs through **Music Assistant**, which streams Plex (and Spotify, when co
 
 Music plays where you say (Bill, 2026-11-01): "play Footprints in the exercise room", "play some Miles Davis on the Mac mini". Any Music Assistant player can be named by its name. Without a place, music always plays on the device that heard the request, by chat or voice (Bill, 2026-11-01): the web app plays in that browser (below), turning its speaker on if it's off; a satellite (Stage 12) plays in its own room. A device with no speaker of its own answers "I can't play music on this device yet. Name a speaker, like the exercise room." It never asks where, and never picks another speaker.
 
-`rooms` adds friendlier names and ties a satellite to its room:
+The device registry, `rooms` at the top level of `tools.yaml` (Stage 13), adds friendlier names and gives each room its player; a satellite plays in the room it belongs to (`satellites.<name>.room`, by default the room with its own name), and a room can have several:
 
 ```yaml
 rooms:
   exercise room: { player: Exercise room speaker, aliases: [gym] }
-  office: { player: "Bill’s Mac mini", satellite: office }
+  office: { player: "Bill’s Mac mini" }
 ```
+
+The older `music.rooms` (with `satellite:`) still works; it is folded into `rooms`.
 
 ## The web app as a speaker and player
 

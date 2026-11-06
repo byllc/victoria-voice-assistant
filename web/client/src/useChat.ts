@@ -29,6 +29,8 @@ export function useChat(onSignedOut: () => void) {
   const [pushKey, setPushKey] = useState<string | null>(null);
   // The latest message for the music player (numbered, so the same one twice still counts twice).
   const [music, setMusic] = useState<{ n: number; message: MusicMessage } | null>(null);
+  // The latest page Victoria opened here (show_page), numbered like music.
+  const [page, setPage] = useState<{ n: number; url: string; title: string | null } | null>(null);
 
   const append = useCallback((entry: NewLogEntry): number => {
     const id = nextId++;
@@ -108,10 +110,13 @@ export function useChat(onSignedOut: () => void) {
           for (const item of message.items) append({ kind: "notification", item });
           break;
         case "dashboard":
-          setDashboard({ tasks: message.tasks, summary: message.summary });
+          setDashboard({ tasks: message.tasks, summary: message.summary, satellites: message.satellites });
           break;
         case "push_config":
           setPushKey(message.public_key);
+          break;
+        case "show_page":
+          setPage((current) => ({ n: (current?.n ?? 0) + 1, url: message.url, title: message.title }));
           break;
         case "music_start":
         case "music_error":
@@ -189,6 +194,7 @@ export function useChat(onSignedOut: () => void) {
     dashboard,
     pushKey,
     music,
+    page,
     send,
     sendMessage,
     addHeard,

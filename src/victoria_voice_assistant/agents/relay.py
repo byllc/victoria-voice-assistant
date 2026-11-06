@@ -14,6 +14,7 @@ import re
 from typing import TYPE_CHECKING
 
 from victoria_voice_assistant.config.schema import AgentConfig, AppConfig
+from victoria_voice_assistant.rooms import room_of
 from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 
 if TYPE_CHECKING:
@@ -50,24 +51,26 @@ async def relay(agent: AgentConfig, request: str, device: str, config: AppConfig
         chat=SETUP.replace("{{", "{").replace("}}", "}"),
         chat_title=f"{agent.name}: setup",
     )
-    if not agent.targets:
+    # Echoes from the device registry (`rooms.<room>.echo`), and the agent's own `targets`.
+    targets = {**{r: room.echo for r, room in config.tools.rooms.items() if room.echo}, **agent.targets}
+    if not targets:
         return not_set_up
     server = config.tools.mcp_servers.get(agent.via if agent.via and agent.via != "ha_service" else "homeassistant")
     if server is None or not server.token:
         return not_set_up
     # Which Echo: a room named in the request, the device's own room, or the only one.
-    named = [room for room in agent.targets if _words(room) and _words(room) <= _words(request)]
-    rooms = {r: room for r, room in ((config.tools.music.rooms if config.tools.music else {}).items())}
-    own = next((r for r, room in rooms.items() if room.satellite == device and r in agent.targets), None)
-    room = named[0] if named else own or (next(iter(agent.targets)) if len(agent.targets) == 1 else None)
+    named = [room for room in targets if _words(room) and _words(room) <= _words(request)]
+    own = room_of(config.tools, device)
+    own = own if own in targets else None
+    room = named[0] if named else own or (next(iter(targets)) if len(targets) == 1 else None)
     if room is None:
-        question = f"Which {name}: {', '.join(list(agent.targets)[:-1])} or {list(agent.targets)[-1]}?"
+        question = f"Which {name}: {', '.join(list(targets)[:-1])} or {list(targets)[-1]}?"
         return ToolOutcome(
-            result={"choices": list(agent.targets)},
+            result={"choices": list(targets)},
             speak=question,
-            pending=PendingQuestion(kind="clarify", question=question, options=list(agent.targets)),
+            pending=PendingQuestion(kind="clarify", question=question, options=list(targets)),
         )
-    entity_id = agent.targets[room]
+    entity_id = targets[room]
     if services.home is None:
         from victoria_voice_assistant.tools.home import HomeAssistantHub
 

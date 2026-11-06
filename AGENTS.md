@@ -2,22 +2,16 @@
 
 Rules for coding agents working in this repository.
 
-## First action every session
+## How work is tracked
 
-**Read `docs/stages.md` before doing anything else.** Work only on the single stage marked `in progress`. If no stage is `in progress`, the next stage may start only if the one before it is `approved`.
+Work is organised as features, one file each in `features/`, named `<timestamp>_<feature_slug>.md`. The approval gate now applies to each feature, not to numbered stages. `docs/implementation_plan.md` §1 has the full rules.
 
-## Approval gate
-
-Work proceeds in numbered stages. No stage may start until the previous stage has been approved by Bill.
-
-1. **One stage at a time.** Do not write code, scaffolding, stubs, or "preparation" for a later stage, even if it seems harmless. If something later is needed now, note it in the tracker and ask.
-2. **When the done criteria are met:** set the stage to `ready for review` in `docs/stages.md`, fill in the evidence section (test output, measurements, demo steps Bill can follow), then **stop and wait**.
-3. **Never mark a stage `approved`.** Only Bill changes a stage to `approved` by editing the tracker and adding his name and date. If Bill marks it `changes requested`, address his notes and return it to `ready for review`.
-4. **Don't change the architecture silently.** If a stage shows the architecture is wrong or incomplete, record a proposal in the tracker's decisions log and wait for Bill's answer. Do not edit the architecture document unless asked.
-5. **Blocking decisions:** each stage lists the open questions it depends on. If one is unanswered when the stage begins, ask before writing code.
-6. **Branch per stage** (`stage-NN-short-name`). Merge to `main` only after approval, then tag `stage-NN-approved`.
-
-Statuses: `not started` → `in progress` → `ready for review` → `approved` (or `changes requested` → `in progress`).
+- Work only on the feature Bill asks for. He may skip a feature or start another at any time.
+- Ask before starting a feature whose blocking decisions are unanswered.
+- When a feature's criteria are met, set it to `ready for review`, fill in its evidence, and stop. Never set a feature to `approved`; only Bill does.
+- "Next feature" means the earliest timestamp in `features/` not marked `approved` or `skipped`. When Bill asks for it, name the feature and what it is, then wait for his confirmation before starting.
+- When Bill asks what is unfinished, give a numbered list of features not marked `approved` or `skipped`, and wait for him to choose.
+- Don't change the architecture silently. Record proposals in the feature file and wait for Bill.
 
 ## Ground rules
 
@@ -44,6 +38,7 @@ Statuses: `not started` → `in progress` → `ready for review` → `approved` 
 
 - `docs/voice-pipeline-architecture.md` — what to build and why (source of truth for design).
 - `docs/implementation_plan.md` — order, done criteria, and the gate rules in full.
-- `docs/stages.md` — live tracker: current stage, evidence, decisions log.
+- `features/` — remaining work, one file per feature.
+- `docs/stages.md` — history of the stage approvals (discontinued 2026-11-05).
 
 When the two documents disagree, stop and ask.

@@ -248,3 +248,148 @@ def test_a_finished_timer_rings_on_the_device_which_then_owns_it(example_config_
     assert len(ringing) == 1
     assert [event[0] for event in client.timer_events] == [T.VOICE_ASSISTANT_TIMER_FINISHED]
     assert left == []  # the device's "stop" word or button stops it; nothing tells us when
+
+
+def test_satellites_follow_config_reloads(example_config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs: list[str] = []
+
+    async def fake_run(self: esphome.SatelliteLink) -> None:
+        runs.append(self.name)
+        await asyncio.Event().wait()  # "connected" until cancelled
+
+    async def no_server(self: AudioServer) -> None:
+        return None
+
+    monkeypatch.setattr(esphome.SatelliteLink, "run", fake_run)
+    monkeypatch.setattr(AudioServer, "start", no_server)
+    monkeypatch.setattr(AudioServer, "close", no_server)
+    base = load_config(example_config_dir)
+
+    def with_satellites(**satellites: dict) -> Any:
+        tools = base.tools.model_copy(update={"satellites": {n: SatelliteConfig(**s) for n, s in satellites.items()}})
+        return base.model_copy(update={"tools": tools})
+
+    async def scenario() -> list[Any]:
+        manager = esphome.SatelliteManager(with_satellites(), Services(timers=TimerService(TimersConfig()), weather=WeatherService(WeatherConfig())), FakeSpeech())  # type: ignore[arg-type]
+        await manager.start()
+        seen = [sorted(manager.links)]  # none configured: nothing starts
+        await manager.update(with_satellites(office={"host": "o.local"}, kitchen={"host": "k.local"}))
+        await asyncio.sleep(0)
+        office = manager.links["office"]
+        seen.append(sorted(manager.links))
+        await manager.update(with_satellites(office={"host": "o.local", "gain": 12}, kitchen={"host": "k2.local"}))
+        await asyncio.sleep(0)
+        seen.append((manager.links["office"] is office, manager.links["office"].settings.gain))  # same connection, new gain
+        await manager.update(with_satellites(kitchen={"host": "k2.local"}))
+        seen.append(sorted(manager.links))
+        await manager.close()
+        seen.append(sorted(manager.links))
+        return seen
+
+    seen = asyncio.run(scenario())
+    assert seen == [[], ["kitchen", "office"], (True, 12.0), ["kitchen"], []]
+    assert runs == ["office", "kitchen", "kitchen"]  # the kitchen reconnected for its new host
+
+
+def test_the_board_tracks_satellites_for_the_dashboard() -> None:
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
+
+    changes: list[int] = []
+    board = SatelliteBoard(clock=lambda: 5.0)
+    board.add_listener(lambda: changes.append(1))
+    board.configured({"office": "office", "kitchen-1": "kitchen"})
+    board.update("office", online=True)
+    board.update("office", online=True)  # no change: no update sent
+    board.configured({"office": "office"})  # the kitchen satellite was removed
+    assert [(s["name"], s["room"], s["online"], s["state"]) for s in board.snapshot()] == [("office", "office", True, "idle")]
+    assert len(changes) == 3
+
+
+def test_a_turn_shows_on_the_board(example_config_dir: Path) -> None:
+    from victoria_voice_assistant.dashboard import dashboard
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
+
+    async def scenario() -> list[tuple[str, Any, Any]]:
+        session, _client = _session(example_config_dir)
+        board = SatelliteBoard()
+        session.services.satellites = board
+        board.configured({"office": "office"})
+        seen = []
+
+        def note() -> None:
+            (status,) = board.snapshot()
+            seen.append((status["state"], status["request"], status["reply"]))
+
+        board.add_listener(note)
+        await session.handle_start("c1", 0, None, "Victoria")
+        session.user_started()
+        session.user_stopped()
+        session.heard("what time is it")
+        await session.deliver([(_speech(0.2, 24000), 24000)], "It's noon.")
+        view = dashboard(session.services)["satellites"]
+        assert view[0]["room"] == "office" and view[0]["timers"] == []
+        return seen
+
+    seen = asyncio.run(scenario())
+    assert seen == [
+        ("listening", None, None),
+        ("thinking", None, None),
+        ("thinking", "what time is it", None),
+        ("replying", "what time is it", "It's noon."),
+    ]
+
+
+def test_an_offline_satellite_shows_red_and_posts_one_notice(example_config_dir: Path) -> None:
+    from victoria_voice_assistant.health import SATELLITE_NOTICE_CHECKS, HealthMonitor
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
+
+    posted: list[dict[str, Any]] = []
+
+    class Notices:
+        def post(self, **kwargs: Any) -> None:
+            posted.append(kwargs)
+
+    health = HealthMonitor(load_config(example_config_dir))
+    board = SatelliteBoard()
+    health.satellites, health.notifications = board, Notices()
+    board.configured({"office": "office", "kitchen": "kitchen"})
+    board.update("office", online=True)
+    first = health.satellite_health()
+    for _ in range(SATELLITE_NOTICE_CHECKS + 2):  # the kitchen stays offline
+        health.satellite_health()
+    board.update("kitchen", online=True)
+    back = health.satellite_health()
+    assert [(h.name, h.ok) for h in first] == [("satellite kitchen", False), ("satellite office", True)]
+    assert len(posted) == 1 and posted[0]["headline"] == "The kitchen satellite is offline."
+    assert posted[0]["priority"] == "low" and posted[0]["target"] == "web"
+    assert all(h.ok for h in back) and health._offline == {}
+
+
+def test_fleet_update_builds_once_then_uploads_to_each_satellite() -> None:
+    from victoria_voice_assistant.satellite import fleet
+
+    satellites = {"office": SatelliteConfig(host="o.local"), "kitchen": SatelliteConfig(host="k.local")}
+    commands: list[list[str]] = []
+
+    def run(command: list[str]) -> int:
+        commands.append(command)
+        return 1 if command[-1] == "k.local" else 0  # the kitchen's upload fails
+
+    assert fleet.update(satellites, run=run) == {"office": True, "kitchen": False}
+    assert [c[2:] for c in commands] == [[], ["--upload", "o.local"], ["--upload", "k.local"]]
+    assert fleet.update(satellites, run=lambda _c: 1) == {}  # a failed build uploads nothing
+
+
+def test_fleet_status_reads_each_version_and_reports_the_unreachable() -> None:
+    from victoria_voice_assistant.satellite import fleet
+
+    async def read(name: str, settings: SatelliteConfig) -> fleet.DeviceVersion:
+        if name == "kitchen":
+            return fleet.DeviceVersion(name, settings.host, False, error="Host is down")
+        return fleet.DeviceVersion(name, settings.host, True, "v0.2.1", "2026.7.3", "2026-11-02 10:54")
+
+    found = asyncio.run(fleet.versions({"office": SatelliteConfig(host="o.local"), "kitchen": SatelliteConfig(host="k.local")}, read=read))
+    assert fleet.report(found).splitlines() == [
+        "office (o.local): firmware v0.2.1, ESPHome 2026.7.3, built 2026-11-02 10:54",
+        "kitchen (k.local): unreachable (Host is down)",
+    ]

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from contextlib import asynccontextmanager
 import logging
 import secrets
 import socket
@@ -56,6 +57,8 @@ from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcesso
 from victoria_voice_assistant.chat.tools import SessionState
 from victoria_voice_assistant.config.schema import AppConfig, SatelliteConfig
 from victoria_voice_assistant.notifications.service import Announcement, Notification
+from victoria_voice_assistant.satellite.arbiter import Arbiter, speech_over_noise_db
+from victoria_voice_assistant.satellite.status import SatelliteBoard
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
 from victoria_voice_assistant.tools.timers import TimerEvent
@@ -71,6 +74,11 @@ REPLY_WAIT_S = 30.0  # after the user stops, a reply is expected within this lon
 REPLY_SETTLE_S = 0.6  # the reply is sent once no speech audio has come for this long and the request is done
 AUDIO_KEEP_S = 300.0  # how long a reply stays fetchable
 RECONNECT_MAX_S = 60.0
+ANNOUNCE_WAIT_S = 60.0  # an announcement waits up to this long for a conversation turn to finish
+# A turn ends as soon as its reply's URL is sent, while the device is still playing it; an announcement sent
+# then is dropped (2026-11-05: the asking satellite said "Announced everywhere." and never "dinner's ready").
+# So it also waits for the reply to have played, plus this.
+REPLY_GAP_S = 0.5
 
 
 # The reply audio server --------------------------------------------------------------------------
@@ -171,6 +179,9 @@ class Run:
     audio_s: float = 0.0  # audio received this turn, and its raw peak level (before `gain`), for the log
     peak: int = 0
     audio: bytearray = field(default_factory=bytearray)  # after `gain`: its loudness is logged too
+    arbitrating: bool = False  # waiting to hear whether this satellite answers (several woke)
+    held: list[bytes] = field(default_factory=list)  # audio after `gain`, held until then
+    raw: bytearray = field(default_factory=bytearray)  # the same, before `gain`, for its score
     timers: list[asyncio.TimerHandle] = field(default_factory=list)
 
 
@@ -292,8 +303,12 @@ class SatelliteSession:
         audio: AudioServer,
         audio_host: str,
         ring_key: int | None = None,
+        arbiter: Arbiter | None = None,
     ) -> None:
         self.name = name
+        self.arbiter = arbiter  # decides which satellite answers when several wake together
+        self._playback = asyncio.Lock()  # one announcement at a time; the next waits its turn
+        self._reply_until = 0.0  # time.monotonic() when the reply the device is playing has finished
         self.ring_key = ring_key  # the device's user-facing "LED Ring" light, for the pending indicator
         self._ring_on: bool | None = None
         self.settings = settings
@@ -373,6 +388,59 @@ class SatelliteSession:
         except Exception as exc:  # noqa: BLE001 - the connection dropped; the link reconnects
             logger.warning("Satellite event not sent", extra={"event": "satellite_send_failed", "device": self.name, "reason": str(exc)})
 
+    def _status(self, **changes: Any) -> None:
+        if self.services.satellites is not None:
+            self.services.satellites.update(self.name, **changes)
+
+    @asynccontextmanager
+    async def _announcing(self):
+        """Announcements and notifications play one at a time, after any conversation turn here, with
+        the room's music paused meanwhile and resumed after (Bill, 2026-11-03)."""
+        async with self._playback:
+            waited = 0.0
+            # someone is talking to it, or it is still playing their reply
+            while (self.run is not None or time.monotonic() < self._reply_until) and waited < ANNOUNCE_WAIT_S:
+                await asyncio.sleep(0.2)
+                waited += 0.2
+            music = self.services.music
+            held = await music.hold(self.name) if music is not None else None
+            try:
+                yield
+            finally:
+                if held is not None and music is not None:
+                    await music.release(held)
+
+    async def play_announcement(self, url: str, text: str, seconds: float) -> None:
+        """Play audio already encoded and served (an announcement to several rooms)."""
+        async with self._announcing():
+            self._status(state="announcing", reply=text)
+            try:
+                await self.client.send_voice_assistant_announcement_await_response(url, max(30.0, seconds + 15.0), text=text)
+            except Exception as exc:  # noqa: BLE001 - one satellite failing mustn't stop the others
+                logger.warning("Satellite announcement failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
+            finally:
+                if self.run is None and self._board_state() == "announcing":
+                    self._status(state="idle")
+
+    def _board_state(self) -> str | None:
+        board = self.services.satellites
+        return next((s["state"] for s in board.snapshot() if s["name"] == self.name), None) if board else None
+
+    def _idle_after(self, seconds: float) -> None:
+        """The device plays the reply after the turn ends; it's idle once that has had time to play."""
+        def idle() -> None:
+            if self.run is None and self._board_state() == "replying":
+                self._status(state="idle")
+
+        asyncio.get_running_loop().call_later(seconds + 1.0, idle)
+
+    def reconfigure(self, settings: SatelliteConfig, config: AppConfig) -> None:
+        """A config reload while connected: new settings (gain, room, light colour) and the reloaded tools."""
+        if settings.pending_color != self.settings.pending_color:
+            self._ring_on = None  # the next update re-lights it in the new colour
+        self.settings = settings
+        self.chat.reload(config, self.services)
+
     def set_pending_light(self, on: bool) -> None:
         """Light the LED ring while notifications are unread here. The firmware shows it whenever the
         satellite is idle; its voice animations take over during a turn."""
@@ -405,7 +473,13 @@ class SatelliteSession:
         logger.info("Satellite turn", extra={"event": "satellite_turn", "device": self.name, "text": wake_word_phrase})
         self.send(E.VOICE_ASSISTANT_RUN_START)
         self.send(E.VOICE_ASSISTANT_STT_START)
+        self._status(state="listening")
         self.run.timers.append(asyncio.get_running_loop().call_later(NO_SPEECH_S, self._no_speech))
+        if self.arbiter is not None and self.arbiter.satellites > 1:
+            self.run.arbitrating = True
+            task = asyncio.get_running_loop().create_task(self._arbitrate(self.run))
+            self.output._tasks.add(task)
+            task.add_done_callback(self.output._tasks.discard)
         return 0  # stream the audio over this connection
 
     async def handle_audio(self, data: bytes, _extra: bytes | None = None) -> None:
@@ -417,8 +491,31 @@ class SatelliteSession:
             self.run.peak = max(self.run.peak, int(np.abs(samples.astype(np.int32)).max()))
         raised = raise_level(data, self.settings.gain)
         self.run.audio += raised
-        frame = InputAudioRawFrame(audio=raised, sample_rate=SAMPLE_RATE_IN, num_channels=1)
-        await self.task.queue_frame(frame)
+        if self.run.arbitrating:
+            self.run.held.append(raised)
+            self.run.raw += data
+            return
+        await self.task.queue_frame(InputAudioRawFrame(audio=raised, sample_rate=SAMPLE_RATE_IN, num_channels=1))
+
+    def arbitration_score(self) -> tuple[bool, float]:
+        """For the arbiter: priority (a question open here, or a timer ringing here), and how far this
+        turn's speech stands above the satellite's own background noise, plus its configured offset."""
+        priority = self.state.pending is not None or bool(self.services.timers.ringing(self.name))
+        raw = bytes(self.run.raw) if self.run is not None else b""
+        return priority, speech_over_noise_db(raw) + self.settings.arbitration_offset_db
+
+    async def _arbitrate(self, run: Run) -> None:
+        won = await self.arbiter.join(self)  # type: ignore[union-attr]
+        if self.run is not run:
+            return
+        if not won:
+            logger.info("Satellite stood down: another answers", extra={"event": "satellite_stood_down", "device": self.name})
+            self._end_run()  # RUN_END while streaming: the device goes back to idle
+            return
+        run.arbitrating = False
+        for chunk in run.held:  # the speech heard during the window, then the rest live
+            await self.task.queue_frame(InputAudioRawFrame(audio=chunk, sample_rate=SAMPLE_RATE_IN, num_channels=1))
+        run.held.clear()
 
     async def handle_stop(self, abort: bool) -> None:
         if self.run is not None and abort:
@@ -443,6 +540,7 @@ class SatelliteSession:
         if self.run is None or not self.run.listening:
             return
         self.run.listening = False  # the device stops streaming; the turn is the model's now
+        self._status(state="thinking")
         logger.info("Satellite speech ended", extra={"event": "satellite_speech_end", "device": self.name, **self._audio_stats()})
         self.send(E.VOICE_ASSISTANT_STT_VAD_END)
         self.run.timers.append(asyncio.get_running_loop().call_later(REPLY_WAIT_S, self._no_reply))
@@ -453,6 +551,7 @@ class SatelliteSession:
         if self.run is None:
             return
         self.send(E.VOICE_ASSISTANT_STT_END, {"text": text})
+        self._status(request=text)
         self.send(E.VOICE_ASSISTANT_INTENT_START)  # the LED ring shows it thinking
 
     def _no_speech(self) -> None:
@@ -491,6 +590,8 @@ class SatelliteSession:
         for handle in self.run.timers:
             handle.cancel()
         self.run = None
+        if not self.delivering:
+            self._status(state="idle")
         if send_end:
             self.send(E.VOICE_ASSISTANT_RUN_END)
 
@@ -515,17 +616,24 @@ class SatelliteSession:
                 self.send(E.VOICE_ASSISTANT_INTENT_END, {"continue_conversation": "1" if follow_up else "0"})
                 self.send(E.VOICE_ASSISTANT_TTS_START, {"text": text})
                 self.send(E.VOICE_ASSISTANT_TTS_END, {"url": url})
+                self._status(state="replying", reply=text)
+                self._reply_until = time.monotonic() + seconds + REPLY_GAP_S
                 self._end_run()
+                self._idle_after(seconds)
                 logger.info("Satellite reply", extra={"event": "satellite_reply", "device": self.name, "duration_s": round(seconds, 1), "text": text})
                 return
-            logger.info("Satellite announcement", extra={"event": "satellite_announce", "device": self.name, "duration_s": round(seconds, 1), "text": text})
-            await self.client.send_voice_assistant_announcement_await_response(
-                url, max(30.0, seconds + 15.0), text=text, start_conversation=follow_up
-            )
+            async with self._announcing():
+                logger.info("Satellite announcement", extra={"event": "satellite_announce", "device": self.name, "duration_s": round(seconds, 1), "text": text})
+                self._status(state="announcing", reply=text)
+                await self.client.send_voice_assistant_announcement_await_response(
+                    url, max(30.0, seconds + 15.0), text=text, start_conversation=follow_up
+                )
         except Exception as exc:  # noqa: BLE001 - a reply that can't be sent is logged, never raised into the pipeline
             logger.warning("Satellite reply failed", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
         finally:
             self.delivering = False
+            if self.run is None and self._board_state() == "announcing":
+                self._status(state="idle")
 
     # Timers, mirrored to the device so it rings and its "stop" word works
 
@@ -606,7 +714,11 @@ class SatelliteSession:
 class SatelliteLink:
     """Keeps one satellite connected: connect, serve until it drops, wait, reconnect."""
 
-    def __init__(self, name: str, settings: SatelliteConfig, config: AppConfig, services: Services, speech: SpeechModels, audio: AudioServer) -> None:
+    def __init__(
+        self, name: str, settings: SatelliteConfig, config: AppConfig, services: Services, speech: SpeechModels, audio: AudioServer,
+        arbiter: Arbiter | None = None,
+    ) -> None:
+        self.arbiter = arbiter
         self.name = name
         self.settings = settings
         self.config = config
@@ -614,6 +726,13 @@ class SatelliteLink:
         self.speech = speech
         self.audio = audio
         self.connected = False
+        self.session: SatelliteSession | None = None
+
+    def reconfigure(self, settings: SatelliteConfig, config: AppConfig) -> None:
+        """Settings that don't need a new connection; the next connection uses them too."""
+        self.settings, self.config = settings, config
+        if self.session is not None:
+            self.session.reconfigure(settings, config)
 
     async def run(self) -> None:
         from aioesphomeapi import APIClient
@@ -637,8 +756,10 @@ class SatelliteLink:
                 ring = next((e.key for e in entities if type(e).__name__ == "LightInfo" and e.object_id == "led_ring"), None)
                 session = SatelliteSession(
                     self.name, self.settings, client, self.config, self.services, self.speech, self.audio,
-                    await asyncio.to_thread(local_address, self.settings.host), ring_key=ring,
+                    await asyncio.to_thread(local_address, self.settings.host), ring_key=ring, arbiter=self.arbiter,
                 )
+                self.session = session
+                self.services.satellites.update(self.name, online=True, state="idle")
                 await session.run_until_disconnected(disconnected)
                 logger.warning("Satellite disconnected", extra={"event": "satellite_disconnected", "device": self.name})
             except asyncio.CancelledError:
@@ -647,6 +768,9 @@ class SatelliteLink:
                 logger.warning("Satellite unreachable", extra={"event": "satellite_unreachable", "device": self.name, "reason": str(exc) or type(exc).__name__})
             finally:
                 self.connected = False
+                self.session = None
+                if self.services.satellites is not None:
+                    self.services.satellites.update(self.name, online=False, state="idle")
                 try:
                     await client.disconnect()
                 except Exception:  # noqa: BLE001
@@ -655,29 +779,100 @@ class SatelliteLink:
             delay = min(delay * 2, RECONNECT_MAX_S)
 
 
+def _connection(settings: SatelliteConfig) -> tuple[str, int, str | None]:
+    """What a satellite's connection depends on: a change here means reconnecting."""
+    return settings.host, settings.port, settings.key
+
+
 class SatelliteManager:
-    """Every satellite in `tools.yaml`, and the audio server they fetch replies from."""
+    """Every satellite in `tools.yaml`, and the audio server they fetch replies from.
+
+    Follows config reloads (Stage 13): a satellite added to `satellites:` connects, one removed
+    disconnects, one whose host, port or key changed reconnects, and other changes reach the connected
+    session. The audio server starts with the first satellite; changing its port needs a restart.
+    """
 
     def __init__(self, config: AppConfig, services: Services, speech: SpeechModels) -> None:
         self.config = config
         self.services = services
         self.speech = speech
         self.audio = AudioServer(config.tools.satellite_audio_port)
-        self.links = [SatelliteLink(name, s, config, services, speech, self.audio) for name, s in config.tools.satellites.items()]
-        self._tasks: list[asyncio.Task] = []
+        if services.satellites is None:
+            services.satellites = SatelliteBoard()
+        self.board = services.satellites
+        self.arbiter = Arbiter(config.tools.satellite_arbitration_s)
+        self.links: dict[str, SatelliteLink] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._playing: set[asyncio.Task] = set()  # announcements queued or playing on the satellites
+        self._audio_started = False
+        self._lock = asyncio.Lock()
 
     async def start(self) -> None:
-        if not self.links:
+        await self.update(self.config)
+
+    async def update(self, config: AppConfig) -> None:
+        async with self._lock:
+            self.config = config
+            wanted = config.tools.satellites
+            self.board.configured({name: settings.room for name, settings in wanted.items()})
+            self.arbiter.satellites = len(wanted)
+            self.arbiter.window_s = config.tools.satellite_arbitration_s
+            for name in list(self.links):
+                if name not in wanted or _connection(wanted[name]) != _connection(self.links[name].settings):
+                    await self._stop(name)
+            for name, settings in wanted.items():
+                link = self.links.get(name)
+                if link is not None:
+                    link.reconfigure(settings, config)
+                    continue
+                if not self._audio_started:
+                    await self.audio.start()
+                    self._audio_started = True
+                link = SatelliteLink(name, settings, config, self.services, self.speech, self.audio, arbiter=self.arbiter)
+                self.links[name] = link
+                self._tasks[name] = asyncio.create_task(link.run(), name=f"satellite-{name}")
+                logger.info("Satellite added", extra={"event": "satellite_added", "device": name})
+
+    async def announce(self, text: str, rooms: list[str] | None = None) -> list[str]:
+        """Say `text` on every connected satellite in `rooms` (None: everywhere), synthesized once and
+        sent to each as the same audio. Returns the satellites it was sent to, without waiting for them to
+        play it: each satellite queues it after its own turn, and when the asking satellite is one of them,
+        that turn is the one waiting for this tool (2026-11-05: waiting here held its turn 27 s)."""
+        sessions = [
+            link.session for link in self.links.values()
+            if link.session is not None and (rooms is None or link.settings.room in rooms)
+        ]
+        if not sessions:
+            return []
+        audio, rate = await self.speech.synthesize(text)
+        data, seconds = await asyncio.to_thread(to_flac, [(audio, rate)])
+        name = self.audio.add(data)
+        logger.info(
+            "Satellite announcement to several rooms",
+            extra={"event": "satellite_broadcast", "count": len(sessions), "duration_s": round(seconds, 1), "text": text},
+        )
+        for session in sessions:
+            url = f"http://{session.audio_host}:{self.audio.port}/satellite-audio/{name}"
+            task = asyncio.create_task(session.play_announcement(url, text, seconds), name=f"announce-{session.name}")
+            self._playing.add(task)
+            task.add_done_callback(self._playing.discard)
+        return [session.name for session in sessions]
+
+    async def _stop(self, name: str) -> None:
+        self.links.pop(name, None)
+        task = self._tasks.pop(name, None)
+        if task is None:
             return
-        await self.audio.start()
-        self._tasks = [asyncio.create_task(link.run(), name=f"satellite-{link.name}") for link in self.links]
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        logger.info("Satellite removed", extra={"event": "satellite_removed", "device": name})
 
     async def close(self) -> None:
-        for task in self._tasks:
-            task.cancel()
-        for task in self._tasks:
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-        await self.audio.close()
+        async with self._lock:
+            for name in list(self._tasks):
+                await self._stop(name)
+        if self._audio_started:
+            await self.audio.close()

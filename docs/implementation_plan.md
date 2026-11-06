@@ -6,19 +6,24 @@ This plan is written for a coding agent. The pipeline is built first and is full
 
 ## 1. Approval gate (read first)
 
-Work proceeds in numbered stages. **No stage may start until the previous stage has been approved by Bill.** Approval is recorded only in the stage tracker (`docs/stages.md`), which is created in Stage 0.
+Work is organised as **features**, one file each in `features/`, named `<timestamp>_<feature_slug>.md`. The stage-by-stage gate was discontinued on 2026-11-05. Each feature now has its own gate.
 
 Rules for the coding agent:
 
-1. **Read `docs/stages.md` at the start of every session.** Work only on the single stage marked `in progress`. If no stage is `in progress`, the next stage may be started only if the stage before it is `approved`.
-2. **One stage at a time.** Do not write code, scaffolding, stubs, or "preparation" for a later stage, even if it seems harmless. If something later is needed now, note it in the tracker and ask.
-3. **When the done criteria are met:** set the stage to `ready for review`, fill in the evidence section (test output, measurements, demo steps Bill can follow), then **stop and wait**.
-4. **Never mark a stage `approved`.** Only Bill changes a stage to `approved`, by editing the tracker and adding his name and the date. If Bill marks it `changes requested`, address his notes and return it to `ready for review`.
-5. **Don't change the architecture silently.** If a stage shows that the architecture is wrong or incomplete, record a proposal in the tracker's decisions log and wait for Bill's answer. Do not edit the architecture document unless asked.
-6. **Blocking decisions:** each stage lists the open questions it depends on. If one is unanswered when the stage begins, ask before writing code.
-7. **Work on a branch per stage** (`stage-NN-short-name`). Merge to `main` only after approval, then tag `stage-NN-approved`.
+1. **Read the feature file before starting.** Work only on the feature Bill has asked for. Bill may skip a feature or start another one at any time.
+2. **One feature at a time.** Do not write code or scaffolding for another feature, even if it seems harmless. If something else is needed, note it in that feature's file and ask.
+3. **Ask before starting a blocked feature.** If a feature's blocking decisions are unanswered, ask before writing code.
+4. **When the feature's done criteria are met:** set its status to `ready for review`, fill in its evidence section (test output, measurements, demo steps Bill can follow), then **stop and wait**.
+5. **Never mark a feature `approved`.** Only Bill changes the status to `approved` and adds his name and the date. If Bill marks it `changes requested`, address his notes and return it to `ready for review`.
+6. **Skipped features** are set to `skipped` by Bill. Do not work on them until Bill asks.
+7. **Don't change the architecture silently.** Record a proposal in the feature's file and wait for Bill's answer.
+8. **Lists on request.** When Bill asks what is unfinished, give a numbered list of features whose status is not `approved` or `skipped`, and wait for him to choose.
+9. **"Next feature" means the earliest timestamp** in `features/` that is not `approved` or `skipped`. When Bill asks for the next feature, name it, say what it is, and wait for his confirmation before starting work.
+10. **Work on a branch per feature** (`feature-<feature_slug>`). Merge to `main` only after approval, then tag `feature-<feature_slug>-approved`.
 
-Stage statuses: `not started` → `in progress` → `ready for review` → `approved` (or `changes requested` → `in progress`).
+Feature statuses: `open` → `in progress` → `ready for review` → `approved` (or `changes requested` → `in progress`); `skipped` at any point, set by Bill.
+
+The stage sections below (§3 and §4) are history from before 2026-11-05. The open work is in `features/`.
 
 ## 2. Ground rules for all stages
 

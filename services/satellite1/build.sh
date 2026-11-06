@@ -3,6 +3,8 @@
 #   sh services/satellite1/build.sh                       compile only
 #   sh services/satellite1/build.sh --flash /dev/cu.usbmodem2101
 #   sh services/satellite1/build.sh --flash 192.168.1.251  (over Wi-Fi, once it runs this firmware)
+#   sh services/satellite1/build.sh --upload 192.168.1.251 (upload the last build without compiling;
+#                                                           `assistant satellites update` uses it)
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 project=$here/../..
@@ -30,6 +32,8 @@ printf 'api_key: "%s"\n' "$key" > "$build/secrets.yaml"
 cd "$build"
 if [ "${1:-}" = "--flash" ]; then
     uv tool run --from "$esphome_pin" esphome run victoria-satellite1.yaml --device "$2" --no-logs
+elif [ "${1:-}" = "--upload" ]; then
+    uv tool run --from "$esphome_pin" esphome upload victoria-satellite1.yaml --device "$2"
 else
     uv tool run --from "$esphome_pin" esphome compile victoria-satellite1.yaml
 fi

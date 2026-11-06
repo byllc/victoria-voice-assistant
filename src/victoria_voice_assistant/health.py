@@ -5,6 +5,8 @@ Checked every `INTERVAL_S` in the background: each OpenAI-compatible server in `
 music server by any answer. Cloud servers aren't called; they show whether a key is set.
 Then this machine (Stage 11): the assistant's memory and the Mac's free memory, whether the web
 interface answers, and how old the newest backup is; each turns red past its limit.
+Then each satellite (Stage 13): green while connected; one offline for `SATELLITE_NOTICE_CHECKS`
+checks in a row also posts a low-priority notice to the web client, once per time it goes offline.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ FIRST_CHECK_AFTER_S = 2.0
 MEMORY_LIMIT_MB = 3000  # the assistant itself; models run in LM Studio, not here
 MIN_FREE_PERCENT = 10  # the Mac's free-memory level (kern.memorystatus_level) below which it's under pressure
 BACKUP_MAX_AGE_H = 36  # a daily backup that's missed one run
+SATELLITE_NOTICE_CHECKS = 2  # offline this many checks in a row (about a minute) before a notice: not a brief reconnect
 
 
 @dataclass
@@ -60,6 +63,9 @@ class HealthMonitor:
         self.web_url = web_url
         self.results: list[Health] = []
         self._listeners: list[HealthListener] = []
+        self.satellites = None  # the satellite board, once satellites run (set by the app)
+        self.notifications = None  # for the offline-satellite notice (set by the app)
+        self._offline: dict[str, int] = {}  # satellite -> offline checks in a row
         self._task: asyncio.Task | None = None
 
     def update_config(self, config: AppConfig) -> None:
@@ -118,6 +124,7 @@ class HealthMonitor:
             results = [*results, await self.memory(), *([await self.web()] if self.web_url else [])]
         if self.backup_dir is not None:
             results.append(self.backup())
+        results.extend(self.satellite_health())
         changed = [(r.name, r.ok) for r in results] != [(r.name, r.ok) for r in self.results]
         self.results = list(results)
         if changed:
@@ -128,6 +135,34 @@ class HealthMonitor:
         for listener in list(self._listeners):
             await listener(self.results)
         return self.results
+
+    def satellite_health(self) -> list[Health]:
+        """Each satellite: connected or not. Offline for SATELLITE_NOTICE_CHECKS checks: one notice."""
+        if self.satellites is None:
+            return []
+        now = self._clock()
+        results = []
+        for status in self.satellites.snapshot():
+            name = status["name"]
+            results.append(Health(f"satellite {name}", status["online"], "connected" if status["online"] else "offline", now))
+            if status["online"]:
+                self._offline.pop(name, None)
+                continue
+            self._offline[name] = self._offline.get(name, 0) + 1
+            if self._offline[name] == SATELLITE_NOTICE_CHECKS and self.notifications is not None:
+                self.notifications.post(
+                    source="satellites",
+                    kind="notice",
+                    headline=f"The {name} satellite is offline.",
+                    summary="It hasn't been connected for about a minute. Check its power and Wi-Fi.",
+                    full=None,
+                    target="web",
+                    priority="low",
+                )
+        for name in list(self._offline):
+            if name not in {s["name"] for s in self.satellites.snapshot()}:
+                del self._offline[name]
+        return results
 
     async def _check_one(
         self, client: httpx.AsyncClient, name: str, url: str | None, headers: dict[str, str], note: str

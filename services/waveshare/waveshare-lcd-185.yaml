@@ -1,0 +1,519 @@
+# A test satellite (Stage 13): the Waveshare ESP32-S3-LCD-1.85 with its speaker box, on ESPHome, for the checks
+# that need a second satellite while only one Satellite1 exists. Not a Satellite1: no XMOS echo cancellation, one
+# microphone, no LED ring (the assistant skips the pending light). The screen glows green from the wake word
+# until the reply, blue while it speaks (replies, announcements, timers), and is dark otherwise.
+#
+# Pins from Waveshare's wiki (ESP32-S3-LCD-1.85): ICS-43434 microphone on I2S (WS 2, SCK 15, SD 39); PCM5101
+# DAC and amplifier on I2S (LRCK 38, BCK 48, DIN 47); I2C on 11/10 (TCA9554 expander, RTC, IMU); 16 MB flash,
+# 8 MB octal PSRAM; ST77916 360x360 screen on QSPI (CLK 40, D0-D3 46/45/42/41, CS 21, reset on the expander's
+# EXIO2 = pin 1, backlight 5), started with Waveshare's own ST77916 init sequence (vendor_specific_init_new, as in their demo). The BOOT button (GPIO0) starts or stops a turn and silences a ringing timer.
+#
+# Same key (SATELLITE1_API_KEY) and wake words ("Victoria", "Hey Viki") as our Satellite1 build. build.sh writes
+# secrets.yaml next to this file from the Keychain.
+
+esphome:
+  name: victoria-waveshare
+  friendly_name: Victoria Waveshare
+  min_version: 2025.5.0
+  on_boot:
+    - priority: -100
+      then:
+        - script.execute:
+            id: screen
+            mode: 0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - micro_wake_word.start:
+  # Any client leaving fires this (an `esphome logs` session too), so stop listening only when none is left.
+  on_client_disconnected:
+    - if:
+        condition:
+          not: api.connected
+        then:
+          - voice_assistant.stop:
+          - micro_wake_word.stop:
+
+ota:
+  - platform: esphome
+
+# Wi-Fi is set on the device, not in this file: Improv over USB (web.esphome.io) or Bluetooth (improv-wifi.com).
+wifi:
+  ap: {}
+captive_portal:
+improv_serial:
+esp32_improv:
+  authorizer: none
+
+globals:
+  - id: ringing
+    type: bool
+    initial_value: "false"
+
+  - id: screen_mode  # 0 dark, 1 green (heard the wake word), 2 blue (speaking)
+    type: int
+    initial_value: "0"
+
+output:
+  - platform: ledc
+    id: backlight_output
+    pin: GPIO5
+
+light:
+  - platform: monochromatic
+    id: backlight
+    output: backlight_output
+    restore_mode: ALWAYS_OFF
+    default_transition_length: 250ms
+
+pca9554:
+  - id: expander
+
+spi:
+  id: display_qspi
+  type: quad
+  clk_pin: GPIO40
+  data_pins: [GPIO46, GPIO45, GPIO42, GPIO41]
+
+display:
+  - platform: qspi_dbi
+    id: screen_display
+    model: CUSTOM
+    spi_id: display_qspi
+    data_rate: 80MHz
+    color_order: RGB
+    invert_colors: true
+    dimensions:
+      width: 360
+      height: 360
+    cs_pin: GPIO21
+    reset_pin:
+      pca9554: expander
+      number: 1  # EXIO2: Waveshare counts EXIO1-8, the expander pins 0-7 (EXIO1 is the touch reset)
+    auto_clear_enabled: false
+    update_interval: never
+    lambda: |-
+      switch (id(screen_mode)) {
+        case 1: it.fill(Color(0, 200, 60)); break;
+        case 2: it.fill(Color(0, 90, 255)); break;
+        default: it.fill(Color::BLACK);
+      }
+    init_sequence:
+      - [0xF0, 0x28]
+      - [0xF2, 0x28]
+      - [0x73, 0xF0]
+      - [0x7C, 0xD1]
+      - [0x83, 0xE0]
+      - [0x84, 0x61]
+      - [0xF2, 0x82]
+      - [0xF0, 0x00]
+      - [0xF0, 0x01]
+      - [0xF1, 0x01]
+      - [0xB0, 0x56]
+      - [0xB1, 0x4D]
+      - [0xB2, 0x24]
+      - [0xB4, 0x87]
+      - [0xB5, 0x44]
+      - [0xB6, 0x8B]
+      - [0xB7, 0x40]
+      - [0xB8, 0x86]
+      - [0xBA, 0x00]
+      - [0xBB, 0x08]
+      - [0xBC, 0x08]
+      - [0xBD, 0x00]
+      - [0xC0, 0x80]
+      - [0xC1, 0x10]
+      - [0xC2, 0x37]
+      - [0xC3, 0x80]
+      - [0xC4, 0x10]
+      - [0xC5, 0x37]
+      - [0xC6, 0xA9]
+      - [0xC7, 0x41]
+      - [0xC8, 0x01]
+      - [0xC9, 0xA9]
+      - [0xCA, 0x41]
+      - [0xCB, 0x01]
+      - [0xD0, 0x91]
+      - [0xD1, 0x68]
+      - [0xD2, 0x68]
+      - [0xF5, 0x00, 0xA5]
+      - [0xDD, 0x4F]
+      - [0xDE, 0x4F]
+      - [0xF1, 0x10]
+      - [0xF0, 0x00]
+      - [0xF0, 0x02]
+      - [0xE0, 0xF0, 0x0A, 0x10, 0x09, 0x09, 0x36, 0x35, 0x33, 0x4A, 0x29, 0x15, 0x15, 0x2E, 0x34]
+      - [0xE1, 0xF0, 0x0A, 0x0F, 0x08, 0x08, 0x05, 0x34, 0x33, 0x4A, 0x39, 0x15, 0x15, 0x2D, 0x33]
+      - [0xF0, 0x10]
+      - [0xF3, 0x10]
+      - [0xE0, 0x07]
+      - [0xE1, 0x00]
+      - [0xE2, 0x00]
+      - [0xE3, 0x00]
+      - [0xE4, 0xE0]
+      - [0xE5, 0x06]
+      - [0xE6, 0x21]
+      - [0xE7, 0x01]
+      - [0xE8, 0x05]
+      - [0xE9, 0x02]
+      - [0xEA, 0xDA]
+      - [0xEB, 0x00]
+      - [0xEC, 0x00]
+      - [0xED, 0x0F]
+      - [0xEE, 0x00]
+      - [0xEF, 0x00]
+      - [0xF8, 0x00]
+      - [0xF9, 0x00]
+      - [0xFA, 0x00]
+      - [0xFB, 0x00]
+      - [0xFC, 0x00]
+      - [0xFD, 0x00]
+      - [0xFE, 0x00]
+      - [0xFF, 0x00]
+      - [0x60, 0x40]
+      - [0x61, 0x04]
+      - [0x62, 0x00]
+      - [0x63, 0x42]
+      - [0x64, 0xD9]
+      - [0x65, 0x00]
+      - [0x66, 0x00]
+      - [0x67, 0x00]
+      - [0x68, 0x00]
+      - [0x69, 0x00]
+      - [0x6A, 0x00]
+      - [0x6B, 0x00]
+      - [0x70, 0x40]
+      - [0x71, 0x03]
+      - [0x72, 0x00]
+      - [0x73, 0x42]
+      - [0x74, 0xD8]
+      - [0x75, 0x00]
+      - [0x76, 0x00]
+      - [0x77, 0x00]
+      - [0x78, 0x00]
+      - [0x79, 0x00]
+      - [0x7A, 0x00]
+      - [0x7B, 0x00]
+      - [0x80, 0x48]
+      - [0x81, 0x00]
+      - [0x82, 0x06]
+      - [0x83, 0x02]
+      - [0x84, 0xD6]
+      - [0x85, 0x04]
+      - [0x86, 0x00]
+      - [0x87, 0x00]
+      - [0x88, 0x48]
+      - [0x89, 0x00]
+      - [0x8A, 0x08]
+      - [0x8B, 0x02]
+      - [0x8C, 0xD8]
+      - [0x8D, 0x04]
+      - [0x8E, 0x00]
+      - [0x8F, 0x00]
+      - [0x90, 0x48]
+      - [0x91, 0x00]
+      - [0x92, 0x0A]
+      - [0x93, 0x02]
+      - [0x94, 0xDA]
+      - [0x95, 0x04]
+      - [0x96, 0x00]
+      - [0x97, 0x00]
+      - [0x98, 0x48]
+      - [0x99, 0x00]
+      - [0x9A, 0x0C]
+      - [0x9B, 0x02]
+      - [0x9C, 0xDC]
+      - [0x9D, 0x04]
+      - [0x9E, 0x00]
+      - [0x9F, 0x00]
+      - [0xA0, 0x48]
+      - [0xA1, 0x00]
+      - [0xA2, 0x05]
+      - [0xA3, 0x02]
+      - [0xA4, 0xD5]
+      - [0xA5, 0x04]
+      - [0xA6, 0x00]
+      - [0xA7, 0x00]
+      - [0xA8, 0x48]
+      - [0xA9, 0x00]
+      - [0xAA, 0x07]
+      - [0xAB, 0x02]
+      - [0xAC, 0xD7]
+      - [0xAD, 0x04]
+      - [0xAE, 0x00]
+      - [0xAF, 0x00]
+      - [0xB0, 0x48]
+      - [0xB1, 0x00]
+      - [0xB2, 0x09]
+      - [0xB3, 0x02]
+      - [0xB4, 0xD9]
+      - [0xB5, 0x04]
+      - [0xB6, 0x00]
+      - [0xB7, 0x00]
+      - [0xB8, 0x48]
+      - [0xB9, 0x00]
+      - [0xBA, 0x0B]
+      - [0xBB, 0x02]
+      - [0xBC, 0xDB]
+      - [0xBD, 0x04]
+      - [0xBE, 0x00]
+      - [0xBF, 0x00]
+      - [0xC0, 0x10]
+      - [0xC1, 0x47]
+      - [0xC2, 0x56]
+      - [0xC3, 0x65]
+      - [0xC4, 0x74]
+      - [0xC5, 0x88]
+      - [0xC6, 0x99]
+      - [0xC7, 0x01]
+      - [0xC8, 0xBB]
+      - [0xC9, 0xAA]
+      - [0xD0, 0x10]
+      - [0xD1, 0x47]
+      - [0xD2, 0x56]
+      - [0xD3, 0x65]
+      - [0xD4, 0x74]
+      - [0xD5, 0x88]
+      - [0xD6, 0x99]
+      - [0xD7, 0x01]
+      - [0xD8, 0xBB]
+      - [0xD9, 0xAA]
+      - [0xF3, 0x01]
+      - [0xF0, 0x00]
+      - [0x11, 0x00]
+      - delay 120ms
+      - [0x3A, 0x55]  # 16-bit colour: Waveshare's driver sends this outside its vendor list
+      - [0x29, 0x00]
+
+script:
+  - id: screen
+    mode: restart
+    parameters:
+      mode: int
+    then:
+      - lambda: id(screen_mode) = mode;
+      - if:
+          condition:
+            lambda: return mode == 0;
+          then:
+            - light.turn_off: backlight
+          else:
+            - component.update: screen_display
+            - light.turn_on:
+                id: backlight
+                brightness: 100%
+  # The turn ended: dark, unless the reply is still playing (its end turns it dark then). Not checking
+  # voice_assistant.is_running here: it still reads true inside on_end.
+  - id: screen_turn_ended
+    then:
+      - delay: 100ms
+      - if:
+          condition:
+            not: media_player.is_announcing
+          then:
+            - script.execute:
+                id: screen
+                mode: 0
+  # The reply finished playing: dark, unless a turn is still going (a follow-up question listens again).
+  - id: screen_reply_ended
+    then:
+      - delay: 100ms
+      - if:
+          condition:
+            not: voice_assistant.is_running
+          then:
+            - script.execute:
+                id: screen
+                mode: 0
+
+i2c:
+  id: bus_a
+  sda: GPIO11
+  scl: GPIO10
+
+i2s_audio:
+  - id: i2s_mic_bus
+    i2s_lrclk_pin: GPIO2
+    i2s_bclk_pin: GPIO15
+  - id: i2s_speaker_bus
+    i2s_lrclk_pin: GPIO38
+    i2s_bclk_pin: GPIO48
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_mic_bus
+    i2s_din_pin: GPIO39
+    adc_type: external
+    pdm: false
+    sample_rate: 16000
+    bits_per_sample: 32bit
+    channel: right  # as the working Spotpear (same board) config has it; if the assistant hears silence, try left
+
+speaker:
+  - platform: i2s_audio
+    id: i2s_speaker
+    i2s_audio_id: i2s_speaker_bus
+    i2s_dout_pin: GPIO47
+    dac_type: external
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: stereo
+    buffer_duration: 100ms
+  - platform: mixer
+    id: speaker_mixer
+    output_speaker: i2s_speaker
+    num_channels: 2
+    source_speakers:
+      - id: announcement_mixer_input
+        timeout: never
+      - id: media_mixer_input
+        timeout: never
+  - platform: resampler
+    id: announcement_resampler
+    output_speaker: announcement_mixer_input
+  - platform: resampler
+    id: media_resampler
+    output_speaker: media_mixer_input
+
+media_player:
+  - platform: speaker
+    id: speaker_media_player
+    name: Media Player
+    volume_min: 0.5
+    volume_max: 0.9
+    announcement_pipeline:
+      speaker: announcement_resampler
+      format: FLAC  # the assistant sends 48 kHz mono FLAC
+      sample_rate: 48000
+      num_channels: 1
+    media_pipeline:
+      speaker: media_resampler
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 2
+    files:
+      - id: timer_finished_sound
+        file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/timer_finished.flac
+    # Music is lowered by 20 dB while it speaks, as the Satellite1 firmware does.
+    on_announcement:
+      - script.execute:
+          id: screen
+          mode: 2
+      - mixer_speaker.apply_ducking:
+          id: media_mixer_input
+          decibel_reduction: 20
+          duration: 0.0s
+    on_idle:
+      - mixer_speaker.apply_ducking:
+          id: media_mixer_input
+          decibel_reduction: 0
+          duration: 1.0s
+      - script.execute: screen_reply_ended
+
+micro_wake_word:
+  id: mww
+  microphone: mic
+  stop_after_detection: false
+  models:
+    - model: ../satellite1/wake_words/victoria.json
+      id: victoria
+    - model: ../satellite1/wake_words/hey_viki.json
+      id: hey_viki
+  vad:
+  on_wake_word_detected:
+    - if:
+        condition:
+          lambda: return id(ringing);
+        then:
+          - lambda: id(ringing) = false;
+          - media_player.stop:
+              announcement: true
+        else:
+          - if:
+              condition: voice_assistant.is_running
+              then:
+                - voice_assistant.stop:
+              else:
+                - script.execute:
+                    id: screen
+                    mode: 1
+                - voice_assistant.start:
+                    wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: va
+  microphone: mic
+  media_player: speaker_media_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_end:
+    - script.execute: screen_turn_ended
+  on_error:
+    - script.execute: screen_turn_ended
+  on_timer_finished:
+    - lambda: id(ringing) = true;
+    - repeat:
+        count: 30  # about a minute, unless silenced by the button, the wake word or a cancel
+        then:
+          - if:
+              condition:
+                lambda: return id(ringing);
+              then:
+                - media_player.speaker.play_on_device_media_file:
+                    media_file: timer_finished_sound
+                    announcement: true
+                - delay: 2s
+  on_timer_cancelled:
+    - lambda: id(ringing) = false;
+
+binary_sensor:
+  - platform: gpio
+    id: boot_button
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      - if:
+          condition:
+            lambda: return id(ringing);
+          then:
+            - lambda: id(ringing) = false;
+            - media_player.stop:
+                announcement: true
+          else:
+            - if:
+                condition: voice_assistant.is_running
+                then:
+                  - voice_assistant.stop:
+                else:
+                  - script.execute:
+                      id: screen
+                      mode: 1
+                  - voice_assistant.start:

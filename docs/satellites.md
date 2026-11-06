@@ -39,7 +39,7 @@ Find its address afterwards from your router, or use its mDNS name: `satellite1-
 
 ### 3. Tell the assistant about it
 
-Add it to `config/tools.yaml`. The name is how the assistant refers to the device, and the name a music room uses for it (`music.rooms.<room>.satellite`):
+Add it to `config/tools.yaml`. The name is how the assistant refers to the device; `room` puts it in a room of the device registry (`rooms`, by default the room with the satellite's own name), whose player, Home Assistant area and Echo it then uses:
 
 ```yaml
 satellites:
@@ -48,19 +48,24 @@ satellites:
     key: "${SATELLITE1_API_KEY}"
 #   port: 6053      # the ESPHome API port
 #   gain: 24        # the microphone is raised by this before speech detection (its clean channel is quiet)
+#   room: office    # its room in `rooms`; default: the room with its own name
+#   arbitration_offset_db: 0   # added to its score when several hear the same words
 #   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
+# satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words
 ```
 
-Then restart the assistant:
+Saving `tools.yaml` is enough; no restart (Stage 13). A satellite added under `satellites:` connects, one removed disconnects, one whose `host`, `port` or `key` changed reconnects, and other changes (its `gain`, `room` or `pending_color`, and tool changes) reach it while connected. Only `satellite_audio_port` needs a restart.
 
-```sh
-launchctl kickstart -k gui/$(id -u)/com.victoria.voice-assistant
+Give its room what the room has, under `rooms` (several satellites can share a room):
+
+```yaml
+rooms:
+  office:
+    player: Bill's Mac mini      # music played here ([music.md](music.md))
+    area: Office                 # "turn off the lights" from this satellite means the Office's lights
+    echo: media_player.office_echo   # "ask Alexa" goes to this Echo
 ```
-
-Satellites are read when the assistant starts. Changes under `satellites:`, and tool changes a connected satellite should use, take effect at the next restart. Browser sessions pick up configuration changes without one.
-
-To tie it to a room for music, add `satellite: office` to that room under `music.rooms` ([music.md](music.md)).
 
 ### 4. Check it connected
 
@@ -75,6 +80,22 @@ grep satellite_connected ~/Library/Logs/"Victoria Voice Assistant"/assistant-err
 ### 5. Home Assistant
 
 If the satellite was in Home Assistant before, Home Assistant's ESPHome entry for it can no longer connect (it doesn't have the new key), and its entities show as unavailable. Delete it: **Settings > Devices & services > ESPHome**, the device, **⋮ > Delete**. Whether and when to do this is Bill's call. While Home Assistant isn't connected, the device's sensors, LED ring and buttons aren't available to Home Assistant automations.
+
+## Several satellites in earshot
+
+When more than one satellite hears the same words, one answers (Stage 13). The first to wake opens a short window (`satellite_arbitration_s`, 0.5 s) for others waking too, and each one's audio is held meanwhile, not transcribed. Then a satellite with an open question or a ringing timer answers; otherwise the one whose speech stands highest above its own background noise, with near-ties (within 1.5 dB) going to the first to wake. The others go quietly back to idle. The window passes while you're still speaking, so the reply isn't slower. With one satellite configured, nothing is held.
+
+If the wrong one keeps answering in some spot, give the satellite that should a head start (`arbitration_offset_db: 3` under it) or the other a handicap (a negative value). The log shows each decision: `satellite_arbitration`, with every candidate's score.
+
+## Updating every satellite's firmware
+
+```sh
+uv run assistant satellites status              # each satellite's firmware version and build time
+uv run assistant satellites update              # build once, then update every satellite over Wi-Fi
+uv run assistant satellites update --only office
+```
+
+`update` builds the firmware once (`services/satellite1/build.sh`), uploads it to each satellite in `tools.yaml` in turn (`build.sh --upload HOST`), and then reads back each one's version. A satellite that's offline or fails is reported and the rest go ahead. The assistant reconnects to each one as it restarts.
 
 ## Moving to the Mac mini (deployment)
 
@@ -101,6 +122,7 @@ The Mac mini runs the assistant in the end; the satellites don't change.
 - **Timers** ring on the satellite that set them, and its LED ring shows the time left. To stop one, say "stop" without the wake word (the firmware listens for it only while a timer rings), or press the action button. *Not yet tried by voice.*
 - **Volume:** the up and down buttons. The LED ring shows the level.
 - **Mute:** the left button mutes the microphones in hardware. A red light by the microphones shows it's muted.
+- **Announcements:** "announce dinner's ready" says it on every satellite; "tell the kitchen I'm on my way" only in the rooms named (by name or alias from `rooms`). The message is synthesized once and the same audio goes to each satellite, close together but not sample-accurate. Announcements and notifications queue: each satellite plays one at a time, after any conversation in progress there, and if the room's music is playing it pauses for the announcement and resumes after (once per room, however many satellites it has). *Not yet heard on more than one satellite.*
 - **Notifications** are read out as announcements when they arrive. While any are unread for the satellite's room, its LED ring glows amber (`pending_color`; `null` turns it off). "Any notifications?" reads them, and the ring goes off.
 
 ### The LED ring
@@ -133,6 +155,7 @@ Holding the action button for 10 seconds warns (a sound and the LED ring); keep 
 
 | Symptom | Check |
 |---|---|
+| Red in the dashboard's health strip, or "The office satellite is offline." in Alerts | The assistant has had no connection to it for about a minute: check its power and Wi-Fi (`uv run assistant satellites status` tries it directly). One notice per time it goes offline. |
 | Red twinkle | Is the assistant running (`curl http://127.0.0.1:8765/health`)? Is the device under `satellites:` with the right host? The log shows `satellite_unreachable` with a reason: a wrong key, or a host that can't be resolved or reached. |
 | It wakes but says nothing | Look for `satellite_reply` (with a `duration_s`) or `satellite_reply_failed`. A reply it can't fetch plays as silence: is the Mac reachable from the satellite on port 8767 (firewall, network)? |
 | It wakes, then gives up | `satellite_no_speech`: no speech was detected within 8 seconds of the wake word. Speak sooner, or check `gain` if it keeps happening. |

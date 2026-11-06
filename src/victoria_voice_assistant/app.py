@@ -6,7 +6,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -130,6 +130,7 @@ def create_app(
         if os.environ.get("ASSISTANT_HEALTH", "1") != "0":
             services.health.start()
         hub = ChatHub()
+        services.screens = hub
         app.state.services = services
         app.state.chat_hub = hub
 
@@ -166,12 +167,26 @@ def create_app(
             app.state.speech = speech
             background.append(asyncio.create_task(speech.load(), name="speech-load"))
         app.state.satellites = None
-        if app.state.speech is not None and manager.current.tools.satellites:
-            # ESPHome satellites (Stage 12); each waits for the speech models before connecting.
+        if app.state.speech is not None:
+            # ESPHome satellites (Stage 12); each waits for the speech models before connecting, and
+            # config reloads add, remove or reconfigure them (Stage 13).
             from victoria_voice_assistant.satellite.esphome import SatelliteManager
 
-            app.state.satellites = SatelliteManager(manager.current, services, app.state.speech)
-            await app.state.satellites.start()
+            satellites = SatelliteManager(manager.current, services, app.state.speech)
+            app.state.satellites = satellites
+            services.health.satellites = services.satellites  # each satellite in the health strip
+            services.announcer = satellites  # "announce dinner's ready everywhere"
+            services.health.notifications = services.notifications
+            await satellites.start()
+
+            updates: set[asyncio.Task] = set()
+
+            def on_satellites_reload(config: AppConfig) -> None:
+                task = asyncio.get_running_loop().create_task(satellites.update(config), name="satellites-update")
+                updates.add(task)
+                task.add_done_callback(updates.discard)
+
+            manager.add_listener(on_satellites_reload)
         watcher = asyncio.create_task(manager.watch(), name="config-watcher")
         pinning: asyncio.Task | None = None
         if os.environ.get("ASSISTANT_PIN_MODELS", "1") != "0":
@@ -224,6 +239,15 @@ def create_app(
             "config_revision": manager.revision,
             "speech": "off" if speech is None else "ready" if speech.ready.is_set() else speech.error or "loading",
         }
+
+    @app.get("/api/page")
+    async def page(request: Request, url: str) -> dict[str, Any]:
+        """The web interface's document panel: can the page be framed, and its reader text (proxied, behind
+        the household login)."""
+        reader = request.app.state.services.reader
+        if reader is None:
+            raise HTTPException(status_code=503, detail="page reading unavailable")
+        return await reader.page_view(url)
 
     @app.post("/api/offer")
     async def offer(request: Request) -> dict[str, str]:

@@ -12,6 +12,7 @@ import httpx
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 
 from victoria_voice_assistant.config.schema import AgentsConfig, ToolConfig, ToolsConfig
+from victoria_voice_assistant.rooms import room_config
 from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from victoria_voice_assistant.tools.home import HomeAssistantHub
     from victoria_voice_assistant.tools.music import MusicService
     from victoria_voice_assistant.notifications.service import NotificationService
+    from victoria_voice_assistant.satellite.status import SatelliteBoard
     from victoria_voice_assistant.search.service import PageReader, SearchService
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,9 @@ class Services:
     health: HealthMonitor | None = None
     home: HomeAssistantHub | None = None
     music: MusicService | None = None
+    satellites: SatelliteBoard | None = None  # what each satellite is doing, for the dashboard
+    announcer: Any = None  # says a message on satellites in several rooms (the satellite manager)
+    screens: Any = None  # the open chat and voice sessions (the ChatHub), for `show_page`
 
 
 @dataclass
@@ -416,6 +421,25 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
             return await services.music.handle(ctx.device, arguments, client_id=ctx.client_id)
 
         return music
+    if service == "announce":
+        if not tools.satellites:
+            raise Unresolved("announcements need voice satellites (`satellites:` in tools.yaml)")
+        from victoria_voice_assistant.tools.announce import announce
+
+        async def announce_handler(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            if services.announcer is None:  # speech is off, so the satellites aren't running
+                return ToolOutcome(result={"error": "satellites not running"}, speak="I can't make announcements right now.", error=True)
+            return await announce(arguments, tools, services.announcer)
+
+        return announce_handler
+    if service == "show_page":
+        from victoria_voice_assistant.tools.pages import show_page
+
+        async def show_page_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            sessions = list(services.screens.sessions) if services.screens is not None else []
+            return await show_page(arguments, ctx.client_id, sessions)
+
+        return show_page_handler
     raise Unresolved(f"built-in service `{service}` isn't available yet")
 
 
@@ -512,8 +536,9 @@ def _home_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -> T
     if tool.kind == "mcp":
         control = HomeControl(home, tool.entities.domains if tool.entities else None)
 
-        async def home_control(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
-            return await control.handle(arguments)
+        async def home_control(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            room = room_config(tools, ctx.device)
+            return await control.handle(arguments, area=room.area if room else None)
 
         return home_control
     try:

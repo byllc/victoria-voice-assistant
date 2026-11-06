@@ -325,7 +325,9 @@ class HomeControl:
         self.home = home
         self.domains = domains or None
 
-    async def handle(self, arguments: dict[str, Any]) -> ToolOutcome:
+    async def handle(self, arguments: dict[str, Any], area: str | None = None) -> ToolOutcome:
+        """`area` is the asking device's room's Home Assistant area: a target that names no device or
+        room ("the lights") means the ones there."""
         action = str(arguments.get("action") or "").lower().replace(" ", "_")
         target = str(arguments.get("target") or "").strip()
         value = str(arguments.get("value") or "").strip()
@@ -337,6 +339,8 @@ class HomeControl:
             logger.warning("Home Assistant unreachable", extra={"event": "ha_unreachable", "reason": str(exc)})
             return ToolOutcome(result={"error": "Home Assistant unreachable"}, speak="I can't reach Home Assistant right now.", error=True)
         labelled, unlabelled = resolve(target, entities, self.domains)
+        if not labelled and not unlabelled and area:
+            labelled, unlabelled = resolve(f"{target} {area}", entities, self.domains)
         if not labelled:
             if unlabelled:
                 logger.info("Home control refused: not labelled", extra={"event": "ha_not_labelled", "tool": target})

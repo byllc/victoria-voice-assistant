@@ -83,6 +83,19 @@ tools:
         required: true
     timeout_s: 6
 
+  - name: show_page
+    description: "Open a web page on the right of the user's screen (the web interface only), e.g. a search result, a recipe, or a site the user names."
+    kind: builtin
+    service: show_page               # the web interface's document panel
+    params:
+      url:
+        type: string
+        description: the page's full web address
+        required: true
+      title:
+        type: string
+        description: a short name for the page
+
   - name: home_control
     description: "Control or check lights, switches, climate and scenes at home (not locks): turn on or off, set brightness or temperature, or check whether something is on."
     kind: mcp                        # Home Assistant's MCP Server integration (Stage 9)
@@ -124,6 +137,23 @@ tools:
     reply: { template: "{name} is locked." }
     examples:
       - lock the front door
+
+  - name: announce
+    description: Say a message out loud on the satellites in other rooms, or everywhere ("announce dinner's ready", "tell the kitchen I'm on my way").
+    kind: builtin
+    service: announce                # Stage 13; a stub until voice satellites are set up
+    reply: { template: true }        # "Announced everywhere."
+    params:
+      message:
+        type: string
+        description: the words to say, as the user put them (e.g. "dinner's ready")
+        required: true
+      rooms:
+        type: string
+        description: rooms to say it in, comma-separated; leave out for everywhere
+    examples:
+      - announce dinner's ready
+      - tell the kitchen I'm on my way
 
   - name: music
     description: "Music and what's playing: play, pause, resume, skip this song (next), go back, change the volume, or say what's playing."
@@ -206,22 +236,29 @@ music:                             # Music Assistant (docs/music.md)
   server: http://homeassistant.local:8095
   token: "${MUSIC_ASSISTANT_TOKEN:-}"
   source_order: [plex, spotify]    # searched in this order unless the request names a source
-  rooms: {}                        # optional: room names and aliases for players, and a satellite's room
-  #  exercise room: { player: Exercise room speaker, aliases: [gym] }
-  #  office: { player: Bill's Mac mini, satellite: office }
   duck_level: 20                   # music volume while someone talks to the assistant
 
 
-# ESPHome voice satellites (Stage 12; docs/satellites.md). The name is the
-# device name: a music room whose `satellite:` is this name is its room. The key is the device's API
-# encryption key, set with `assistant secrets set SATELLITE1_API_KEY` (our build of its firmware uses it).
+# The device registry (Stage 13): what each room has. Satellites name their room below; music plays on a
+# room's player, "turn off the lights" from a satellite means its room's Home Assistant area, and
+# "ask Alexa" goes to its Echo. (The older `music.rooms` still works and is folded in.)
+rooms: {}
+#  exercise room: { player: Exercise room speaker, aliases: [gym] }
+#  office: { player: Bill's Mac mini, area: Office, echo: media_player.office_echo }
+
+# ESPHome voice satellites (Stage 12; docs/satellites.md). The name is the device name. The key is the
+# device's API encryption key, set with `assistant secrets set SATELLITE1_API_KEY` (our build of its
+# firmware uses it).
 satellites: {}
 #  office:
 #    host: satellite1-xxxxxx.local
 #    key: "${SATELLITE1_API_KEY:-}"
+#    room: office      # its room in `rooms`; default: the room with its own name
+#    arbitration_offset_db: 0   # added to its score when several satellites hear the same words
 #    gain: 24          # its microphone is raised by this before speech detection
 #    pending_color: "#FFA000"   # its LED ring while notifications are unread (null: leave it alone)
 # satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)
+# satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words
 
 mcp_servers:
   homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration
