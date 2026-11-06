@@ -1,5 +1,7 @@
 # Stage tracker
 
+> **Discontinued 2026-11-05.** The stage-by-stage approval gate has ended. Remaining work is in `features/`. This file is kept as history.
+
 Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 
 | # | Stage | Status | Started | Ready for review | Approved by / date |
@@ -19,6 +21,7 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 12 | Satellites (optional) | approved | 2026-11-01 | | Bill / 2026-11-02 |
 | 13 | Satellites at household scale (optional) | in progress | 2026-11-02 | | |
 | 14 | Carried-over fixes and checks | not started | | | |
+| 15 | Satellite arbitration and remaining satellite work (optional) | not started | | | |
 
 ## Stage 0: Tracker, instructions, repo
 - Status: approved
@@ -312,21 +315,14 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 
 ## Stage 13: Satellites at household scale (optional)
 - Status: in progress
+- Scope moved to Stage 15 (Bill, 2026-11-05): wake-word arbitration, the multi-satellite measurements, music sync and grouping, and the dashboard's stream controls.
 - Done criteria:
-  - [ ] Check findings reviewed by Bill, and the music route agreed, before the audio work starts.
-  - [ ] With every satellite connected, memory, event-loop lag and the queue waits for simultaneous turns are measured on the Mac mini and accepted by Bill. A turn in one room is unaffected by the idle satellites.
-  - [ ] Words heard by several satellites are answered once, by the one nearest the speaker in at least 9 of 10 tries from mixed positions. Each decision and its scores are logged.
   - [ ] A satellite added to or removed from `tools.yaml` connects or disconnects without a restart. An offline satellite shows in the health strip and the dashboard.
   - [ ] One command updates the firmware of every satellite and reports each one's version.
-  - [ ] "Play … in the kitchen and the office" plays in sync. Adding and removing satellites by voice works while the music plays, and ducking affects only the room that is talking.
   - [ ] An announcement to several rooms is synthesized once and plays in each.
-  - [ ] The dashboard shows every satellite's room, online state, voice state, latest request, timers, and what it is playing in which group, updated live. A satellite can be added to or removed from a stream from the dashboard.
+  - [ ] The dashboard shows every satellite's room, online state, voice state, latest request, and timers, updated live.
   - [ ] "Turn off the lights" from a satellite acts on that room's Home Assistant area.
 - Blocking decisions:
-  - the outcome of this stage's checks (the music route);
-  - music on the satellites' own speakers, on existing speakers, or both (architecture open question 1);
-  - whether dashboard controls are open to every household login;
-  - the wake-word arbitration window;
   - the architecture changes proposed in the decisions log (2026-11-02).
 - Evidence:
   - Device registry (2026-11-02): `rooms:` at the top level of `tools.yaml` lists each room's music player, Home Assistant area and Echo; each satellite names its room (`satellites.<name>.room`, by default the room with its own name), and a room can have several. `victoria_voice_assistant/rooms.py` answers "which room is this device in". Music reads its rooms from the registry (the older `music.rooms` still works, folded in), the Alexa relay finds the asking room's Echo there, and "turn off the lights" from a satellite means its room's area. Tests (`tests/test_rooms.py`): several satellites in one room, the default room, the older form folded in, the relay choosing the asking room's Echo, and "the lights" meaning the room's area while a named device still wins. 324 passed. Bill's config (no rooms yet) still loads, and the assistant restarted cleanly with the satellite connected.
@@ -375,6 +371,24 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
   - [ ] Whisper's own prompt mistaken for a request: on near-silence it returned "Ask Claude, ask Claude, ..." (the agent names we prompt it with, repeated), which went to Claude as a request ("Claude isn't set up yet."). Seen on the Waveshare test satellite at too low a gain (2026-11-05); could happen on any device. Drop a transcript that is only the prompt, repeated.
 - Blocking decisions: which router model to try; whether the M2 or the Mac mini is the place to judge it.
 - Evidence:
+- Bill's review notes:
+
+## Stage 15: Satellite arbitration and remaining satellite work (optional)
+- Status: not started
+- Starts after Stage 14 is approved, since stages run in order.
+- Done criteria:
+  - [ ] Check findings reviewed by Bill, and the music route agreed, before the audio work starts.
+  - [ ] With every satellite connected, memory, event-loop lag and the queue waits for simultaneous turns are measured on the Mac mini and accepted by Bill. A turn in one room is unaffected by the idle satellites.
+  - [ ] Words heard by several satellites are answered once, by the one nearest the speaker in at least 9 of 10 tries from mixed positions. Each decision and its scores are logged.
+  - [ ] "Play … in the kitchen and the office" plays in sync. Adding and removing satellites by voice works while the music plays, and ducking affects only the room that is talking.
+  - [ ] The dashboard shows what each satellite is playing and in which group, updated live. A satellite can be added to or removed from a stream from the dashboard.
+- Blocking decisions:
+  - the music route, agreed from the check findings (first criterion above);
+  - music on the satellites' own speakers, on existing speakers, or both (architecture open question 1);
+  - whether dashboard controls are open to every household login;
+  - the wake-word arbitration window and `arbitration_offset_db` for the two boards' different microphones (see the 2026-11-02 proposals in the decisions log).
+- Evidence:
+  - Carried over from Stage 13 (2026-11-05): wake-word arbitration (`satellite/arbiter.py`) has unit tests and two live two-satellite turns. The first went to the nearer satellite (the Waveshare, 9.3 dB against the office's 5.6 dB). The second went to the office (16.4 dB against 9.8) while Bill stood beside the Waveshare, so the offset is not tuned. The 9-of-10 check from mixed positions has not been done.
 - Bill's review notes:
 
 ## Decisions log
@@ -478,3 +492,4 @@ Rules: see implementation plan §1. Only Bill sets a stage to `approved`.
 | 2026-11-03 | 13 | Announcements and notifications queue per satellite (one at a time, after any conversation turn there), and the room's music pauses for them and resumes after. | Bill / 2026-11-03: "announcements sould probably be quued if a device is busy with another annoncument or notificaiton but if it's playing music it shoudl pause the music." |
 | 2026-11-03 | 13 | Agent questions are asked one at a time: the oldest first, the next once it's answered or closed, or after 60 s unanswered; other spoken notifications wait while one is open. | Bill / 2026-11-03: "Yes, fix it" (questions from several tasks were read out together, and only the last could be answered) |
 | 2026-11-05 | 13 | Whisper's prompt returned as a transcript on near-silence ("Ask Claude, ask Claude, ..."), handled as a request: moved to Stage 14. | Bill / 2026-11-05: "Move to Stage 14" |
+| 2026-11-05 | 13 | Moved wake-word arbitration, the multi-satellite measurements and checks, music sync and grouping, and the dashboard's stream controls from Stage 13 to a new Stage 15, which runs after Stage 14. Stage 13 keeps the items with evidence. | Bill, 2026-11-05: move these to Stage 15 |\n
