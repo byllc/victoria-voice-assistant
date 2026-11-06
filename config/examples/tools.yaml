@@ -83,6 +83,19 @@ tools:
         required: true
     timeout_s: 6
 
+  - name: show_page
+    description: "Open a web page on the right of the user's screen (the web interface only), e.g. a search result, a recipe, or a site the user names."
+    kind: builtin
+    service: show_page               # the web interface's document panel
+    params:
+      url:
+        type: string
+        description: the page's full web address
+        required: true
+      title:
+        type: string
+        description: a short name for the page
+
   - name: home_control
     description: "Control or check lights, switches, climate and scenes at home (not locks): turn on or off, set brightness or temperature, or check whether something is on."
     kind: mcp                        # Home Assistant's MCP Server integration (Stage 9)

@@ -6,7 +6,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from pipecat.transports.smallwebrtc.request_handler import (
@@ -130,6 +130,7 @@ def create_app(
         if os.environ.get("ASSISTANT_HEALTH", "1") != "0":
             services.health.start()
         hub = ChatHub()
+        services.screens = hub
         app.state.services = services
         app.state.chat_hub = hub
 
@@ -238,6 +239,15 @@ def create_app(
             "config_revision": manager.revision,
             "speech": "off" if speech is None else "ready" if speech.ready.is_set() else speech.error or "loading",
         }
+
+    @app.get("/api/page")
+    async def page(request: Request, url: str) -> dict[str, Any]:
+        """The web interface's document panel: can the page be framed, and its reader text (proxied, behind
+        the household login)."""
+        reader = request.app.state.services.reader
+        if reader is None:
+            raise HTTPException(status_code=503, detail="page reading unavailable")
+        return await reader.page_view(url)
 
     @app.post("/api/offer")
     async def offer(request: Request) -> dict[str, str]:

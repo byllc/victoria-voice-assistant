@@ -75,6 +75,7 @@ export type ServerMessage =
   | { type: "announce"; text: string; sound: boolean; spoken: boolean; items: NotificationInfo[] }
   | ({ type: "dashboard" } & Dashboard)
   | { type: "push_config"; public_key: string | null; problem: string | null }
+  | { type: "show_page"; url: string; title: string | null }
   | MusicMessage;
 
 /** From the assistant to this browser's player: music asked for here is starting, or it failed. */
@@ -93,3 +94,12 @@ export type LogEntry =
 export type NewLogEntry = LogEntry extends infer E ? (E extends LogEntry ? Omit<E, "id"> : never) : never;
 
 export const ACTIVE_STATES: TaskState[] = ["queued", "running", "waiting"];
+
+/** What the web interface's /api/page says about a page, for the document panel. */
+export type PageView = {
+  url: string;
+  frameable: boolean;
+  title: string | null;
+  text: string | null;
+  error: string | null;
+};

@@ -69,6 +69,7 @@ class Services:
     music: MusicService | None = None
     satellites: SatelliteBoard | None = None  # what each satellite is doing, for the dashboard
     announcer: Any = None  # says a message on satellites in several rooms (the satellite manager)
+    screens: Any = None  # the open chat and voice sessions (the ChatHub), for `show_page`
 
 
 @dataclass
@@ -431,6 +432,14 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
             return await announce(arguments, tools, services.announcer)
 
         return announce_handler
+    if service == "show_page":
+        from victoria_voice_assistant.tools.pages import show_page
+
+        async def show_page_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            sessions = list(services.screens.sessions) if services.screens is not None else []
+            return await show_page(arguments, ctx.client_id, sessions)
+
+        return show_page_handler
     raise Unresolved(f"built-in service `{service}` isn't available yet")
 
 

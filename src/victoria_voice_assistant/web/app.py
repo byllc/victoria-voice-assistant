@@ -25,6 +25,7 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 DEFAULT_SERVICE_URL = "ws://127.0.0.1:8765/ws"
 SIGNALING_TIMEOUT_S = 30.0
+PAGE_TIMEOUT_S = 20.0  # an HTTP fetch, then perhaps the headless browser
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_STATIC_DIR = REPO_ROOT / "web" / "client" / "dist"
 
@@ -129,6 +130,25 @@ def create_web_app(
         )
 
     app.add_api_route("/api/offer", forward_offer, methods=["POST", "PATCH"])
+
+    page_url = _http_url(service_url) + "/api/page"
+
+    @app.get("/api/page")
+    async def page(request: Request, url: str) -> Response:
+        """The document panel: whether a page can be framed, and its reader text, from the assistant service."""
+        if not authenticated(request.cookies.get(COOKIE_NAME)):
+            raise HTTPException(status_code=401, detail="not signed in")
+        try:
+            async with httpx.AsyncClient(timeout=PAGE_TIMEOUT_S) as client:
+                upstream = await client.get(page_url, params={"url": url})
+        except httpx.HTTPError:
+            logger.error("Assistant service unreachable", extra={"event": "service_unreachable"})
+            raise HTTPException(status_code=502, detail="assistant service unreachable") from None
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            media_type=upstream.headers.get("content-type", "application/json"),
+        )
 
     @app.websocket("/ws")
     async def relay(websocket: WebSocket) -> None:
