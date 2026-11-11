@@ -1,6 +1,7 @@
 # Additional relay agents
 
 - Status: open
+- Phase: later
 - Origin: Later (architecture §9)
 - Created: 2026-11-06 (UTC)
 

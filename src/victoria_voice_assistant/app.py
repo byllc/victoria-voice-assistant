@@ -23,6 +23,7 @@ from victoria_voice_assistant.config.loader import default_config_dir
 from victoria_voice_assistant.config.manager import ConfigManager
 from victoria_voice_assistant.logging_config import configure_logging
 from victoria_voice_assistant.config.schema import AppConfig
+from victoria_voice_assistant.history import HistoryStore
 from victoria_voice_assistant.storage.db import default_database_path, migrate
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
@@ -105,6 +106,7 @@ def create_app(
             weather=WeatherService(manager.current.tools.weather),
             search=SearchService(search_settings, browser_search=reader.search_page if browser_enabled else None),
             reader=reader,
+            history=HistoryStore(database, search_days=manager.current.tools.history.search_days),
         )
         await services.timers.start()
         settings = manager.current.tools.notifications

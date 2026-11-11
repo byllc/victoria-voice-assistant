@@ -57,12 +57,13 @@ from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcesso
 from victoria_voice_assistant.chat.tools import SessionState
 from victoria_voice_assistant.config.schema import AppConfig, SatelliteConfig
 from victoria_voice_assistant.notifications.service import Announcement, Notification
-from victoria_voice_assistant.satellite.arbiter import Arbiter, speech_over_noise_db
+from victoria_voice_assistant.satellite.arbiter import Arbiter, describe_levels, speech_level_db
 from victoria_voice_assistant.satellite.status import SatelliteBoard
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
 from victoria_voice_assistant.tools.timers import TimerEvent
 from victoria_voice_assistant.voice.models import SpeechModels, whisper_prompt
+from victoria_voice_assistant.chat.turns import HistoryTap
 from victoria_voice_assistant.voice.session import VoiceTurnPreprocessor, VoiceTurnTracker, user_params
 
 logger = logging.getLogger(__name__)
@@ -148,11 +149,19 @@ def to_flac(chunks: list[tuple[bytes, int]], gain: float = 1.0) -> tuple[bytes, 
     return buffer.getvalue(), samples.size / SAMPLE_RATE_OUT
 
 
+LIMIT_KNEE = 0.5  # of full scale: below it the gain is plain, above it the level is eased towards full scale
+
+
 def raise_level(audio: bytes, gain: float) -> bytes:
+    """`audio` times `gain`, with loud parts eased in under full scale rather than cut off flat: the gain
+    that lets speech from across a room through speech detection would clip a voice close by."""
     if gain == 1.0:
         return audio
-    samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) * gain
-    return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+    level = np.frombuffer(audio, dtype=np.int16).astype(np.float32) * (gain / 32768.0)
+    size = np.abs(level)
+    over = size > LIMIT_KNEE
+    level[over] = np.sign(level[over]) * (LIMIT_KNEE + (1 - LIMIT_KNEE) * np.tanh((size[over] - LIMIT_KNEE) / (1 - LIMIT_KNEE)))
+    return np.round(level * 32767).astype(np.int16).tobytes()
 
 
 def local_address(host: str) -> str:
@@ -358,6 +367,7 @@ class SatelliteSession:
                 router,
                 VoiceTurnTracker(self.state, preprocessor, retry=lambda: self.task.queue_frame(LLMRunFrame())),
                 TimingEndProcessor(timer),
+                HistoryTap(runtime),
                 speech.tts(),
                 self.output,
                 pair.assistant(),
@@ -498,11 +508,22 @@ class SatelliteSession:
         await self.task.queue_frame(InputAudioRawFrame(audio=raised, sample_rate=SAMPLE_RATE_IN, num_channels=1))
 
     def arbitration_score(self) -> tuple[bool, float]:
-        """For the arbiter: priority (a question open here, or a timer ringing here), and how far this
-        turn's speech stands above the satellite's own background noise, plus its configured offset."""
+        """For the arbiter: priority (a question open here, or a timer ringing here), and how loud this
+        turn's speech is at this satellite, plus its configured offset."""
         priority = self.state.pending is not None or bool(self.services.timers.ringing(self.name))
-        raw = bytes(self.run.raw) if self.run is not None else b""
-        return priority, speech_over_noise_db(raw) + self.settings.arbitration_offset_db
+        return priority, speech_level_db(self._scored_audio()) + self.settings.arbitration_offset_db
+
+    def arbitration_levels(self) -> str:
+        """What the score was made of, for the arbiter's decision log."""
+        return describe_levels(self._scored_audio(), self.settings.arbitration_offset_db)
+
+    def _scored_audio(self) -> bytes:
+        """This turn's first window of audio, before `gain`: every satellite is scored on the same amount,
+        however long it waited for the others."""
+        if self.run is None:
+            return b""
+        window_s = self.arbiter.window_s if self.arbiter is not None else 0.5
+        return bytes(self.run.raw[: int(window_s * SAMPLE_RATE_IN) * 2])
 
     async def _arbitrate(self, run: Run) -> None:
         won = await self.arbiter.join(self)  # type: ignore[union-attr]
@@ -542,6 +563,7 @@ class SatelliteSession:
         self.run.listening = False  # the device stops streaming; the turn is the model's now
         self._status(state="thinking")
         logger.info("Satellite speech ended", extra={"event": "satellite_speech_end", "device": self.name, **self._audio_stats()})
+        self._record("speech")
         self.send(E.VOICE_ASSISTANT_STT_VAD_END)
         self.run.timers.append(asyncio.get_running_loop().call_later(REPLY_WAIT_S, self._no_reply))
 
@@ -557,6 +579,7 @@ class SatelliteSession:
     def _no_speech(self) -> None:
         if self.run is not None and not self.run.heard_speech:
             logger.info("Satellite heard no speech", extra={"event": "satellite_no_speech", "device": self.name, **self._audio_stats()})
+            self._record("no-speech")
             # RUN_END alone, while the device is still streaming, always stops its mic and returns it to
             # idle. Sent right after STT_VAD_END it could land while the mic was stopping, which the
             # firmware ignores, leaving it waiting for a reply forever (2026-11-02, after a follow-up).
@@ -576,6 +599,26 @@ class SatelliteSession:
             except ValueError:
                 pass
         return stats
+
+    def _record(self, ending: str) -> None:
+        """Fault-finding (`record_dir`): this turn's microphone audio so far, after `gain`, as a WAV file."""
+        if self.run is None or not self.settings.record_dir:
+            return
+        import wave
+        from datetime import datetime
+        from pathlib import Path
+
+        try:
+            folder = Path(self.settings.record_dir).expanduser()
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{self.name}-{datetime.now():%Y%m%d-%H%M%S}-{ending}.wav"
+            with wave.open(str(path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(SAMPLE_RATE_IN)
+                out.writeframes(bytes(self.run.audio))
+        except OSError:
+            logger.exception("Could not record the satellite turn", extra={"event": "satellite_record_failed", "device": self.name})
 
     def _no_reply(self) -> None:
         if self.run is not None:

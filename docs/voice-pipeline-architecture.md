@@ -1,6 +1,6 @@
-# Home Voice Assistant Architecture (Draft v2.11)
+# Home Voice Assistant Architecture (Draft v2.13)
 
-Owner: Bill · Updated: 2026-11-02 (v2.11: satellites at household scale; v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
+Owner: Bill · Updated: 2026-11-11 (v2.13: command history; v2.12: wake-word arbitration by loudness on equal audio; v2.11: satellites at household scale; v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
 
 ## 1. Goal
 
@@ -90,7 +90,7 @@ That leaves room for one mid-size local agent model (for example a ~30B model at
 - **Task manager and notification service:** tracks background agent tasks and delivers results, questions, and alerts through notifications with priorities, quiet hours, and a pending indicator (§10).
 - **Session store:** per-device context (room, recent turns, pending question) and the device registry.
 - **Device registry** (`tools.yaml`): each satellite belongs to a room, and a room may have several. Each room names its music player, its Home Assistant area (so "turn off the lights" means that room's lights) and its Echo for relays; the music rooms and relay targets read from it. Satellites added to or removed from it connect or disconnect without a restart, and each one's connection state feeds the health checks.
-- **Wake-word arbitration:** when several satellites wake on the same words within a short, configurable window (about 0.5 s), one turn goes ahead: the satellite with an open question or a ringing timer, else the one whose audio after the wake word has the highest speech level against its own background noise (plus a per-satellite offset), with near-ties going to the first to report. The others end quietly and their audio never reaches Whisper. The window passes while the user is still speaking, so it adds no wait. Every decision is logged with its scores.
+- **Wake-word arbitration:** when several satellites wake on the same words within a short, configurable window (about 0.5 s), one turn goes ahead: the satellite with an open question or a ringing timer, else the one that hears the speech after the wake word loudest (plus a per-satellite offset for microphones that read loud or quiet), with near-ties going to the first to report. Each is scored on the same amount of audio, its own first window after it woke, so the decision comes one window after the last of them woke. The others end quietly and their audio never reaches Whisper. The user is usually still speaking then, so it rarely adds a wait; a one-word command heard by two satellites can start up to one window later. Every decision is logged with its scores. (Bill, 2026-11-11: it was speech against each satellite's own background noise, scored at the first window's end; a board with a low noise floor, scored on a sliver of audio, won from across the room and then couldn't make out the words.)
 
 ### 4.1 Web interface and example client
 
@@ -363,10 +363,10 @@ Tools the fast model (and model agents, §9) may call, reloaded on save, validat
 | `ha_service` / `ha_script` | Optional direct Home Assistant calls for the most frequent smart-home actions, where latency matters. |
 | `http` | A simple REST call with a response template. |
 | `python` | A function inside the service (timers, alarms, unit conversions). |
-| `builtin` | A core service that is part of the assistant itself: web search, weather, timers, and music (below). |
+| `builtin` | A core service that is part of the assistant itself: web search, weather, timers, music, and the command history (below). |
 | `stub` | A planned tool with no implementation yet (below). |
 
-Per-tool options: `confirm`, `enabled`, `timeout_s`, `reply` (`model`, `template`, or `silent`; §6), `examples` (test phrases), `entities` (Home Assistant label scope, for smart-home tools), and for stubs, `notice`, `setup`, and `then`.
+Per-tool options: `confirm`, `enabled`, `timeout_s`, `forget_after_s` (for answers that go out of date, such as the time and the weather: after that many seconds the exchange is taken out of the conversation, so the model calls the tool again and can't repeat its old answer; Bill, 2026-11-11), `reply` (`model`, `template`, or `silent`; §6), `examples` (test phrases), `entities` (Home Assistant label scope, for smart-home tools), and for stubs, `notice`, `setup`, and `then`.
 
 ### Stub tools
 
@@ -551,6 +551,15 @@ Timers run inside the assistant service, so they work without the internet and r
 - **Chat client:** shows running timers with a live countdown.
 
 Timer replies are spoken by the timer service itself from templates, so they don't need a second model call.
+
+### Built-in command history
+
+Every request to the assistant is saved, typed or spoken, from any device (Bill, 2026-11-11): the time, the device and its room, what was said, the tools it called with their arguments, and the reply. A wake word with nothing after it, and speech already dropped (no speech, Whisper's prompt echo), are not requests and aren't saved. Saving never holds up a request: a failure is logged and the request goes on.
+
+- **Where:** everything stays in SQLite, in the `history` table, with no archive and nothing deleted, so we can see how fast it grows (Bill, 2026-11-11). The nightly backup of the database carries it. `assistant history stats` shows how many requests are saved and how much space they take.
+- **The `history` tool** ("what did I ask this morning?", "when did I last turn on the bedroom light?") looks back `history.search_days` (7) only, by words, room or device, and a spoken time (`today`, `this_morning`, `last_night`, `yesterday`, `this_week`, and so on). It returns at most 10 requests, newest first, each as time, room, what was said and the reply, and the model answers from them. Its own request is left out.
+- **Older history** is searched from the command line: `assistant history search WORDS [--since DATE] [--room ROOM]` reads all of it.
+- **Privacy:** history never leaves the house. Only the router model's tool reads it; configuration refuses it in any agent's `tools`, and agents' `share_context` doesn't include it.
 
 ### Built-in music
 
@@ -757,6 +766,7 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 - **Weather:** `httpx` against Open-Meteo.
 - **Music:** external Music Assistant server; `music-assistant-client` Python package in the assistant service.
 - **Timers:** asyncio scheduling with SQLite persistence.
+- **Command history:** SQLite, everything kept.
 - **Agents:** A2A Python SDK.
 - **Decision engine:** `llm_choice` uses LM Studio's structured output with a JSON schema; spend log in SQLite.
 - **Web interface:** FastAPI on Uvicorn; example client built with Vite using Pipecat's JavaScript client SDK and its SmallWebRTC transport.

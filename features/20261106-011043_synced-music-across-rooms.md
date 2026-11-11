@@ -1,6 +1,7 @@
 # Synced music across rooms
 
 - Status: open
+- Phase: staging
 - Origin: Stage 15 (from Stage 13)
 - Created: 2026-11-06 (UTC)
 
@@ -19,3 +20,5 @@
 ## Evidence and notes
 
 Room registry and music pause/resume per room are in place (`victoria_voice_assistant/rooms.py`). Only the office satellite has a music room player; no multi-room sync has been heard.
+
+Bill, 2026-11-11: "sync'd music is a staging feature, lets move it forward". Moved to the staging phase.

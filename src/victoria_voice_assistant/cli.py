@@ -135,6 +135,14 @@ def _build_parser() -> argparse.ArgumentParser:
     daily = commands.add_parser("daily", help="the daily job: a backup, then log rotation (run by launchd at 03:30)")
     daily.add_argument("--config-dir", help="configuration directory (default: config/)")
 
+    history = commands.add_parser("history", help="the command history (every request; docs/history.md)")
+    history_subcommands = history.add_subparsers(dest="history_command", required=True)
+    history_subcommands.add_parser("stats", help="how many requests are saved and how much space they take")
+    history_search = history_subcommands.add_parser("search", help="search all of it (the tool looks back only `search_days`)")
+    history_search.add_argument("words", nargs="*", help="words from the request or reply (none: everything)")
+    history_search.add_argument("--since", help="only from this date on (YYYY-MM-DD)")
+    history_search.add_argument("--room", help="only this room or device")
+
     launchd = commands.add_parser("launchd", help="manage the macOS LaunchAgent")
     launchd_subcommands = launchd.add_subparsers(dest="launchd_command", required=True)
     install = launchd_subcommands.add_parser("install", help="write assistant LaunchAgent plist")
@@ -311,6 +319,38 @@ def _satellites_command(args: argparse.Namespace) -> int:
     return status
 
 
+def _history_command(args: argparse.Namespace) -> int:
+    from datetime import datetime
+
+    from victoria_voice_assistant.history import HistoryStore
+    from victoria_voice_assistant.storage.db import default_database_path, migrate
+
+    store = HistoryStore(migrate(default_database_path()))
+    if args.history_command == "stats":
+        stats = store.stats()
+        oldest = datetime.fromtimestamp(stats["oldest"]).astimezone().isoformat(timespec="seconds") if stats["oldest"] else "none"
+        table = f"{stats['table_bytes'] / 1024:.0f} KB" if stats["table_bytes"] is not None else "unknown"
+        print(f"Requests saved: {stats['count']} (oldest: {oldest})")
+        print(f"History table: {table}; whole database: {stats['database_bytes'] / 1024:.0f} KB")
+        return 0
+    since = None
+    if args.since:
+        try:
+            since = datetime.fromisoformat(args.since).astimezone()
+        except ValueError:
+            print(f"--since: not a date: {args.since} (use YYYY-MM-DD)", file=sys.stderr)
+            return 1
+    found = store.search_all(" ".join(args.words), since=since, room=args.room)
+    for entry in found:
+        record = entry.record()
+        tools = ", ".join(tool.get("name", "") for tool in entry.tools)
+        print(f"{record['at']}  {entry.room or entry.device}  {entry.request}")
+        print(f"    -> {entry.reply or '(no reply)'}{f'  [{tools}]' if tools else ''}")
+    if not found:
+        print("Nothing found.")
+    return 0
+
+
 def _backup_command(args: argparse.Namespace) -> int:
     from victoria_voice_assistant.storage import backup
     from victoria_voice_assistant.storage.db import default_database_path
@@ -440,6 +480,9 @@ def main(argv: list[str] | None = None) -> int:
         args.backup_command, args.dest, args.keep = "create", None, 14
         status = _backup_command(args)
         return _rotate_logs() or status
+
+    if args.command == "history":
+        return _history_command(args)
 
     if args.command == "web":
         if args.config_dir:

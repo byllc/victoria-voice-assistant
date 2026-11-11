@@ -29,7 +29,9 @@ esphome:
         # Only the first model in the firmware's list starts enabled; the rest stay off unless a saved
         # setting says otherwise, so ours are switched on here ("Hey Viki" never fired until this).
         - micro_wake_word.enable_model: victoria
-        - micro_wake_word.enable_model: hey_viki
+        # "Hey Viki" is off (Bill, 2026-11-11: the satellite woke to ordinary speech; two wake words are
+        # two chances to wake by mistake). It stays in the firmware; change this line to bring it back.
+        - micro_wake_word.disable_model: hey_viki
 
 # The voice assistant's audio clipped on channel 0 (Bill heard it distorted); channel 1, which the wake word
 # detector uses with a gain of 6, is much quieter. The voice goes to the assistant from channel 1, unamplified.

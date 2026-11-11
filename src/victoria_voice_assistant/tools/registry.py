@@ -48,6 +48,8 @@ class ToolContext:
     client_id: str | None = None
     # Reports a step to the dashboard, when a task is running the tool (an agent's tool loop).
     progress: Callable[[str], None] | None = None
+    # The saved history entry of the request making this call, so a history lookup leaves it out.
+    history_id: int | None = None
 
 
 ToolHandler = Callable[[dict[str, Any], ToolContext], Awaitable[ToolOutcome]]
@@ -70,6 +72,7 @@ class Services:
     satellites: SatelliteBoard | None = None  # what each satellite is doing, for the dashboard
     announcer: Any = None  # says a message on satellites in several rooms (the satellite manager)
     screens: Any = None  # the open chat and voice sessions (the ChatHub), for `show_page`
+    history: Any = None  # the command history (HistoryStore), for the `history` tool and saving requests
 
 
 @dataclass
@@ -84,6 +87,7 @@ class ToolEntry:
     reply: ReplyMode = "model"
     template: str | None = None
     timeout_s: float | None = None
+    forget_after_s: float | None = None  # its answers leave the conversation after this long (None: kept)
     reason: str | None = None
     # Spoken output from these is never re-phrased by the model (stubs and built-ins).
     speaks_directly: bool = False
@@ -432,6 +436,16 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
             return await announce(arguments, tools, services.announcer)
 
         return announce_handler
+    if service == "history":
+        if services.history is not None:
+            services.history.search_days = tools.history.search_days  # follows a config reload
+
+        async def history_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            if services.history is None:
+                return ToolOutcome(result={"error": "history unavailable"}, speak="I can't look that up right now.", error=True)
+            return await services.history.handle(arguments, exclude=ctx.history_id)
+
+        return history_handler
     if service == "show_page":
         from victoria_voice_assistant.tools.pages import show_page
 
@@ -622,6 +636,7 @@ def build_registry(
                 reply=reply,
                 template=template,
                 timeout_s=tool.timeout_s,
+                forget_after_s=tool.forget_after_s,
                 reason=reason,
                 # Home Assistant tools phrase their own replies (templates filled with the resolved entity names).
                 speaks_directly=status in ("stub", "auto_stub") or (status == "ready" and tool.kind in ("mcp", "ha_service")),

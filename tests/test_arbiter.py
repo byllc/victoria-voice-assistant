@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 import numpy as np
 from aioesphomeapi.model import VoiceAssistantEventType as E
 
-from victoria_voice_assistant.satellite.arbiter import Arbiter, speech_over_noise_db
+from victoria_voice_assistant.satellite.arbiter import Arbiter, describe_levels, speech_level_db
 
 
 @dataclass
@@ -62,10 +63,65 @@ def test_one_satellite_never_waits_and_separate_windows_both_answer() -> None:
 
 
 def test_a_near_voice_scores_above_the_same_voice_far_away() -> None:
-    near = speech_over_noise_db(_voice(level=3000, noise=60))
-    far = speech_over_noise_db(_voice(level=400, noise=60))
-    silence = speech_over_noise_db(_voice(level=0, noise=60))
+    near = speech_level_db(_voice(level=3000, noise=60))
+    far = speech_level_db(_voice(level=400, noise=60))
+    silence = speech_level_db(_voice(level=0, noise=60))
     assert near > far + 10 and far > silence
+
+
+def test_a_quiet_noise_floor_does_not_beat_louder_speech() -> None:
+    # 2026-11-11, across the room: the board with the lower noise floor won and then heard no speech.
+    quiet_board = speech_level_db(_voice(level=250, noise=5))
+    noisy_board = speech_level_db(_voice(level=400, noise=60))
+    assert noisy_board > quiet_board
+
+
+def test_a_late_waker_gets_its_own_full_window_before_the_decision() -> None:
+    async def scenario() -> tuple[float, list[bool]]:
+        arbiter = Arbiter(0.1)
+        arbiter.satellites = 2
+        started = time.monotonic()
+        first = asyncio.create_task(arbiter.join(Fake("waveshare", -50.0)))
+        await asyncio.sleep(0.08)
+        second = asyncio.create_task(arbiter.join(Fake("office", -40.0)))
+        results = list(await asyncio.gather(first, second))
+        return time.monotonic() - started, results
+
+    elapsed, results = asyncio.run(scenario())
+    assert results == [False, True]
+    assert 0.17 <= elapsed < 0.4  # one window after the second woke, not after the first
+
+
+def test_a_satellite_is_scored_on_its_first_window_only(example_config_dir: Path) -> None:
+    from test_satellite import _session
+
+    async def scenario() -> tuple[int, float, float]:
+        arbiter = Arbiter(0.1)
+        arbiter.satellites = 2
+        session, _client = _session(example_config_dir)
+        session.arbiter = arbiter
+        await session.handle_start("c1", 0, None, "Victoria")
+        await session.handle_audio(_voice(300, 60, seconds=0.1))
+        before = session.arbitration_score()[1]
+        await session.handle_audio(_voice(8000, 60, seconds=0.3))  # louder speech after its window
+        return len(session._scored_audio()), before, session.arbitration_score()[1]
+
+    scored, before, after = asyncio.run(scenario())
+    assert scored == 3200 and before == after
+
+
+def test_the_decision_log_says_what_each_score_was_made_of(caplog: Any) -> None:
+    class Detailed(Fake):
+        def arbitration_levels(self) -> str:
+            return describe_levels(_voice(level=3000, noise=60), 2.0)
+
+    with caplog.at_level("INFO", logger="victoria_voice_assistant.satellite.arbiter"):
+        _decide([Detailed("kitchen", 20.0), Fake("office", 5.0)], gaps=[0.0, 0.02])
+    text = next(record.text for record in caplog.records if getattr(record, "event", "") == "satellite_arbitration")
+    assert "kitchen 20.0 dB (answers) [woke +0.00 s; loud " in text
+    assert "dBFS, 0.48 s, offset +2.0]" in text
+    assert "office 5.0 dB [woke +0.0" in text and "office 5.0 dB [woke +0.00 s; loud" not in text
+    assert describe_levels(b"") == "no audio"
 
 
 def test_two_satellites_hearing_the_same_words_answer_once(example_config_dir: Path) -> None:

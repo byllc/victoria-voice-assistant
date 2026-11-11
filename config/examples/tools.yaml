@@ -12,6 +12,7 @@ tools:
     description: Start, cancel, change, stop, or check named countdown timers. Call it even when no timer name was given; it asks which one if that matters.
     kind: builtin
     service: timers
+    forget_after_s: 0                # the timer service holds the state; time left is always asked for again
     params:
       action:
         type: string
@@ -36,6 +37,7 @@ tools:
     description: Current conditions and forecast for home or a named place.
     kind: builtin
     service: weather
+    forget_after_s: 600              # a forecast stays in the conversation for 10 minutes, then is asked for again
     params:
       location:
         type: string
@@ -53,9 +55,30 @@ tools:
     description: The current local time and date.
     kind: python
     service: victoria_voice_assistant.tools.local:current_time
+    forget_after_s: 0                # the time goes out of date at once: never repeated from the conversation
     reply: { template: true }
     examples:
       - what time is it
+
+  - name: history
+    description: Look up what was asked or said to the assistant in the last week, e.g. what did I ask this morning, when did I last turn on the bedroom light.
+    kind: builtin
+    service: history                 # the command history; looks back `history.search_days` (below)
+    params:
+      words:
+        type: string
+        description: "words from the request, e.g. bedroom light; leave out to list the latest"
+      room:
+        type: string
+        description: "a room or device, only if the user names one"
+      when:
+        type: string
+        enum: [last_hour, today, this_morning, this_afternoon, this_evening, last_night, yesterday, this_week]
+        description: "only if the user says when"
+    examples:
+      - what did I ask you this morning
+      - when did I last turn on the bedroom light
+      - what did I ask the kitchen yesterday
 
   - name: web_search
     description: Search the web for current facts, news, scores, hours, prices. Returns short snippets.
@@ -159,6 +182,7 @@ tools:
     description: "Music and what's playing: play, pause, resume, skip this song (next), go back, change the volume, or say what's playing."
     kind: builtin
     service: music                   # Music Assistant (Stage 10)
+    forget_after_s: 0                # Music Assistant holds the state; what's playing is always asked for again
     reply: { template: true }        # "Playing Kind of Blue by Miles Davis from Plex on the Exercise room speaker."
     params:
       action:
@@ -222,6 +246,9 @@ timers:
   ring_max_s: 300
   sound: chime.flac
 
+history:                          # every request is kept in the database (no archive, nothing deleted)
+  search_days: 7                  # how far back the history tool looks; `assistant history search` reads it all
+
 notifications:                    # architecture §10.3
   quiet_hours: { start: "00:00", end: "08:00" }   # no sound: screen and badge only (timers still ring)
   default_style: ask_first        # ask_first | speak_summary | chime_only (agents can override with `notify`)
@@ -255,7 +282,7 @@ satellites: {}
 #    key: "${SATELLITE1_API_KEY:-}"
 #    room: office      # its room in `rooms`; default: the room with its own name
 #    arbitration_offset_db: 0   # added to its score when several satellites hear the same words
-#    gain: 24          # its microphone is raised by this before speech detection
+#    gain: 120         # its microphone is raised by this before speech detection
 #    pending_color: "#FFA000"   # its LED ring while notifications are unread (null: leave it alone)
 # satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)
 # satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words

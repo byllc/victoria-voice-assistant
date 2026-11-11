@@ -3,7 +3,7 @@
 Our build of FutureProofHomes' Satellite1 firmware: their stable release (v0.2.1) with three changes. A fixed
 ESPHome API encryption key that we hold (`SATELLITE1_API_KEY`, in the Keychain and `config/.env`) and Bill's
 wake words in `wake_words/`: "Victoria" (his own model, trained with TaterTotterson's
-microWakeWord-Trainer-AppleSilicon) and "Hey Viki" (from TaterTotterson/microWakeWords, his tuned copy).
+microWakeWord-Trainer-AppleSilicon) and "Hey Viki" (from TaterTotterson/microWakeWords, his tuned copy). "Hey Viki" is switched off at startup, and "Victoria" needs a probability of 0.90 over a window of 8 (it was 0.80 over 5), since the satellite woke to ordinary speech (2026-11-11).
 The stock "Okay Nabu" and "Hey Jarvis" are switched off at startup. And the voice comes from microphone
 channel 1, the clean one (channel 0 clips); it is quiet, so the assistant raises it (`gain` under
 `satellites:` in `tools.yaml`).

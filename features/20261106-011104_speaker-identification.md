@@ -1,6 +1,7 @@
 # Speaker identification
 
 - Status: open
+- Phase: later
 - Origin: Later (architecture §13 Q3)
 - Created: 2026-11-06 (UTC)
 

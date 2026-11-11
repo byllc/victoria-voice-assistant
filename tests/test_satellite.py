@@ -82,8 +82,14 @@ def test_replies_are_48k_mono_flac() -> None:
 
 def test_quiet_microphone_audio_is_raised_without_wrapping() -> None:
     audio = np.array([100, -100, 5000, -5000], dtype=np.int16).tobytes()
-    assert np.frombuffer(raise_level(audio, 8.0), dtype=np.int16).tolist() == [800, -800, 32767, -32768]
+    raised = np.frombuffer(raise_level(audio, 8.0), dtype=np.int16).tolist()
+    assert raised[:2] == [800, -800]  # quiet audio: plain gain
+    assert 30000 < raised[2] < 32767 and raised[3] == -raised[2]  # loud audio: eased in under full scale
     assert raise_level(audio, 1.0) is audio
+    # Louder in is still louder out, all the way up: nothing is cut off flat.
+    ramp = np.arange(0, 32768, 64, dtype=np.int16).tobytes()
+    assert np.all(np.diff(np.frombuffer(raise_level(ramp, 120.0), dtype=np.int16)) >= 0)
+    assert np.frombuffer(raise_level(ramp, 120.0), dtype=np.int16).max() <= 32767
 
 
 def test_audio_server_serves_replies_then_forgets_them() -> None:
@@ -166,6 +172,28 @@ def test_a_wake_with_no_speech_ends_quietly(example_config_dir: Path, monkeypatc
     session, client = asyncio.run(scenario())
     assert client.kinds()[-2:] == [E.VOICE_ASSISTANT_STT_START, E.VOICE_ASSISTANT_RUN_END]  # no STT_VAD_END first
     assert session.run is None
+
+
+def test_a_turn_is_recorded_only_when_a_folder_is_set(example_config_dir: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import wave
+
+    monkeypatch.setattr(esphome, "NO_SPEECH_S", 0.05)
+
+    async def scenario(folder: str | None) -> None:
+        session, _client = _session(example_config_dir)
+        session.settings = session.settings.model_copy(update={"record_dir": folder, "gain": 2.0})
+        await session.handle_start("c1", 0, None, "Victoria")
+        await session.handle_audio(np.full(1600, 100, dtype=np.int16).tobytes())
+        await asyncio.sleep(0.15)
+
+    asyncio.run(scenario(None))
+    assert not list(tmp_path.rglob("*.wav"))
+    asyncio.run(scenario(str(tmp_path / "turns")))
+    (recording,) = (tmp_path / "turns").iterdir()
+    assert recording.name.startswith("office-") and recording.name.endswith("-no-speech.wav")
+    with wave.open(str(recording)) as audio:
+        assert (audio.getframerate(), audio.getnchannels(), audio.getnframes()) == (16000, 1, 1600)
+        assert np.frombuffer(audio.readframes(1600), dtype=np.int16)[0] == 200  # after `gain`
 
 
 def test_an_aborted_turn_sends_no_end(example_config_dir: Path) -> None:

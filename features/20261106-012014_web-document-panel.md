@@ -1,6 +1,7 @@
 # Web interface document panel
 
 - Status: ready for review
+- Phase: current
 - Origin: Bill, 2026-11-05
 - Created: 2026-11-06 (UTC)
 

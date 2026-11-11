@@ -6,11 +6,14 @@ Rules for coding agents working in this repository.
 
 Work is organised as features, one file each in `features/`, named `<timestamp>_<feature_slug>.md`. The approval gate now applies to each feature, not to numbered stages. `docs/implementation_plan.md` §1 has the full rules.
 
+- Each feature has a `Phase`: `current` (work on the dev machine), `staging` (on the Mac mini, once it is deployed there), or `later` (not scheduled).
+- **All performance testing is staging work** (Bill, 2026-11-11). The dev machine's models are sized for its small memory, so don't benchmark, measure latency or load, or judge model choice on it, and don't count its numbers as evidence.
+- **Any feature involving more than one satellite is staging work** (Bill, 2026-11-11: "any featrues that involve more than one satellite need to be in staging"). That includes arbitration, fleet checks, multi-room music and streams. Put a new feature of that kind in `staging`.
 - Work only on the feature Bill asks for. He may skip a feature or start another at any time.
 - Ask before starting a feature whose blocking decisions are unanswered.
 - When a feature's criteria are met, set it to `ready for review`, fill in its evidence, and stop. Never set a feature to `approved`; only Bill does.
-- "Next feature" means the earliest timestamp in `features/` not marked `approved` or `skipped`. When Bill asks for it, name the feature and what it is, then wait for his confirmation before starting.
-- When Bill asks what is unfinished, give a numbered list of features not marked `approved` or `skipped`, and wait for him to choose.
+- "Next feature" means the earliest timestamp in `features/` in the `current` phase not marked `approved` or `skipped`. When Bill asks for it, name the feature and what it is, then wait for his confirmation before starting.
+- When Bill asks what is unfinished, give a numbered list of features not marked `approved` or `skipped`, grouped by phase, and wait for him to choose.
 - Don't change the architecture silently. Record proposals in the feature file and wait for Bill.
 
 ## Ground rules

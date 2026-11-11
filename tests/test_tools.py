@@ -825,3 +825,87 @@ def test_junk_from_the_model_becomes_the_fallback_and_real_text_is_cleaned() -> 
     written = ["call:clarify{question:", '<|"|>How long should', ' the timer be?<|"|>}']  # seen from gemma-4-12b
     assert run(said(written)) == "How long should the timer be?"
     assert run(said(["call:timer{action:start}"])) == EMPTY_REPLY
+
+from victoria_voice_assistant.config.schema import ToolConfig  # noqa: E402
+
+
+# Answers that go out of date (forget_after_s) ------------------------------------
+
+
+def _clock_exchange(call_id: str, said: str) -> list[dict[str, Any]]:
+    return [
+        {"role": "user", "content": "what time is it"},
+        {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {"name": "clock", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": call_id, "content": json.dumps({"spoken": said})},
+        {"role": "assistant", "content": said},
+    ]
+
+
+def test_an_out_of_date_answer_leaves_the_conversation_whole() -> None:
+    from pipecat.processors.aggregators.llm_context import LLMContext
+
+    from victoria_voice_assistant.chat.tools import forget_stale
+
+    kept = [{"role": "user", "content": "how many ounces in a cup"}, {"role": "assistant", "content": "Eight."}]
+    context = LLMContext(
+        messages=[
+            {"role": "system", "content": "You are Victoria."},
+            *_clock_exchange("call-1", "It's 10:35 AM."),
+            *kept,
+            *_clock_exchange("call-2", "It's 10:36 AM."),
+            {"role": "user", "content": "what time is it"},  # the request now starting
+        ]
+    )
+    forget = {"call-1": 5.0, "call-2": 50.0}
+    assert forget_stale(context, forget, now=1.0) == 0 and len(context.get_messages()) == 12  # nothing is out of date yet
+    assert forget_stale(context, forget, now=10.0) == 1
+    assert context.get_messages() == [
+        {"role": "system", "content": "You are Victoria."},
+        *kept,
+        *_clock_exchange("call-2", "It's 10:36 AM."),
+        {"role": "user", "content": "what time is it"},
+    ]
+    assert forget == {"call-2": 50.0}
+    assert forget_stale(context, forget, now=60.0) == 1
+    assert [m["role"] for m in context.get_messages()] == ["system", "user", "assistant", "user"]  # still alternating
+    assert "10:3" not in json.dumps(context.get_messages()) and forget == {}
+
+
+def test_forget_after_s_comes_from_the_tool_config_and_is_noted_per_call() -> None:
+    registry = _registry(
+        [
+            {"name": "clock", "description": "The time.", "kind": "python", "service": "victoria_voice_assistant.tools.local:current_time", "forget_after_s": 0},
+            {"name": "weather", "description": "Weather.", "kind": "builtin", "service": "weather"},
+        ]
+    )
+    assert registry.get("clock").forget_after_s == 0 and registry.get("weather").forget_after_s is None
+    with pytest.raises(ValueError):
+        ToolConfig.model_validate({"name": "clock", "description": "The time.", "kind": "python", "service": "x:y", "forget_after_s": -1})
+
+
+def test_nothing_is_forgotten_while_a_tool_question_is_open() -> None:
+    """"Which timer: pasta or laundry?" stays until it's answered: "the laundry one" means nothing without it."""
+    from pipecat.processors.aggregators.llm_context import LLMContext
+    from pipecat.tests.utils import run_test
+
+    question = "Which timer: pasta or laundry?"
+    exchange = [
+        {"role": "user", "content": "cancel timer"},
+        {"role": "assistant", "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "timer", "arguments": '{"action": "cancel"}'}}]},
+        {"role": "tool", "tool_call_id": "call-1", "content": json.dumps({"ambiguous": ["pasta", "laundry"], "action": "cancel"})},
+        {"role": "assistant", "content": question},
+    ]
+
+    async def scenario(open_question: bool) -> list[dict[str, Any]]:
+        state = SessionState()
+        if open_question:
+            state.set_pending(PendingQuestion(kind="clarify", question=question, options=["pasta", "laundry"]))
+        runtime = ToolRuntime(_registry([]), state, notify=_ignore)
+        runtime.forget["call-1"] = 0.0  # already out of date
+        context = LLMContext(messages=[{"role": "system", "content": "You are Victoria."}, *exchange])
+        preprocessor = TurnPreprocessor(state, runtime, TimerService(TimersConfig()), context=context)
+        await run_test(preprocessor, frames_to_send=[_user("the laundry one")])
+        return context.get_messages()
+
+    assert question in json.dumps(run(scenario(open_question=True)))
+    assert question not in json.dumps(run(scenario(open_question=False)))

@@ -1,6 +1,7 @@
 # Backend-neutral satellite protocol
 
 - Status: open
+- Phase: later
 - Origin: Later (architecture Appendix A)
 - Created: 2026-11-06 (UTC)
 

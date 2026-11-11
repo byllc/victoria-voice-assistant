@@ -1,6 +1,7 @@
 # Timer reply wording
 
 - Status: open
+- Phase: current
 - Origin: Stage 14
 - Created: 2026-11-06 (UTC)
 

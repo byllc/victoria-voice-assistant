@@ -1,6 +1,7 @@
 # Satellite fleet acceptance
 
 - Status: open
+- Phase: staging
 - Origin: Stage 13 (open for acceptance)
 - Created: 2026-11-06 (UTC)
 
@@ -20,3 +21,5 @@
 ## Evidence and notes
 
 Evidence is recorded in the Stage 13 section of `docs/stages.md`. Live checks so far used one or two satellites; the firmware update has not been run across several boards.
+
+Bill, 2026-11-11: "any featrues that involve more than one satellite need to be in staging". Moved to the staging phase.
