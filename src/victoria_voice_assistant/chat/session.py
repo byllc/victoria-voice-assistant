@@ -24,7 +24,9 @@ from victoria_voice_assistant.chat.prompt import system_prompt
 from victoria_voice_assistant.chat.serializer import ChatJsonSerializer, ChatProtocolProcessor
 from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcessor, TimingStartProcessor
 from victoria_voice_assistant.chat.tools import SessionState, ToolRuntime
-from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker
+from victoria_voice_assistant.chat.turns import HistoryTap, TurnPreprocessor, TurnTracker
+from victoria_voice_assistant.history import HistoryRecorder
+from victoria_voice_assistant.rooms import room_of
 from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.agents.tasks import TaskEvent
@@ -45,6 +47,7 @@ class ChatHub:
         self.sessions: set[ChatSession] = set()
 
     def reload(self, config: AppConfig, services: Services) -> None:
+        self.config = config
         for session in list(self.sessions):
             session.reload(config, services)
 
@@ -53,6 +56,11 @@ class ChatSession:
     def __init__(self, state: SessionState, config: AppConfig, services: Services) -> None:
         self.state = state
         self.runtime = ToolRuntime(build_registry(config.tools, config.agents, services), state, notify=self.send)
+        self.config = config
+        if services.history is not None:
+            self.runtime.history = HistoryRecorder(
+                services.history, device=lambda: state.device, room=lambda device: room_of(self.config.tools, device)
+            )
         self.task: PipelineTask | None = None
         self._tasks: set[asyncio.Task] = set()
 
@@ -194,6 +202,7 @@ async def run_chat_session(
             router,
             TurnTracker(state, preprocessor, retry=lambda: task.queue_frame(LLMRunFrame())),
             TimingEndProcessor(timer),
+            HistoryTap(runtime),
             ChatProtocolProcessor(),
             transport.output(),
             pair.assistant(),

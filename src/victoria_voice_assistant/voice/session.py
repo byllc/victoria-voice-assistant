@@ -53,7 +53,7 @@ from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcesso
 from victoria_voice_assistant.chat.tools import SessionState
 from collections import deque
 
-from victoria_voice_assistant.chat.turns import TurnPreprocessor, TurnTracker, is_stop
+from victoria_voice_assistant.chat.turns import HistoryTap, TurnPreprocessor, TurnTracker, is_stop
 from victoria_voice_assistant.config.schema import AppConfig, SpeechConfig
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
@@ -464,6 +464,7 @@ async def run_voice_session(
             router,
             VoiceTurnTracker(state, preprocessor, retry=lambda: task.queue_frame(LLMRunFrame())),
             TimingEndProcessor(timer),
+            HistoryTap(runtime),
             speech.tts(),
             transport.output(),
             pair.assistant(),

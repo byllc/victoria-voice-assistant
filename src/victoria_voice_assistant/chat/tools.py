@@ -15,6 +15,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.services.llm_service import FunctionCallParams
 
+from victoria_voice_assistant.history import HistoryRecorder
 from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 from victoria_voice_assistant.tools.registry import ToolContext, ToolEntry, ToolRegistry, format_template
 
@@ -84,6 +85,41 @@ class SessionState:
         return pending
 
 
+def forget_stale(context: Any, forget: dict[str, float], now: float | None = None) -> int:
+    """Take out of the conversation every exchange that used a tool call whose answer has gone out of date.
+
+    The model copies its own earlier answers: asked the time twice, it repeated "It's 10:35 AM." a minute
+    later without calling the clock (2026-11-11). The whole exchange goes, from the user's request up to
+    the next one, so the conversation still alternates and nothing is left to copy. Returns how many went.
+    """
+    now = time.monotonic() if now is None else now
+    expired = {call_id for call_id, until in forget.items() if until <= now}
+    if not expired:
+        return 0
+    messages = list(context.get_messages())
+    roles = [message.get("role") if isinstance(message, dict) else None for message in messages]
+    remove: set[int] = set()
+    exchanges = 0
+    for index, message in enumerate(messages):
+        if roles[index] != "assistant" or index in remove:
+            continue
+        calls = message.get("tool_calls") or []
+        if not any(isinstance(call, dict) and call.get("id") in expired for call in calls):
+            continue
+        start = next((i for i in range(index - 1, -1, -1) if roles[i] == "user"), None)
+        if start is None:
+            continue
+        end = next((i for i in range(index + 1, len(messages)) if roles[i] == "user"), len(messages))
+        remove.update(range(start, end))
+        exchanges += 1
+    for call_id in expired:
+        del forget[call_id]
+    if remove:
+        context.set_messages([message for index, message in enumerate(messages) if index not in remove])
+        logger.info("Out-of-date answers left the conversation", extra={"event": "conversation_forgot", "count": exchanges})
+    return exchanges
+
+
 class SpokenReplyEndFrame(LLMFullResponseEndFrame):
     """Ends a reply spoken from a tool, so it isn't mistaken for the end of a model call."""
 
@@ -114,6 +150,10 @@ class ToolRuntime:
         self.notify = notify
         # Called when a tool call finishes, so a queued message can run.
         self.on_settled = on_settled
+        # Tool calls whose answers go out of date (`forget_after_s`): call id -> when it leaves the conversation.
+        self.forget: dict[str, float] = {}
+        # Saves each request, its tool calls and its reply to the command history (None: not saved).
+        self.history: HistoryRecorder | None = None
 
     def tools_schema(self) -> ToolsSchema:
         return ToolsSchema(standard_tools=[entry.schema(self._handler(entry)) for entry in self.registry.active])
@@ -124,7 +164,8 @@ class ToolRuntime:
         return offer.handler({"agent": self.registry.default_agent or "", "summary": summary}, self._context())
 
     def _context(self) -> ToolContext:
-        return ToolContext(device=self.state.device, client_id=self.state.client_id)
+        history_id = self.history.current if self.history is not None else None
+        return ToolContext(device=self.state.device, client_id=self.state.client_id, history_id=history_id)
 
     async def run(self, entry: ToolEntry, arguments: dict[str, Any]) -> tuple[ToolOutcome, str | None]:
         """Run a tool with the session's guards. Returns the outcome and the text to speak directly, if any."""
@@ -160,6 +201,10 @@ class ToolRuntime:
         async def handler(params: FunctionCallParams) -> None:
             started = time.perf_counter()
             arguments = dict(params.arguments)
+            if entry.forget_after_s is not None:
+                self.forget[params.tool_call_id] = time.monotonic() + entry.forget_after_s
+            if self.history is not None:
+                self.history.tool(entry.name, arguments)
             outcome, direct = await self.run(entry, arguments)
             if outcome.chat:
                 await self.notify({"type": "notice", "title": outcome.chat_title or entry.name, "text": outcome.chat})

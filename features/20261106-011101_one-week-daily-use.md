@@ -1,6 +1,7 @@
 # One week of daily use
 
 - Status: open
+- Phase: staging
 - Origin: Stage 14
 - Created: 2026-11-06 (UTC)
 
@@ -14,4 +15,4 @@ None.
 
 ## Evidence and notes
 
-Not started.
+Not started. Bill, 2026-11-11: this runs in staging, on the Mac mini.

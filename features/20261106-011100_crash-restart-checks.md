@@ -1,6 +1,7 @@
 # Crash and restart checks
 
 - Status: open
+- Phase: staging
 - Origin: Stage 14
 - Created: 2026-11-06 (UTC)
 

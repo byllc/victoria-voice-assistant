@@ -1,6 +1,7 @@
 # Fleet load measurements
 
 - Status: open
+- Phase: staging
 - Origin: Stage 15 (from Stage 13)
 - Created: 2026-11-06 (UTC)
 

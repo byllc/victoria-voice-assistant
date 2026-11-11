@@ -22,7 +22,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime
+from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime, forget_stale
 from victoria_voice_assistant.agents.runner import AgentRunner, match_agent_address
 from victoria_voice_assistant.notifications.service import NotificationService
 from victoria_voice_assistant.tools.music import MusicService
@@ -159,6 +159,13 @@ class TurnPreprocessor(FrameProcessor):
 
     async def _handled(self, text: str) -> bool:
         started = time.perf_counter()
+        if self.runtime is not None and self.runtime.history is not None:
+            self.runtime.history.begin(text)
+        open_question = self.state.pending is not None and not self.state.pending.expired()
+        if self.context is not None and self.runtime is not None and self.runtime.forget and not open_question:
+            # Before the model sees its old time or weather. Not while a tool's question is open: the answer
+            # ("the laundry one") means nothing without "Which timer: pasta or laundry?" (2026-11-11).
+            forget_stale(self.context, self.runtime.forget)
         self.state.begin_request()
         handled = await self._resolve(text, started)
         if handled:
@@ -265,6 +272,8 @@ class TurnPreprocessor(FrameProcessor):
 
     async def _reply(self, user_text: str, reply: str, handled_by: str, started: float) -> None:
         """Answer with no model call."""
+        if self.runtime is not None and self.runtime.history is not None:
+            self.runtime.history.reply(reply)
         await self._deliver(user_text, reply)
         logger.info(
             "Turn handled without a model",
@@ -383,3 +392,25 @@ def clean_reply(text: str) -> str:
         question = re.search(r"question\s*:\s*(.+?)\s*$", body)
         return question.group(1).strip().strip('"') if name == "clarify" and question else ""
     return text
+
+class HistoryTap(FrameProcessor):
+    """Placed after the turn tracker: saves each reply the model (or a tool) gives to the command history.
+
+    Replies answered without a model are saved by the preprocessor, which sends them another way.
+    """
+
+    def __init__(self, runtime: ToolRuntime, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.runtime = runtime
+        self._text: list[str] = []
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if direction == FrameDirection.DOWNSTREAM:
+            if isinstance(frame, LLMTextFrame):
+                self._text.append(frame.text)
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                text, self._text = "".join(self._text).strip(), []
+                if text and self.runtime.history is not None:
+                    self.runtime.history.reply(text)
+        await self.push_frame(frame, direction)

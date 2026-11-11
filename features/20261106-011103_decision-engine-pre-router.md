@@ -1,6 +1,7 @@
 # Decision-engine pre-router
 
 - Status: open
+- Phase: later
 - Origin: Later (architecture §7.1)
 - Created: 2026-11-06 (UTC)
 

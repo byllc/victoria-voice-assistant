@@ -6,7 +6,7 @@ A satellite is a small voice device in a room: it listens for the wake word, sen
 
 ESPHome devices don't dial out, so the assistant connects *to* each satellite listed under `satellites:` in `config/tools.yaml`, using the device's API encryption key, and keeps the connection open. Only the assistant connects: Home Assistant doesn't, and never gets the key (decisions log, 2026-11-01).
 
-1. The satellite hears the wake word itself ("Victoria" or "Hey Viki") and streams 16 kHz audio to the assistant.
+1. The satellite hears the wake word itself ("Victoria"; "Hey Viki" is in the firmware but switched off) and streams 16 kHz audio to the assistant.
 2. The assistant runs the turn through the same pipeline as browser voice: speech detection and Smart Turn decide when you've finished, Whisper transcribes, the router model answers or calls a tool, and Kokoro speaks.
 3. The reply is encoded as FLAC (the only format the Satellite1 plays) and served from the assistant's reply audio server on the LAN (plain HTTP, port 8767). The satellite fetches and plays it.
 4. If the reply asks you something, the satellite listens again without the wake word.
@@ -47,7 +47,7 @@ satellites:
     host: satellite1-34bf90.local   # or its IP address
     key: "${SATELLITE1_API_KEY}"
 #   port: 6053      # the ESPHome API port
-#   gain: 24        # the microphone is raised by this before speech detection (its clean channel is quiet)
+#   gain: 120       # the microphone is raised by this before speech detection (its clean channel is quiet)
 #   room: office    # its room in `rooms`; default: the room with its own name
 #   arbitration_offset_db: 0   # added to its score when several hear the same words
 #   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
@@ -83,9 +83,9 @@ If the satellite was in Home Assistant before, Home Assistant's ESPHome entry fo
 
 ## Several satellites in earshot
 
-When more than one satellite hears the same words, one answers (Stage 13). The first to wake opens a short window (`satellite_arbitration_s`, 0.5 s) for others waking too, and each one's audio is held meanwhile, not transcribed. Then a satellite with an open question or a ringing timer answers; otherwise the one whose speech stands highest above its own background noise, with near-ties (within 1.5 dB) going to the first to wake. The others go quietly back to idle. The window passes while you're still speaking, so the reply isn't slower. With one satellite configured, nothing is held.
+When more than one satellite hears the same words, one answers (Stage 13). The first to wake opens a short window (`satellite_arbitration_s`, 0.5 s) for others waking too, and each one's audio is held meanwhile, not transcribed. Then a satellite with an open question or a ringing timer answers; otherwise the one that hears the speech loudest, with near-ties (within 1.5 dB) going to the first to wake. Each is scored on its own first window of audio, so the decision comes one window after the last of them woke. The others go quietly back to idle. You're usually still speaking then, so the reply is rarely slower. With one satellite configured, nothing is held.
 
-If the wrong one keeps answering in some spot, give the satellite that should a head start (`arbitration_offset_db: 3` under it) or the other a handicap (a negative value). The log shows each decision: `satellite_arbitration`, with every candidate's score.
+If the wrong one keeps answering in some spot, give the satellite that should a head start (`arbitration_offset_db: 3` under it) or the other a handicap (a negative value). The log shows each decision: `satellite_arbitration`, with every candidate's score (its loud level in dB below full scale, plus its offset), when it woke, and its loud and quiet levels.
 
 ## Updating every satellite's firmware
 
@@ -116,7 +116,7 @@ The Mac mini runs the assistant in the end; the satellites don't change.
 
 ## Using it
 
-- **Wake words:** "Victoria" or "Hey Viki", then your request in the same breath or after the chime. Pressing the action button once also starts listening.
+- **Wake word:** "Victoria", a short pause until the ring lights or it chimes, then your request. The satellite sends nothing from before it woke, so a request said in the same breath loses its first words (2026-11-11). "Hey Viki" is switched off (it woke to ordinary speech too often with two wake words); `services/satellite1/satellite1.yaml` brings it back. Pressing the action button once also starts listening.
 - **What you can say:** anything you can say in the browser: timers, weather, the time, search, agents, home control, music.
 - **Questions back:** when Victoria asks something ("How long should the timer be?"), the satellite listens again: answer without the wake word.
 - **Timers** ring on the satellite that set them, and its LED ring shows the time left. To stop one, say "stop" without the wake word (the firmware listens for it only while a timer rings), or press the action button. *Not yet tried by voice.*
@@ -159,7 +159,7 @@ Holding the action button for 10 seconds warns (a sound and the LED ring); keep 
 | Red twinkle | Is the assistant running (`curl http://127.0.0.1:8765/health`)? Is the device under `satellites:` with the right host? The log shows `satellite_unreachable` with a reason: a wrong key, or a host that can't be resolved or reached. |
 | It wakes but says nothing | Look for `satellite_reply` (with a `duration_s`) or `satellite_reply_failed`. A reply it can't fetch plays as silence: is the Mac reachable from the satellite on port 8767 (firewall, network)? |
 | It wakes, then gives up | `satellite_no_speech`: no speech was detected within 8 seconds of the wake word. Speak sooner, or check `gain` if it keeps happening. |
-| Whatever you say is misheard | The microphone level: our firmware uses the clean channel, raised by `gain` (24). Lower it if the audio clips, raise it if speech is missed. |
+| Whatever you say is misheard | The microphone level: our firmware uses the clean channel, raised by `gain` (120; loud speech is eased in under full scale, not clipped). Raise it if speech from across the room is missed (`satellite_no_speech` with a `volume` under 0.6); `record_dir` saves a turn's audio to listen to. |
 | Quiet replies | Power: see above. |
 | Home Assistant shows it unavailable | Expected: see Home Assistant above. |
 

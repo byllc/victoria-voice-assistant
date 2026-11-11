@@ -189,6 +189,10 @@ class ToolConfig(Schema):
     confirm: bool = False
     enabled: bool = True
     timeout_s: float | None = Field(default=None, gt=0)
+    # How long this tool's answers stay in the conversation, in seconds, for answers that go out of date
+    # (the time, the weather): after it the whole exchange is taken out, so the model has to call the
+    # tool again and can't repeat its old answer. 0: gone by the next request. Unset: kept.
+    forget_after_s: float | None = Field(default=None, ge=0)
     reply: ReplyConfig | None = None
     examples: list[str] = Field(default_factory=list)
     entities: EntityScope | None = None
@@ -231,6 +235,12 @@ class WeatherConfig(Schema):
     home: WeatherHomeConfig | None = None
     units: Literal["imperial", "metric"] = "imperial"
     cache_ttl_s: int = Field(default=600, ge=0)
+
+
+class HistoryConfig(Schema):
+    """Command history: every request is kept in the database; the `history` tool looks back `search_days`."""
+
+    search_days: int = Field(default=7, ge=1)
 
 
 class TimersConfig(Schema):
@@ -313,15 +323,20 @@ class SatelliteConfig(Schema):
     key: str | None = None  # the device's API encryption key, e.g. "${SATELLITE1_API_KEY}"
     # Its microphone level is raised by this factor before speech detection: the Satellite1's clean
     # (unclipped) channel is quiet (Stage 12 findings). At 8, speech sat at Pipecat's speech-detection
-    # loudness gate (`min_volume` 0.6, about -50 LUFS) and some turns heard no speech (2026-11-02).
-    gain: float = Field(default=24.0, gt=0, le=64)
+    # loudness gate (`min_volume` 0.6, about -50 LUFS) and some turns heard no speech (2026-11-02). At 24
+    # it answered at 4 feet but not at 8 or 20, though Whisper could read all three recordings; at 120
+    # all pass the gate (2026-11-11). Loud speech is eased in under full scale, not clipped.
+    gain: float = Field(default=120.0, gt=0, le=512)
     # The LED ring's colour while notifications are unread for this satellite (architecture §10.3's
     # pending indicator); null leaves the ring alone.
     pending_color: str | None = Field(default="#FFA000", pattern=r"^#[0-9A-Fa-f]{6}$")
     room: str | None = None  # its room in `rooms`; default: the room with the satellite's own name
-    # When several satellites hear the same words, added to this one's score (dB): for a room that reads
-    # loud or quiet, so the nearest satellite answers (architecture §4, wake-word arbitration).
+    # When several satellites hear the same words, added to this one's score (how loud it hears the
+    # speech, dB): for a microphone or room that reads loud or quiet, so the nearest satellite answers (architecture §4, wake-word arbitration).
     arbitration_offset_db: float = 0.0
+    # For fault-finding only: a folder that gets each turn's microphone audio (after `gain`) as a WAV file,
+    # named by satellite, time and how the turn ended. Off unless set; it keeps recordings of what was said.
+    record_dir: str | None = None
 
 
 class ToolTestGiven(Schema):
@@ -367,6 +382,7 @@ class ToolsConfig(Schema):
     search: SearchConfig | None = None
     weather: WeatherConfig | None = None
     timers: TimersConfig | None = None
+    history: HistoryConfig = Field(default_factory=HistoryConfig)
     music: MusicConfig | None = None
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
@@ -582,6 +598,7 @@ def validate_references(
                 )
 
     agent_names = {agent.name for agent in agents.agents}
+    history_tools = {tool.name for tool in tools.tools if tool.kind == "builtin" and tool.service == "history"}
     for index, agent in enumerate(agents.agents):
         if agent.model is not None and agent.model not in model_names:
             fail(
@@ -601,6 +618,12 @@ def validate_references(
                     "agents.yaml",
                     f"agents.{index}.tools",
                     f"references unknown tool {tool_name!r}",
+                )
+            elif tool_name in history_tools:
+                fail(
+                    "agents.yaml",
+                    f"agents.{index}.tools",
+                    f"{tool_name!r} reads the household's command history, which never goes to an agent",
                 )
     if agents.default is not None and agents.default not in agent_names:
         fail(

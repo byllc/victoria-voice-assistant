@@ -8,6 +8,12 @@ This plan is written for a coding agent. The pipeline is built first and is full
 
 Work is organised as **features**, one file each in `features/`, named `<timestamp>_<feature_slug>.md`. The stage-by-stage gate was discontinued on 2026-11-05. Each feature now has its own gate.
 
+**Phases (Bill, 2026-11-11).** Each feature file has a `Phase` line:
+
+- `current`: work done on the dev machine.
+- `staging`: work done on the Mac mini once the assistant is deployed there. **All performance testing is staging work**: benchmarks, latency, load and memory measurements, and the choice of models. The dev machine's models are sized for its small memory, so its numbers are not evidence.
+- `later`: not scheduled.
+
 Rules for the coding agent:
 
 1. **Read the feature file before starting.** Work only on the feature Bill has asked for. Bill may skip a feature or start another one at any time.
@@ -17,8 +23,8 @@ Rules for the coding agent:
 5. **Never mark a feature `approved`.** Only Bill changes the status to `approved` and adds his name and the date. If Bill marks it `changes requested`, address his notes and return it to `ready for review`.
 6. **Skipped features** are set to `skipped` by Bill. Do not work on them until Bill asks.
 7. **Don't change the architecture silently.** Record a proposal in the feature's file and wait for Bill's answer.
-8. **Lists on request.** When Bill asks what is unfinished, give a numbered list of features whose status is not `approved` or `skipped`, and wait for him to choose.
-9. **"Next feature" means the earliest timestamp** in `features/` that is not `approved` or `skipped`. When Bill asks for the next feature, name it, say what it is, and wait for his confirmation before starting work.
+8. **Lists on request.** When Bill asks what is unfinished, give a numbered list of features whose status is not `approved` or `skipped`, grouped by phase, and wait for him to choose.
+9. **"Next feature" means the earliest timestamp** in `features/` in the `current` phase that is not `approved` or `skipped`. When Bill asks for the next feature, name it, say what it is, and wait for his confirmation before starting work.
 10. **Work on a branch per feature** (`feature-<feature_slug>`). Merge to `main` only after approval, then tag `feature-<feature_slug>-approved`.
 
 Feature statuses: `open` → `in progress` → `ready for review` → `approved` (or `changes requested` → `in progress`); `skipped` at any point, set by Bill.
