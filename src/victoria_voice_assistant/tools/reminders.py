@@ -262,11 +262,19 @@ class RemindersService:
             except Exception:  # noqa: BLE001 - logged; the tool stays a stub
                 logger.exception("Reminders access request failed", extra={"event": "reminders_access_failed"})
                 granted = False
-            finally:
-                self._asking = False
             logger.info("Reminders access answered", extra={"event": "reminders_access", "status": "granted" if granted else "refused"})
-            if granted and self.on_granted is not None:
-                self.on_granted()
+            # Asked once per process (_asking stays set): a yes that doesn't change the status (macOS can
+            # answer for a launchd process without granting it) must not rebuild the tools and ask again.
+            status = self.access()
+            if granted and status == "granted":
+                if self.on_granted is not None:
+                    self.on_granted()
+            elif granted:
+                logger.warning(
+                    "Reminders access answered yes, but the status is still %s; restart the service after granting it",
+                    status,
+                    extra={"event": "reminders_access_unchanged", "status": status},
+                )
 
         logger.info("Asking for Reminders access", extra={"event": "reminders_access_asked"})
         threading.Thread(target=ask, name="reminders-access", daemon=True).start()

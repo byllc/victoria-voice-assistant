@@ -319,3 +319,34 @@ def test_skip_and_default_by_title() -> None:
     assert run(service, action="add", title="Recital", when="Friday at 6").speak == "I've added “Recital” to Family (iCloud), Friday at 6 PM to 7 PM."
     service.settings = CalendarConfig(default_calendar="family")
     assert run(service, action="add", title="Recital", when="Friday at 6").speak == "There's no family calendar."
+
+
+def test_a_yes_that_does_not_stick_asks_once_and_does_not_rebuild() -> None:
+    """macOS can answer yes for a launchd process while the status stays undetermined: no reload loop."""
+
+    class Unchanged(FakeCalendar):
+        def request_access(self) -> bool:
+            self.asked += 1
+            return True  # the status stays not_determined
+
+    backend = Unchanged(access="not_determined")
+    service = CalendarService(backend=backend)
+    rebuilt: list[int] = []
+    service.on_granted = lambda: rebuilt.append(1)
+    for _ in range(3):
+        service.ask_for_access()
+        for thread in [t for t in __import__("threading").enumerate() if t.name == "calendar-access"]:
+            thread.join(timeout=2)
+    assert backend.asked == 1
+    assert rebuilt == []
+
+
+def test_a_real_grant_rebuilds_the_tools() -> None:
+    backend = FakeCalendar(access="not_determined")
+    service = CalendarService(backend=backend)
+    rebuilt: list[int] = []
+    service.on_granted = lambda: rebuilt.append(1)
+    service.ask_for_access()
+    for thread in [t for t in __import__("threading").enumerate() if t.name == "calendar-access"]:
+        thread.join(timeout=2)
+    assert backend.asked == 1 and rebuilt == [1]

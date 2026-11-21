@@ -306,11 +306,19 @@ class CalendarService:
             except Exception:  # noqa: BLE001 - logged; the tool stays a stub
                 logger.exception("Calendar access request failed", extra={"event": "calendar_access_failed"})
                 granted = False
-            finally:
-                self._asking = False
             logger.info("Calendar access answered", extra={"event": "calendar_access", "status": "granted" if granted else "refused"})
-            if granted and self.on_granted is not None:
-                self.on_granted()
+            # Asked once per process (_asking stays set): a yes that doesn't change the status (macOS can
+            # answer for a launchd process without granting it) must not rebuild the tools and ask again.
+            status = self.access()
+            if granted and status == "granted":
+                if self.on_granted is not None:
+                    self.on_granted()
+            elif granted:
+                logger.warning(
+                    "Calendar access answered yes, but the status is still %s; restart the service after granting it",
+                    status,
+                    extra={"event": "calendar_access_unchanged", "status": status},
+                )
 
         logger.info("Asking for Calendar access", extra={"event": "calendar_access_asked"})
         threading.Thread(target=ask, name="calendar-access", daemon=True).start()
