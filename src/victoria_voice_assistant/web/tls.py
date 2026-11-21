@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import ssl
 import subprocess
 from dataclasses import dataclass
@@ -73,11 +74,29 @@ def validate(files: TlsFiles) -> CertInfo:
     return inspect_cert(files.cert)
 
 
+def openssl_binary() -> str:
+    """An OpenSSL `openssl`, preferring Homebrew's over the macOS one.
+
+    macOS ships LibreSSL as /usr/bin/openssl, and it has no `x509 -ext`, so the
+    certificate's names would come back empty. launchd's PATH puts /usr/bin first,
+    so the PATH order can't be relied on.
+    """
+    for candidate in (
+        os.environ.get("ASSISTANT_OPENSSL"),
+        "/opt/homebrew/opt/openssl@3/bin/openssl",
+        "/opt/homebrew/bin/openssl",
+        "/usr/local/opt/openssl@3/bin/openssl",
+    ):
+        if candidate and os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which("openssl") or "openssl"
+
+
 def inspect_cert(cert: Path) -> CertInfo:
-    """Subject, DNS/IP names, and expiry, read with the system `openssl`."""
+    """Subject, DNS/IP names, and expiry, read with `openssl` (see `openssl_binary`)."""
     try:
         result = subprocess.run(
-            ["openssl", "x509", "-in", str(cert), "-noout", "-subject", "-enddate", "-ext", "subjectAltName"],
+            [openssl_binary(), "x509", "-in", str(cert), "-noout", "-subject", "-enddate", "-ext", "subjectAltName"],
             check=True,
             capture_output=True,
             text=True,

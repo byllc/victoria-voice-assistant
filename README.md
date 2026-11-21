@@ -87,6 +87,7 @@ Work proceeds in numbered stages, each approved before the next starts. The live
 - macOS on Apple Silicon (MLX Whisper needs it).
 - [uv](https://docs.astral.sh/uv/). It installs Python 3.12 into the project's `.venv`; nothing goes into the system Python.
 - Node.js 23 or later and npm, to build the web client.
+- OpenSSL 3 from Homebrew (`brew install openssl@3`), to read certificate details for HTTPS. The macOS `/usr/bin/openssl` is LibreSSL and can't list a certificate's names; `ASSISTANT_OPENSSL` points at another binary.
 - [LM Studio](https://lmstudio.ai) with its `lms` command and a tool-calling model loaded. The examples use `google/gemma-4-12b`.
 
 ## Getting started
