@@ -24,6 +24,7 @@ dependencies = [
     "python-dotenv>=1,<2",
     "music-assistant-client==1.5.1",
     "aioesphomeapi>=46,<47",
+    "pyobjc-framework-eventkit>=11",
 ]
 
 [project.optional-dependencies]

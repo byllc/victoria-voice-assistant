@@ -231,6 +231,34 @@ def test_whisper_prompt_names_the_agents_not_their_aliases() -> None:
     )
     assert whisper_prompt(agents) == "Victoria. Ask Hermes, ask Claude."
     assert whisper_prompt(AgentsConfig()) is None
+    assert whisper_prompt(agents, ["Tempranillo", "Ribera del Duero"]) == "Victoria. Ask Hermes, ask Claude. Tempranillo, Ribera del Duero."
+    assert whisper_prompt(AgentsConfig(), ["Tempranillo"]) == "Tempranillo."
+
+
+def test_prompt_echo_of_the_wine_words_is_dropped_but_a_question_is_not() -> None:
+    from victoria_voice_assistant.voice.models import is_prompt_echo
+
+    prompt = "Victoria. Ask Hermes, ask Claude. Tempranillo, Ribera del Duero, Bodegas Vega-Sicilia."
+    assert is_prompt_echo("Tempranillo, Ribera del Duero, Bodegas Vega-Sicilia.", prompt)
+    assert is_prompt_echo("Ask Claude. Tempranillo, Ribera del Duero.", prompt)
+    assert not is_prompt_echo("Tempranillo.", prompt)
+    assert not is_prompt_echo("Do we have any Tempranillo?", prompt)
+
+
+def test_prompt_echo_is_recognised() -> None:
+    from victoria_voice_assistant.voice.models import is_prompt_echo
+
+    prompt = "Victoria. Ask Hermes, ask Claude."
+    assert is_prompt_echo("Ask Claude, ask Claude, ask Claude.", prompt)
+    assert is_prompt_echo(" Ask Claude ask Claude", prompt)
+    assert is_prompt_echo("Victoria. Ask Hermes, ask Claude.", prompt)
+    assert is_prompt_echo("Victoria. Victoria.", prompt)
+    assert not is_prompt_echo("Ask Claude.", prompt)
+    assert not is_prompt_echo("Victoria, ask Claude.", prompt)
+    assert not is_prompt_echo("Ask Claude, ask Claude what the capital of France is.", prompt)
+    assert not is_prompt_echo("Ask Claude to ask Hermes.", prompt)
+    assert not is_prompt_echo("", prompt)
+    assert not is_prompt_echo("Ask Claude, ask Claude.", None)
 
 
 def test_whisper_gets_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,3 +292,19 @@ def test_whisper_gets_the_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     seen.clear()
     asyncio.run(scenario(None))  # no agents: Pipecat's own run_stt, no prompt
     assert "initial_prompt" not in seen and seen["samples"] == 1600
+
+    # Near-silence: Whisper says its prompt back. No transcript comes out.
+    monkeypatch.setattr(
+        mlx_whisper,
+        "transcribe",
+        lambda audio, **kwargs: {"segments": [{"text": " Ask Hermes, ask Hermes, ask Hermes.", "no_speech_prob": 0.01, "compression_ratio": 1.2}]},
+    )
+    frames = asyncio.run(scenario("Victoria. Ask Hermes."))
+    assert not [f for f in frames if isinstance(f, TranscriptionFrame)]
+
+    # A prompt function is asked before each transcription, so new words reach a long-lived session.
+    words = iter(["Victoria. Tempranillo.", "Victoria. Garnacha."])
+    monkeypatch.setattr(mlx_whisper, "transcribe", fake_transcribe)
+    seen.clear()
+    asyncio.run(scenario(lambda: next(words)))
+    assert seen["initial_prompt"] == "Victoria. Tempranillo."

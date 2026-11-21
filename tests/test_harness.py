@@ -20,7 +20,7 @@ from victoria_voice_assistant.agents.spend import SpendLog
 from victoria_voice_assistant.agents.tasks import TaskEvent, TaskService
 from victoria_voice_assistant.config.loader import load_config
 from victoria_voice_assistant.config.schema import AppConfig, ModelsConfig, TimersConfig, WeatherConfig
-from victoria_voice_assistant.tools.registry import Services
+from victoria_voice_assistant.tools.registry import Services, ToolContext, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
 from victoria_voice_assistant.tools.weather import WeatherService
 
@@ -139,6 +139,31 @@ def test_ask_hermes_streams_from_its_gateway(example_config_dir: Path, stand_in)
     assert request["messages"] == [{"role": "user", "content": "plan dinners for the week"}]  # the request only
     assert "tools" not in request  # Hermes runs its own tools
     assert server.auth[0] == "Bearer test-hermes-key"
+
+
+def test_upgrade_tool_tracks_feature_work_as_a_hermes_task(example_config_dir: Path, stand_in) -> None:
+    server, port = stand_in
+
+    async def scenario():
+        config = _config(example_config_dir, port)
+        agent_runner, events = _runner(config)
+        registry = build_registry(config.tools, config.agents, agent_runner.services)
+        entry = registry.get("upgrade")
+        assert entry is not None
+        outcome = await entry.handler({"request": "add a theme picker"}, ToolContext(device="web"))
+        await _settle(agent_runner)
+        return outcome, events, agent_runner
+
+    outcome, events, agent_runner = asyncio.run(scenario())
+    task = agent_runner.tasks.get(outcome.result["task_id"])
+    assert task.agent == "hermes" and task.state == "finished"
+    assert "add a theme picker" in task.request
+    assert any(event.kind == "changed" and event.task.id == task.id for event in events)
+    request = server.requests[0]["messages"][0]["content"]
+    assert "/work/victoria-voice-assistant" in request
+    assert "feature-<short-slug>" in request
+    assert "Never push, merge, or approve" in request
+    assert "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>" in request
 
 
 def test_cancelling_hermes_closes_the_request_stream(example_config_dir: Path, stand_in) -> None:

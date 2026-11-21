@@ -1,6 +1,6 @@
-# Home Voice Assistant Architecture (Draft v2.13)
+# Home Voice Assistant Architecture (Draft v2.15)
 
-Owner: Bill · Updated: 2026-11-11 (v2.13: command history; v2.12: wake-word arbitration by loudness on equal audio; v2.11: satellites at household scale; v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
+Owner: Bill · Updated: 2026-11-12 (v2.15: saved chats in projects; v2.14: Apple Reminders; v2.13: command history; v2.12: wake-word arbitration by loudness on equal audio; v2.11: satellites at household scale; v2.10: agent handoff replies, one loaded copy per model, weather home as secrets) · Status: draft; open items in §13
 
 ## 1. Goal
 
@@ -148,6 +148,17 @@ The same information is available by voice through a built-in `tasks` tool: "Wha
 **Login:** a simple household login (or one account per person, if speaker identity is adopted later), with long-lived sessions on trusted devices. The client is not exposed to the internet.
 
 **Build:** the example client is a small TypeScript app (Vite) using Pipecat's JavaScript client SDK with its SmallWebRTC transport. The web interface is a small Python FastAPI app on Uvicorn that serves the built files and proxies to the assistant service. It can be installed as a home-screen web app (PWA) on phones.
+
+#### Saved chats: projects and contexts
+
+A typed chat in the web client is a **context**: one saved chat transcript. A **project** groups contexts (Bill, 2026-11-12). They live in SQLite (`projects`, `contexts`, `context_messages`), and nothing is deleted: archiving hides a context or project, and the client's Archived view brings it back.
+
+- **Reopening:** on connecting, the client sends its browser id (`hello`). The service reopens the context that browser last had open, or else the most recently used one; with none, it starts a new chat. So a refresh, or another device, carries on the same chat.
+- **What the model gets back:** opening a context puts its recent requests and replies (20 messages at most) back into the model's conversation. Tool calls and results aren't restored, and neither is an exchange whose request called a tool with `forget_after_s`, so an old time or weather answer is never repeated. The screen shows the whole transcript.
+- **New chat** empties the model's conversation. Its context is created with its first request (named from it, renamable), so empty chats never pile up. "General" holds chats until other projects exist.
+- **Who sees what:** the household password is the only sign-in, so everyone on the web client sees every project. Every open client hears about changes.
+- **Scope:** typed chat only. Satellites and browser voice keep their own short conversation, outside projects. A project holds only its contexts for now.
+- The command history notes the context each request was in (`history.context_id`).
 
 ### 4.2 Speech in one process: safeguards and turn detection
 
@@ -561,6 +572,35 @@ Every request to the assistant is saved, typed or spoken, from any device (Bill,
 - **Older history** is searched from the command line: `assistant history search WORDS [--since DATE] [--room ROOM]` reads all of it.
 - **Privacy:** history never leaves the house. Only the router model's tool reads it; configuration refuses it in any agent's `tools`, and agents' `share_context` doesn't include it.
 
+### Built-in calendar
+
+The `calendar` tool (Bill, 2026-11-12: "a general tool that can use mac or google calendars … it doens' tneed to e read only") works on the calendars of the Mac running the assistant, through EventKit, behind a backend protocol like Reminders:
+
+- **Which calendars:** every account added to macOS, Google included, minus `calendar.skip`. New events go to `calendar.default_calendar`, else the Mac's default.
+- **Reading:** a day or a stretch of days, the next event, a named event, its details, and free time between `free_from` and `free_until`.
+- **Writing:** adding just happens and the reply says what was added. A change or a delete asks first and runs on a yes, on the device that was asked; a repeating event asks whether it's this one or all from now on. Read-only calendars are never written.
+- **Access:** as Reminders: macOS asks once, at the Mac; until then the tool is an automatic stub. Reading needs full access, so read-only can't be enforced by macOS.
+- **Not built:** a second backend on Google's own API, for what EventKit can't do (inviting people, answering invitations, video links), and spoken alerts before events. `docs/calendar.md` has the use and setup.
+
+### Built-in reminders
+
+The `reminders` tool reaches **Apple Reminders** on the Mac running the assistant (Bill, 2026-11-11), which syncs through iCloud to the household's phones:
+
+- **How:** Apple's EventKit, in the assistant's own process through PyObjC. No other app runs, it works offline, and a call takes milliseconds.
+- **Which lists:** only those named in `tools.yaml` (`reminders.lists`), with a `default_list` for "remind me to …". Other lists in the account stay private, unless `lists: all` (Bill, 2026-11-11), which reaches every list in the signed-in account; with the assistant's own Apple Account on the Mac mini, that's the lists shared with it. A named list missing from Reminders is created when the tool loads (Bill, 2026-11-11), in "On My Mac" when the Mac has it, else the default account. Any household device may use it, like timers, so name only lists the household shares.
+- **What it does:** add (title, an optional spoken due time read in local time, an optional list), list (one list, or what's due today, overdue or this week), and mark done; with several matches it asks which. It never deletes or edits. A timed reminder gets an alarm, so Reminders alerts on the phones; the assistant doesn't announce it.
+- **Access:** macOS asks once whether the program may use Reminders, answered at the Mac. Until it's allowed, the tool is an automatic stub with the setup steps; the service asks when the tool loads and rebuilds its tools once access arrives. `assistant reminders grant` asks for a Terminal, and `assistant reminders lists` shows the account's lists.
+- **State:** Reminders holds it (`forget_after_s: 0`), so a list is always read again.
+- **One-list tools** (Bill, 2026-11-12): `service: reminders.list` ties a tool to one list (`list:`), read whole. The first is `groceries`: unchecked means needed and checked means have. Questions give the model the whole list; add/out of, got and remove answer directly. On this kind of tool, remove deletes the item.
+
+### Built-in recipes
+
+The `recipes` tool (Bill, 2026-11-12) answers "what do I need to make paella?" and "what can I make with what I have?":
+
+- **Recipes** are Markdown files in a folder (`recipes.folder`, by default next to the database), written to a template the folder carries. When nothing there is close to what was asked, it searches the web and reads the first result that publishes its recipe as schema.org data. A web recipe is saved to the folder only on a yes.
+- **What we have** is the grocery list (a `reminders.list` tool): items checked off within `recipes.have_days`, plus `recipes.staples`. The tool, not the model, works out what's missing; the model only phrases the "what can I make" suggestions, from the tool's own list.
+- **Missing ingredients** are offered to the grocery list ("Add those to groceries?").
+
 ### Built-in music
 
 Music runs through **Music Assistant**, an open-source music server, rather than calling Spotify and Plex directly:
@@ -767,6 +807,8 @@ The service is exposed to the fast model as one more built-in tool, `notificatio
 - **Music:** external Music Assistant server; `music-assistant-client` Python package in the assistant service.
 - **Timers:** asyncio scheduling with SQLite persistence.
 - **Command history:** SQLite, everything kept.
+- **Saved chats (projects, contexts):** SQLite, archived not deleted.
+- **Reminders:** Apple Reminders through EventKit (PyObjC), in process; named lists only.
 - **Agents:** A2A Python SDK.
 - **Decision engine:** `llm_choice` uses LM Studio's structured output with a JSON schema; spend log in SQLite.
 - **Web interface:** FastAPI on Uvicorn; example client built with Vite using Pipecat's JavaScript client SDK and its SmallWebRTC transport.

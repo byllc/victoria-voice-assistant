@@ -59,6 +59,11 @@ def create(config_dir: Path, database: Path, dest: Path, keep: int = KEEP, label
                 tar.add(copy, arcname=f"database/{database.name}")
             for path in _config_files(config_dir):
                 tar.add(path, arcname=f"config/{path.relative_to(config_dir).as_posix()}")
+            # The recipes folder next to the database (a folder set elsewhere in tools.yaml is the owner's to back up).
+            recipes = database.parent / "recipes"
+            if recipes.is_dir():
+                for path in sorted(recipes.glob("*.md")):
+                    tar.add(path, arcname=f"recipes/{path.name}")
         partial.rename(archive)
     for old in list_backups(dest)[keep:]:
         old.unlink(missing_ok=True)
@@ -76,7 +81,7 @@ def _safe_members(tar: tarfile.TarFile) -> list[tarfile.TarInfo]:
     members = []
     for member in tar.getmembers():
         parts = Path(member.name).parts
-        if not member.isfile() or not parts or parts[0] not in ("database", "config") or ".." in parts or member.name.startswith("/"):
+        if not member.isfile() or not parts or parts[0] not in ("database", "config", "recipes") or ".." in parts or member.name.startswith("/"):
             raise BackupError(f"unexpected entry in the archive: {member.name}")
         if parts[-1] in SECRET_NAMES:
             raise BackupError(f"the archive holds a secret file: {member.name}")
@@ -101,6 +106,12 @@ def restore(archive: Path, config_dir: Path, database: Path, dest: Path) -> Path
             for side in ("-wal", "-shm"):
                 database.with_name(database.name + side).unlink(missing_ok=True)
             staged.replace(database)
+        recipes_root = root / "recipes"
+        if recipes_root.is_dir():  # recipes written since the backup stay; the archive's replace their namesakes
+            target_dir = database.parent / "recipes"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for path in recipes_root.glob("*.md"):
+                shutil.copy2(path, target_dir / path.name)
         config_root = root / "config"
         if config_root.is_dir():
             for path in config_root.rglob("*"):

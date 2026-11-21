@@ -318,8 +318,15 @@ def describe_state(entity: HaEntity, state: dict[str, Any]) -> str:
     return f"{_cap(name)} is {value}."
 
 
+FOLLOW_WAIT_S = 2.0  # how long a device gets to show the new state after Home Assistant accepts a command
+FOLLOW_EVERY_S = 0.25
+ON_OFF_DOMAINS = {"light", "switch", "fan", "input_boolean"}  # their state is plainly "on" or "off"
+
+
 class HomeControl:
     """The `home_control` tool: action turn_on, turn_off, set or query; a target; a value for set."""
+
+    follow_wait_s = FOLLOW_WAIT_S
 
     def __init__(self, home: HomeAssistant, domains: list[str] | None = None) -> None:
         self.home = home
@@ -374,6 +381,29 @@ class HomeControl:
             sentences.append(describe_state(entity, state))
         return ToolOutcome(result={"states": states}, speak=" ".join(sentences))
 
+    async def _followed(self, entities: list[HaEntity], arrived: Callable[[HaEntity, dict[str, Any]], bool]) -> list[HaEntity]:
+        """The entities whose state shows the change within `follow_wait_s`.
+
+        Home Assistant reports an intent as done when it has sent the command, whether or not the device
+        acted (2026-11-12: "Turned on the piano light." while the light stayed off). So the state is read
+        back. A state that can't be read counts as followed: only a device seen not to change is reported.
+        """
+
+        async def one(entity: HaEntity) -> bool:
+            deadline = time.monotonic() + self.follow_wait_s
+            while True:
+                try:
+                    if arrived(entity, await self.home.state(entity.entity_id)):
+                        return True
+                except Exception:  # noqa: BLE001 - can't tell; don't call a working device broken
+                    return True
+                if time.monotonic() >= deadline:
+                    return False
+                await asyncio.sleep(FOLLOW_EVERY_S)
+
+        results = await asyncio.gather(*(one(entity) for entity in entities))
+        return [entity for entity, ok in zip(entities, results) if ok]
+
     async def _switch(self, targets: list[HaEntity], on: bool) -> ToolOutcome:
         offline = [e for e in targets if e.state == "unavailable"]
         live = [e for e in targets if e.state != "unavailable"]
@@ -390,6 +420,16 @@ class HomeControl:
         )
         if not done:
             return ToolOutcome(result={"error": "Home Assistant refused"}, speak=f"Home Assistant couldn't do that for {_the(_names(failed))}.", error=True)
+        wanted = "on" if on else "off"
+        checked = [e for e in done if e.domain in ON_OFF_DOMAINS]
+        followed = await self._followed(checked, lambda _entity, state: state.get("state") == wanted)
+        silent = [e for e in checked if e not in followed]
+        if silent:
+            logger.warning("Home Assistant accepted a command the device didn't follow", extra={"event": "ha_not_followed", "action": intent, "entities": [e.entity_id for e in silent]})
+            done = [e for e in done if e not in silent]
+            failed = failed + silent
+        if not done:
+            return ToolOutcome(result={"error": "no response", "failed": [e.entity_id for e in offline + failed]}, speak=f"{_cap(_the(_names(offline + failed)))} didn't respond.", error=True)
         if all(e.domain == "scene" for e in done):
             speak = f"Done: {_names(done)}."
         else:
@@ -416,6 +456,20 @@ class HomeControl:
         if reply is None or _failed(reply):
             return ToolOutcome(result={"error": "Home Assistant refused"}, speak="Home Assistant couldn't do that.", error=True)
         logger.info("Home control", extra={"event": "ha_control", "action": "set", "entities": [e.entity_id for e in targets]})
+
+        def arrived(target: HaEntity, state: dict[str, Any]) -> bool:
+            attributes = state.get("attributes") or {}
+            if target.domain == "climate":
+                return attributes.get("temperature") is None or abs(float(attributes["temperature"]) - level) <= 0.5
+            if level == 0:
+                return state.get("state") == "off"
+            brightness = attributes.get("brightness")  # 0-255; some lights report none
+            return state.get("state") == "on" and (brightness is None or abs(brightness * 100 / 255 - level) <= 5)
+
+        silent = [e for e in targets if e not in await self._followed(targets, arrived)]
+        if silent:
+            logger.warning("Home Assistant accepted a command the device didn't follow", extra={"event": "ha_not_followed", "action": "set", "entities": [e.entity_id for e in silent]})
+            return ToolOutcome(result={"error": "no response", "failed": [e.entity_id for e in silent]}, speak=f"{_cap(_the(_names(silent)))} didn't respond.", error=True)
         return ToolOutcome(result={"set": [e.entity_id for e in targets], "value": level}, speak=speak)
 
     async def _intent(self, name: str, arguments: dict[str, Any]) -> str | None:

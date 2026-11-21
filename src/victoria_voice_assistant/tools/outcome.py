@@ -47,3 +47,4 @@ class ToolOutcome:
     chat_title: str | None = None
     pending: PendingQuestion | None = None
     error: bool = False
+    direct: bool = False  # say ``speak`` as it is even when the tool's replies are usually the model's

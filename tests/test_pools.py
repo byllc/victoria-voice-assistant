@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -229,3 +230,39 @@ def test_optional_environment_defaults(tmp_path: Path, monkeypatch: pytest.Monke
     assert substitute_environment("${MISSING_THING:-fallback}", "x.yaml") == "fallback"
     with pytest.raises(ConfigError):
         substitute_environment("${MISSING_THING}", "x.yaml")
+
+
+# Asking what was spent -------------------------------------------------------------------------------
+
+
+def test_spend_is_said_per_agent_and_month() -> None:
+    from victoria_voice_assistant.agents.spend import spend_answer, speak_usd
+
+    now = [time.mktime((2026, 11, 12, 9, 0, 0, 0, 0, -1))]
+    log = SpendLog(None, clock=lambda: now[0])
+    assert spend_answer(log, "claude", 30, False)[1] == "Nothing spent on Claude this month."
+    assert spend_answer(log, None, None, False)[1] == "Nothing spent on agents this month."
+
+    now[0] = time.mktime((2026, 10, 20, 9, 0, 0, 0, 0, -1))
+    log.record(SpendEntry(agent="claude", model="claude-opus", input_tokens=1, output_tokens=1, cost_usd=2.0, pool="claude"))
+    now[0] = time.mktime((2026, 11, 12, 9, 0, 0, 0, 0, -1))
+    log.record(SpendEntry(agent="claude", model="claude-sonnet", input_tokens=1, output_tokens=1, cost_usd=4.25, pool="claude"))
+    log.record(SpendEntry(agent="claude", model="claude-haiku", input_tokens=1, output_tokens=1, cost_usd=0.25, pool="claude"))
+    log.record(SpendEntry(agent="gemini", model="gemini", input_tokens=1, output_tokens=1, cost_usd=0.12))
+
+    result, said = spend_answer(log, "claude", 30, False)
+    assert said == "We've spent $4.50 on Claude this month, of a $30.00 budget." and result["spent_usd"] == 4.5
+    assert spend_answer(log, "claude", 30, True)[1] == "We spent $2.00 on Claude last month."  # no budget talk for a past month
+    assert spend_answer(log, None, None, False)[1] == "We've spent $4.50 on Claude and 12 cents on Gemini this month."
+    assert spend_answer(log, "gemini", None, True)[1] == "Nothing spent on Gemini last month."
+    assert [speak_usd(value) for value in (0.001, 0.01, 0.5, 1, 1234.5)] == ["less than a cent", "1 cent", "50 cents", "$1.00", "$1,234.50"]
+
+
+def test_last_month_crosses_the_year(tmp_path: Path) -> None:
+    now = [time.mktime((2027, 1, 3, 9, 0, 0, 0, 0, -1))]
+    log = SpendLog(migrate(tmp_path / "db.sqlite3"), clock=lambda: now[0])
+    assert (log.month(), log.month(1), log.month(13)) == ("2027-01", "2026-12", "2025-12")
+    now[0] = time.mktime((2026, 12, 30, 9, 0, 0, 0, 0, -1))
+    log.record(SpendEntry(agent="claude", model="claude-sonnet", input_tokens=1, output_tokens=1, cost_usd=1.5, pool="claude"))
+    now[0] = time.mktime((2027, 1, 3, 9, 0, 0, 0, 0, -1))
+    assert log.by_agent("2026-12") == {"claude": 1.5} and log.by_agent("2027-01") == {}

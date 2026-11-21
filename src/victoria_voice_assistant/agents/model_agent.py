@@ -24,8 +24,8 @@ from pipecat.frames.frames import (
 )
 from pipecat.metrics.metrics import LLMUsageMetricsData
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from victoria_voice_assistant.chat.worker import run_worker
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -117,7 +117,7 @@ async def run_model_agent(
     done: asyncio.Future = asyncio.get_running_loop().create_future()
     collector = _Collector(done)
     pipeline = Pipeline([pair.user(), llm, collector, pair.assistant()])
-    task = PipelineTask(
+    task = PipelineWorker(
         pipeline,
         params=PipelineParams(allow_interruptions=False, enable_metrics=True, enable_usage_metrics=True),
         enable_rtvi=False,
@@ -130,7 +130,7 @@ async def run_model_agent(
             done.set_exception(AgentError(frame.error))
 
     await task.queue_frame(LLMRunFrame())
-    running = asyncio.create_task(PipelineRunner(handle_sigint=False).run(task))
+    running = asyncio.create_task(run_worker(task))
     try:
         text = await done
     finally:

@@ -23,6 +23,7 @@ import { AlertsView } from "./AlertsView";
 import { MusicPlayer } from "./MusicPlayer";
 import { useSpeaker } from "./useSpeaker";
 import { ChatView } from "./ChatView";
+import { ChatsBar } from "./ChatsBar";
 import { DocumentPanel, usePanel } from "./DocumentPanel";
 import { SatellitesView } from "./SatellitesView";
 import { TasksView } from "./TasksView";
@@ -159,7 +160,8 @@ function Main({ insecure, onSignedOut, voice }: { insecure: boolean; onSignedOut
             </TabsTrigger>
           )}
         </TabsList>
-        <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
+        <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col gap-2">
+          <ChatsBar chat={chat} busy={chat.status === "thinking"} />
           <ChatView chat={chat} voice={voice} onOpenAlerts={() => setTab("alerts")} onOpenPage={openPage} />
         </TabsContent>
         <TabsContent value="tasks" className="min-h-0 flex-1 overflow-y-auto">

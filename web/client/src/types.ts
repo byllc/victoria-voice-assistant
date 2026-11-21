@@ -76,7 +76,18 @@ export type ServerMessage =
   | ({ type: "dashboard" } & Dashboard)
   | { type: "push_config"; public_key: string | null; problem: string | null }
   | { type: "show_page"; url: string; title: string | null }
+  | { type: "projects"; projects: ProjectInfo[] }
+  | { type: "context"; context: ContextInfo; messages?: ContextMessage[] }
   | MusicMessage;
+
+/** A saved chat (a context). `id` is null for a new chat until its first message. */
+export type ContextInfo = { id: number | null; project_id: number; name: string; updated_at?: number; archived?: boolean };
+
+/** A project and its chats, newest first; archived ones are flagged, not removed. */
+export type ProjectInfo = { id: number; name: string; archived: boolean; contexts: (ContextInfo & { id: number })[] };
+
+/** One line of a saved chat's transcript. */
+export type ContextMessage = { role: "user" | "assistant"; text: string; at: number };
 
 /** From the assistant to this browser's player: music asked for here is starting, or it failed. */
 export type MusicMessage =

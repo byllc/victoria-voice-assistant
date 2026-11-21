@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clientId } from "./push";
 import { beep } from "./sound";
-import type { Dashboard, LogEntry, MusicMessage, NewLogEntry, NotificationInfo, ServerMessage, TimerInfo } from "./types";
+import type { ContextInfo, Dashboard, LogEntry, MusicMessage, NewLogEntry, NotificationInfo, ProjectInfo, ServerMessage, TimerInfo } from "./types";
 
 export type Timer = { name: string; endsAt: number; state: TimerInfo["state"] };
 export type Ringing = { names: string[]; text: string } | null;
@@ -31,6 +31,9 @@ export function useChat(onSignedOut: () => void) {
   const [music, setMusic] = useState<{ n: number; message: MusicMessage } | null>(null);
   // The latest page Victoria opened here (show_page), numbered like music.
   const [page, setPage] = useState<{ n: number; url: string; title: string | null } | null>(null);
+  // Saved chats: every project with its chats, and the one open here (projects and contexts).
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [current, setCurrent] = useState<ContextInfo | null>(null);
 
   const append = useCallback((entry: NewLogEntry): number => {
     const id = nextId++;
@@ -115,6 +118,24 @@ export function useChat(onSignedOut: () => void) {
         case "push_config":
           setPushKey(message.public_key);
           break;
+        case "projects":
+          setProjects(message.projects);
+          break;
+        case "context":
+          setCurrent(message.context);
+          // With its messages: a chat was opened (or a new one started), so its transcript replaces the log.
+          if (message.messages) {
+            pendingReply.current = null;
+            voiceReply.current = null;
+            setLog(
+              message.messages.map((item) =>
+                item.role === "user"
+                  ? ({ id: nextId++, kind: "you", text: item.text } as LogEntry)
+                  : ({ id: nextId++, kind: "victoria", text: item.text } as LogEntry),
+              ),
+            );
+          }
+          break;
         case "show_page":
           setPage((current) => ({ n: (current?.n ?? 0) + 1, url: message.url, title: message.title }));
           break;
@@ -185,6 +206,18 @@ export function useChat(onSignedOut: () => void) {
 
   const clearLog = useCallback(() => setLog([]), []);
 
+  // Saved chats (the server answers with "context" and "projects").
+  const openContext = useCallback((id: number) => send({ type: "open_context", id }), [send]);
+  const newChat = useCallback(
+    (projectId?: number) => send(projectId === undefined ? { type: "new_chat" } : { type: "new_chat", project_id: projectId }),
+    [send],
+  );
+  const renameContext = useCallback((id: number, name: string) => send({ type: "rename_context", id, name }), [send]);
+  const archiveContext = useCallback((id: number, archived = true) => send({ type: "archive_context", id, archived }), [send]);
+  const newProject = useCallback((name: string) => send({ type: "new_project", name }), [send]);
+  const renameProject = useCallback((id: number, name: string) => send({ type: "rename_project", id, name }), [send]);
+  const archiveProject = useCallback((id: number, archived = true) => send({ type: "archive_project", id, archived }), [send]);
+
   return {
     status,
     log,
@@ -202,6 +235,15 @@ export function useChat(onSignedOut: () => void) {
     append,
     clearLog,
     stopRinging,
+    projects,
+    current,
+    openContext,
+    newChat,
+    renameContext,
+    archiveContext,
+    newProject,
+    renameProject,
+    archiveProject,
     handleServerMessage,
   };
 }

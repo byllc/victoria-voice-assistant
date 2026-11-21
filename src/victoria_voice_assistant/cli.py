@@ -135,6 +135,26 @@ def _build_parser() -> argparse.ArgumentParser:
     daily = commands.add_parser("daily", help="the daily job: a backup, then log rotation (run by launchd at 03:30)")
     daily.add_argument("--config-dir", help="configuration directory (default: config/)")
 
+    reminders = commands.add_parser("reminders", help="Apple Reminders access and lists (docs/reminders.md)")
+    reminders_subcommands = reminders.add_subparsers(dest="reminders_command", required=True)
+    reminders_subcommands.add_parser("grant", help="ask macOS for Reminders access (answer the prompt at the Mac)")
+    reminders_subcommands.add_parser("lists", help="the account's lists, and which ones the tool may use")
+    calendar = commands.add_parser("calendar", help="the Mac's calendars: access and which ones the tool reaches (docs/calendar.md)")
+    calendar_subcommands = calendar.add_subparsers(dest="calendar_command", required=True)
+    calendar_subcommands.add_parser("grant", help="ask macOS for Calendar access (answer the prompt at the Mac)")
+    calendar_subcommands.add_parser("calendars", help="the calendars on this Mac, and which ones the tool reaches")
+    calendar_new = calendar_subcommands.add_parser("new", help="create a calendar on this Mac (for example a test calendar)")
+    calendar_new.add_argument("name")
+    cellar = commands.add_parser("cellartracker", help="our CellarTracker wine list and its MCP server")
+    cellar_subcommands = cellar.add_subparsers(dest="cellartracker_command", required=True)
+    cellar_mcp = cellar_subcommands.add_parser("mcp", help="run the CellarTracker MCP server (stdio unless --http)")
+    cellar_mcp.add_argument("--http", action="store_true", help="streamable HTTP instead of stdio")
+    cellar_mcp.add_argument("--port", type=int, default=8931, help="HTTP port on 127.0.0.1 (default 8931)")
+    cellar_subcommands.add_parser("update", help="fetch the wine list from CellarTracker now")
+    cellar_subcommands.add_parser("status", help="when the wine list was last fetched (fetches nothing)")
+    recipes = commands.add_parser("recipes", help="the recipes folder (docs/recipes.md)")
+    recipes_subcommands = recipes.add_subparsers(dest="recipes_command", required=True)
+    recipes_subcommands.add_parser("check", help="list the recipes, and the files that don't fit the template")
     history = commands.add_parser("history", help="the command history (every request; docs/history.md)")
     history_subcommands = history.add_subparsers(dest="history_command", required=True)
     history_subcommands.add_parser("stats", help="how many requests are saved and how much space they take")
@@ -319,6 +339,127 @@ def _satellites_command(args: argparse.Namespace) -> int:
     return status
 
 
+def _cellartracker_command(args: argparse.Namespace) -> int:
+    from datetime import datetime
+
+    from victoria_voice_assistant.cellartracker import server
+    from victoria_voice_assistant.cellartracker.export import CellarTrackerError
+
+    if args.cellartracker_command == "mcp":
+        server.run(http=args.http, port=args.port)
+        return 0
+    export = server.default_export()
+    if args.cellartracker_command == "update":
+        try:
+            table = asyncio.run(export.table("List", force=True))
+        except CellarTrackerError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        if table.problem:
+            print(f"{table.problem} Kept the saved list from {table.age_s() / 3600:.1f} hours ago.", file=sys.stderr)
+            return 1
+        print(f"Wine list updated: {len(table.rows)} rows, {server.count_bottles(table.rows)} bottles.")
+        return 0
+    status = export.status().get("List")
+    if status is None:
+        print(f"No wine list saved yet (cache: {export.cache_dir}).")
+        return 0
+    when = datetime.fromtimestamp(status["fetched_at"]).strftime("%Y-%m-%d %H:%M")
+    state = "fresh" if status["fresh"] else "older than 24 hours: the next request fetches it"
+    print(f"Wine list: {status['rows']} rows, fetched {when} ({status['age_s'] / 3600:.1f} hours ago, {state}).")
+    return 0
+
+
+def _reminders_command(args: argparse.Namespace) -> int:
+    if sys.platform != "darwin":
+        print("Reminders needs macOS.", file=sys.stderr)
+        return 1
+    from victoria_voice_assistant.config.loader import load_config
+    from victoria_voice_assistant.tools.reminders import EventKitBackend
+
+    backend = EventKitBackend()
+    access = backend.access()
+    if args.reminders_command == "grant":
+        if access == "not_determined":
+            print("Asking macOS for Reminders access: answer the prompt at the Mac.")
+            access = "granted" if backend.request_access() else backend.access()
+        print(f"Reminders access for this program: {access}")
+        print(
+            "The service asks for itself when its `reminders` tool loads (it runs as its own program under launchd); "
+            "answer that prompt too, or allow it in System Settings > Privacy & Security > Reminders."
+        )
+        return 0 if access == "granted" else 1
+    if access != "granted":
+        print(f"Reminders access for this program: {access} (run `uv run assistant reminders grant`)", file=sys.stderr)
+        return 1
+    settings = load_config(_config_dir(None)).tools.reminders
+    allowed = set(settings.lists) if settings else set()
+    names = backend.list_names()
+    for name in names:
+        print(f"{'*' if name in allowed else ' '} {name}")
+    missing = sorted(allowed - set(names))
+    print("* the tool may use it" + (f"; named in tools.yaml but not in Reminders: {', '.join(missing)}" if missing else ""))
+    return 0
+
+
+def _calendar_command(args: argparse.Namespace) -> int:
+    if sys.platform != "darwin":
+        print("Calendar needs macOS.", file=sys.stderr)
+        return 1
+    from victoria_voice_assistant.config.loader import load_config
+    from victoria_voice_assistant.tools.calendars import EventKitBackend
+
+    backend = EventKitBackend()
+    access = backend.access()
+    if args.calendar_command == "grant":
+        if access == "not_determined":
+            print("Asking macOS for Calendar access: answer the prompt at the Mac.")
+            access = "granted" if backend.request_access() else backend.access()
+        print(f"Calendar access for this program: {access}")
+        print(
+            "The service asks for itself when its `calendar` tool loads (it runs as its own program under launchd); "
+            "answer that prompt too, or allow full access in System Settings > Privacy & Security > Calendars."
+        )
+        return 0 if access == "granted" else 1
+    if access != "granted":
+        print(f"Calendar access for this program: {access} (run `uv run assistant calendar grant`)", file=sys.stderr)
+        return 1
+    if args.calendar_command == "new":
+        if any(info.name.casefold() == args.name.casefold() for info in backend.calendars()):
+            print(f"There is already a calendar called {args.name}.")
+            return 0
+        print(f"Created {args.name} {backend.create_calendar(args.name)}.")
+        return 0
+    settings = load_config(_config_dir(None)).tools.calendar
+    skipped = {name.casefold() for name in settings.skip}
+    default = settings.default_calendar or backend.default_calendar()
+    for info in sorted(backend.calendars(), key=lambda info: (info.account.lower(), info.name.lower())):
+        mark = " " if info.name.casefold() in skipped or info.title.casefold() in skipped else "*"
+        notes = [info.account] + ([] if info.writable else ["read-only"]) + (["new events go here"] if info.name == default else [])
+        print(f"{mark} {info.name}  ({', '.join(note for note in notes if note)})")
+    print("* the tool reaches it (the rest are under `calendar.skip` in tools.yaml)")
+    return 0
+
+
+def _recipes_command(_args: argparse.Namespace) -> int:
+    from victoria_voice_assistant.config.loader import load_config
+    from victoria_voice_assistant.storage.db import default_database_path
+    from victoria_voice_assistant.tools.recipes import RecipeBook
+
+    settings = load_config(_config_dir(None)).tools.recipes
+    folder = Path(settings.folder).expanduser() if settings.folder else default_database_path().parent / "recipes"
+    book = RecipeBook(folder)
+    book.ensure()
+    recipes = book.load()
+    print(f"Recipes folder: {folder}")
+    for recipe in recipes:
+        print(f"  {recipe.title} ({len(recipe.ingredients)} ingredients, {len(recipe.steps)} steps)")
+    for name, reason in book.problems:
+        print(f"  SKIPPED {name}: {reason}")
+    print(f"{len(recipes)} recipe{'s' if len(recipes) != 1 else ''}; template: {folder / '_template.md'}")
+    return 1 if book.problems else 0
+
+
 def _history_command(args: argparse.Namespace) -> int:
     from datetime import datetime
 
@@ -483,6 +624,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "history":
         return _history_command(args)
+
+    if args.command == "recipes":
+        return _recipes_command(args)
+
+    if args.command == "reminders":
+        return _reminders_command(args)
+
+    if args.command == "cellartracker":
+        return _cellartracker_command(args)
+
+    if args.command == "calendar":
+        return _calendar_command(args)
 
     if args.command == "web":
         if args.config_dir:

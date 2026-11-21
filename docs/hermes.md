@@ -60,6 +60,19 @@ Hermes needs a model with at least 64K tokens of context. With LM Studio on the 
 
 The config reloads on save. "Ask Hermes ..." then goes to that gateway. Without a key the assistant says "Hermes isn't set up yet." and puts the setup step in chat; if the gateway is down it says "I can't reach Hermes right now."
 
+## The `upgrade` tool
+
+`upgrade` asks the configured Hermes harness to implement a requested Victoria feature. It uses the same task dashboard, cancellation, and delayed notification flow as other agent tasks.
+
+For code work, give Hermes a dedicated, clean clone of this repository at `/work/victoria-voice-assistant` inside its existing work folder. The test container mounts all of `~/Services/hermes/work` at `/work`, so keep that host folder limited to this clone and keep the clone separate from the assistant's live checkout. Do not copy or mount `config/.env`, local `config/tools.yaml`, `config/models.yaml`, `config/agents.yaml`, the database, logs, or other runtime data into Hermes's workspace. Tracked examples such as `config/examples/` are part of the repository and may be changed when needed.
+
+The tool instructs Hermes to verify the checkout and clean `main` branch before editing, create a `feature-<short-slug>` branch, commit completed changes there, and leave the branch for Bill to review. Hermes must stop without editing if the checkout is missing, dirty, or contains local secrets or runtime data. It must not push, merge, or approve changes. Bill reviews and merges the branch manually. To bring a reviewed branch from the isolated clone into the main checkout:
+
+```sh
+git fetch "$HOME/Services/hermes/work/victoria-voice-assistant" "feature-<slug>:feature-<slug>"
+git switch feature-<slug>
+```
+
 ## Security
 
 Voice is an unauthenticated channel: anyone in the house can say "ask Hermes ...". Hermes has file and shell tools, so the protection comes from where Hermes runs, not from the assistant:
@@ -67,3 +80,4 @@ Voice is an unauthenticated channel: anyone in the house can say "ask Hermes ...
 - Run Hermes isolated: in a container or VM with only its own work folder mounted, or under its own macOS user. It must not be able to read the assistant's `config/` (keys), the assistant's data folder, or personal files. This is a Stage 7 done criterion, checked against whichever installation is connected.
 - Keep the gateway off the LAN: bind it to `127.0.0.1`, or publish a container's port to `127.0.0.1` only. If Hermes runs on another machine, reach it over a private link (for example SSH port forwarding or a VPN) rather than an open port; the bearer key is the only check.
 - Give Hermes only the tools it needs (`hermes tools`), and turn off web tools if it shouldn't browse.
+- **LM Studio is open to the LAN, on purpose** (Bill, 2026-11-12: "leave LM Studio on the lan it wil lbe access from other tools and this is a home network"). Its server listens on every interface (port 1234), which is also how the Hermes container reaches it. Anything on the home network can reach it; its API key is the only check. Hermes shares the assistant's LM Studio key on the dev machine: it is a dev key. Keys are bound to config and the Keychain (`${NAME}` in the YAML, `assistant secrets set`), and the Mac mini's keys are set when it is deployed (Bill, 2026-11-12).

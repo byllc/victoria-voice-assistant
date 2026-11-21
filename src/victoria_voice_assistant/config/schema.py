@@ -201,6 +201,8 @@ class ToolConfig(Schema):
     then: dict[str, str | bool] | None = None
     mcp_server: str | None = None
     http: HttpToolConfig | None = None
+    # `service: reminders.list`: the one Reminders list this tool works on (e.g. groceries); `list:` in tools.yaml.
+    list_name: str | None = Field(default=None, alias="list")
     # Set by the loader when the entry failed validation; the registry turns it into an automatic stub.
     broken: str | None = None
 
@@ -241,6 +243,39 @@ class HistoryConfig(Schema):
     """Command history: every request is kept in the database; the `history` tool looks back `search_days`."""
 
     search_days: int = Field(default=7, ge=1)
+
+
+class RemindersConfig(Schema):
+    """Apple Reminders (the `reminders` tool): only these lists are reached, or `all` of the signed-in account's."""
+
+    lists: list[str] | Literal["all"] = Field(min_length=1)  # `all`: every list (Bill, 2026-11-11)
+    default_list: str | None = None  # where "remind me to ..." goes; else the first list, or with `all` the account's default
+
+    @model_validator(mode="after")
+    def default_is_named(self) -> "RemindersConfig":
+        if self.default_list is not None and self.lists != "all" and self.default_list not in self.lists:
+            raise ValueError(f"default_list {self.default_list!r} isn't one of `lists`")
+        return self
+
+
+class CalendarConfig(Schema):
+    """The `calendar` tool: the Mac's calendars, read and written (feature 20261112-184425)."""
+
+    backend: Literal["mac"] = "mac"  # EventKit: every account added to macOS
+    skip: list[str] = Field(default_factory=list)  # calendars never read or written (holidays, birthdays)
+    default_calendar: str | None = None  # where new events go; the Mac's default calendar when not set
+    default_minutes: int = Field(default=60, gt=0)  # how long a new event is when no length is said
+    free_from: int = Field(default=8, ge=0, le=23)  # "am I free?" looks between these hours of the day
+    free_until: int = Field(default=22, ge=1, le=24)
+
+
+class RecipesConfig(Schema):
+    """The `recipes` tool: a folder of recipes compared with the grocery list (feature 20261112-025716)."""
+
+    folder: str | None = None  # where the recipe files are; `recipes/` next to the database when not set
+    groceries_tool: str = "groceries"  # the `reminders.list` tool whose list says what we have
+    have_days: int = Field(default=14, ge=1)  # checked off the grocery list this recently counts as on hand
+    staples: list[str] = Field(default_factory=lambda: ["salt", "pepper", "water", "oil", "olive oil", "butter", "sugar", "flour"])
 
 
 class TimersConfig(Schema):
@@ -334,6 +369,9 @@ class SatelliteConfig(Schema):
     # When several satellites hear the same words, added to this one's score (how loud it hears the
     # speech, dB): for a microphone or room that reads loud or quiet, so the nearest satellite answers (architecture §4, wake-word arbitration).
     arbitration_offset_db: float = 0.0
+    # Send the reply's address at its first audio and serve it while the rest is synthesized, so playback
+    # starts after the first sentence, not after the whole reply. Off until it has been heard on a satellite.
+    stream_replies: bool = False
     # For fault-finding only: a folder that gets each turn's microphone audio (after `gain`) as a WAV file,
     # named by satellite, time and how the turn ended. Off unless set; it keeps recordings of what was said.
     record_dir: str | None = None
@@ -383,6 +421,9 @@ class ToolsConfig(Schema):
     weather: WeatherConfig | None = None
     timers: TimersConfig | None = None
     history: HistoryConfig = Field(default_factory=HistoryConfig)
+    reminders: RemindersConfig | None = None
+    calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    recipes: RecipesConfig = Field(default_factory=RecipesConfig)
     music: MusicConfig | None = None
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)

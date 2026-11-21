@@ -13,8 +13,8 @@ from pipecat.frames.frames import (
     OutputTransportMessageUrgentFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from victoria_voice_assistant.chat.worker import run_worker
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
@@ -24,6 +24,7 @@ from victoria_voice_assistant.chat.prompt import system_prompt
 from victoria_voice_assistant.chat.serializer import ChatJsonSerializer, ChatProtocolProcessor
 from victoria_voice_assistant.chat.timing import RequestTimer, TimingEndProcessor, TimingStartProcessor
 from victoria_voice_assistant.chat.tools import SessionState, ToolRuntime
+from victoria_voice_assistant.chat.contexts import ChatContexts
 from victoria_voice_assistant.chat.turns import HistoryTap, TurnPreprocessor, TurnTracker
 from victoria_voice_assistant.history import HistoryRecorder
 from victoria_voice_assistant.rooms import room_of
@@ -59,9 +60,12 @@ class ChatSession:
         self.config = config
         if services.history is not None:
             self.runtime.history = HistoryRecorder(
-                services.history, device=lambda: state.device, room=lambda device: room_of(self.config.tools, device)
+                services.history,
+                device=lambda: state.device,
+                room=lambda device: room_of(self.config.tools, device),
+                context=lambda: self.runtime.transcript.context_id if self.runtime.transcript is not None else None,
             )
-        self.task: PipelineTask | None = None
+        self.task: PipelineWorker | None = None
         self._tasks: set[asyncio.Task] = set()
 
     async def send(self, message: dict[str, Any]) -> None:
@@ -193,6 +197,15 @@ async def run_chat_session(
         context=context,
     )
     runtime.on_settled = preprocessor.release_next
+    if services.projects is not None:
+        # The dashboard's chats are saved and reopened (projects and contexts); voice and satellites aren't.
+        async def broadcast_projects() -> None:
+            listing = {"type": "projects", "projects": services.projects.listing()}
+            for other in list(hub.sessions) if hub is not None else [session]:
+                await other.send(listing)
+
+        contexts = ChatContexts(services.projects, state, runtime, context, session.send, broadcast=broadcast_projects)
+        preprocessor.on_projects = contexts.handle
     pipeline = Pipeline(
         [
             transport.input(),
@@ -211,7 +224,7 @@ async def run_chat_session(
     # RTVI messages would reach the chat client through the urgent transport-message path.
     # No idle timeout: Pipecat counts only voice activity frames, which text chat never produces,
     # so its default would close every chat 5 minutes after it opened. The websocket ends the session.
-    task = PipelineTask(
+    task = PipelineWorker(
         pipeline,
         params=PipelineParams(allow_interruptions=False),
         enable_rtvi=False,
@@ -263,6 +276,8 @@ async def run_chat_session(
         if event.kind != "say" or event.task.device != state.device or not event.text:
             return
         text = event.full or event.text  # chat shows the whole reply; voice speaks the short one
+        if runtime.transcript is not None:
+            runtime.transcript.reply(text)
         await task.queue_frames(
             [
                 LLMMessagesAppendFrame(messages=[{"role": "assistant", "content": text}], run_llm=False),
@@ -304,7 +319,7 @@ async def run_chat_session(
     if hub is not None:
         hub.sessions.add(session)
     try:
-        await PipelineRunner(handle_sigint=False).run(task)
+        await run_worker(task)
     finally:
         for handle in dashboard_due:
             handle.cancel()

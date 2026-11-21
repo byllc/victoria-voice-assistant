@@ -42,12 +42,17 @@ class ConfigManager:
             "Configuration reloaded",
             extra={"event": "config_reloaded", "config_revision": self.revision},
         )
+        self.notify()
+        return True
+
+    def notify(self) -> None:
+        """Tell every listener to rebuild from the current configuration (a reload, or something the
+        tools depend on changed, like Reminders access being granted)."""
         for listener in self._listeners:
             try:
-                listener(candidate)
+                listener(self.current)
             except Exception:
                 logger.exception("Config reload listener failed", extra={"event": "config_listener_failed"})
-        return True
 
     async def watch(self) -> None:
         config_files = {"models.yaml", "tools.yaml", "agents.yaml"}

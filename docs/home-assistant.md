@@ -27,6 +27,7 @@
 - **Set**: "set the piano light to 40 percent" (lights), "set the hall thermostat to 70" (climate).
 - **Check**: "is the bedroom light on?" reads the state directly: "The bedroom light is off."
 - **Locks**: "lock the front door" asks "Lock the Front Door Lock?"; only a "yes" to that question locks it (a one-time code the model never sees, valid for 30 seconds).
+- **Checked, not assumed:** after an on, off or set, the device's state is read back for up to two seconds. Home Assistant reports a command as done once it is sent, whether or not the device acted; if the state hasn't changed, the reply is "The piano light didn't respond." (and `ha_not_followed` in the log). A device already in the state asked for counts as done. Scenes aren't checked: they have no on or off to read.
 - Replies are templates, spoken with no second model call. Devices that are offline are reported ("The Upper Porch Light isn't responding.") rather than tried.
 
 ## How targets are matched

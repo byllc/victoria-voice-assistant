@@ -51,6 +51,7 @@ satellites:
 #   room: office    # its room in `rooms`; default: the room with its own name
 #   arbitration_offset_db: 0   # added to its score when several hear the same words
 #   pending_color: "#FFA000"   # the LED ring while notifications are unread; null leaves the ring alone
+#   stream_replies: false      # true: start playing a reply after its first sentence (see "Streamed replies")
 # satellite_audio_port: 8767   # one setting for all satellites: where they fetch replies
 # satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words
 ```
@@ -79,7 +80,30 @@ grep satellite_connected ~/Library/Logs/"Victoria Voice Assistant"/assistant-err
 
 ### 5. Home Assistant
 
-If the satellite was in Home Assistant before, Home Assistant's ESPHome entry for it can no longer connect (it doesn't have the new key), and its entities show as unavailable. Delete it: **Settings > Devices & services > ESPHome**, the device, **⋮ > Delete**. Whether and when to do this is Bill's call. While Home Assistant isn't connected, the device's sensors, LED ring and buttons aren't available to Home Assistant automations.
+Only the assistant connects to a satellite. Home Assistant's ESPHome entry for it, if it had one, no longer has the right key. This is what Home Assistant does then, read from its states on 2026-11-12 (Home Assistant 2026.10.4, the office Satellite1, ten days after the key changed). *Draft for Bill's acceptance.*
+
+**What stops working in Home Assistant**
+
+- Every entity the device itself provided is `unavailable`, and has been since the key changed (2026-11-02): 31 of them. They are the Assist satellite, the LED ring light, the four buttons and the action-button event, the microphone mute and wake sound switches, the Snapcast switch, the speaker output and wake word selects, the temperature, humidity, light, Wi-Fi and power sensors, the XMOS firmware sensor and flash button, the restart button, and the device's own media player and remote timer.
+- So Home Assistant automations can't read the satellite's sensors or buttons, set its LED ring, or speak through it with Assist. Home Assistant's own voice assistant doesn't run on it.
+- Home Assistant keeps the device and its entities listed. Three settings that Home Assistant stores itself still show values (the Assist pipeline "Victoria", "preferred", and finished-speaking detection "relaxed"); they have no effect while it can't connect.
+
+**What still works**
+
+- `device_tracker.satellite1_34bf90_34bf90` shows `home`: it comes from the network, not from the device's API, so Home Assistant still knows the satellite is on the Wi-Fi.
+- `media_player.bill_s_office_satelite` shows `idle` and is not from the ESPHome entry. It hasn't been checked which integration provides it (Music Assistant is the likely one), or whether playing to it works.
+- Everything the assistant does with the satellite: voice, replies, timers, announcements, the LED ring for notifications.
+
+**Not checked**
+
+- Whether Home Assistant shows a repair or "reconfigure" notice for the ESPHome entry, and what its log says each time it retries. Those need Home Assistant's own pages.
+- The second satellite (the Waveshare test device) has no entities in Home Assistant.
+
+**Choices**
+
+- Leave the entry (as now): 31 dead entities stay listed, and Home Assistant keeps retrying.
+- Delete it: **Settings > Devices & services > ESPHome**, the device, **⋮ > Delete**. The dead entities go. Nothing the assistant does depends on the entry. Whether and when is Bill's call.
+- Giving Home Assistant the new key would bring the entities back, but it goes against the decision of 2026-11-01 that the assistant alone connects, and it hasn't been tried whether the device serves voice to one client while another is connected.
 
 ## Several satellites in earshot
 
@@ -113,6 +137,16 @@ The Mac mini runs the assistant in the end; the satellites don't change.
 4. **One assistant at a time.** A satellite sends its voice to one client. Before starting the Mac mini's assistant, remove `satellites:` from this Mac's configuration, or stop its assistant, so the two don't compete.
 5. **Firewall.** If the macOS firewall is on, allow incoming connections for the assistant's Python. Otherwise satellites can't fetch replies, and they stay silent. It's off on the M2.
 6. Restart the assistant and check the log (step 4 above).
+
+## Streamed replies
+
+By default a reply is synthesized whole, then the satellite is given its address, so a long reply starts late. With `stream_replies: true` on a satellite, it is given the address at the reply's first audio and the audio server sends the FLAC as it is synthesized: the first sentence plays while the rest is made.
+
+- It is off by default: it has been tested against decoders on the Mac (`ffmpeg`, `flac`), **not yet heard on a satellite**. Turn it on for one satellite, ask something with a long answer, and listen for gaps or a reply cut short.
+- Announcements, notifications and timers are still sent whole.
+- The device learns whether to listen again (a question is open) when the stream starts. A question raised by a tool after the model has already begun speaking is missed, and its answer needs the wake word.
+- Saying the wake word while a streamed reply plays ends that stream.
+- The log has `satellite_reply_stream` when the address is sent and `satellite_reply` with `kind: streamed` when the reply has all been spoken.
 
 ## Using it
 

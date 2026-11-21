@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -29,7 +30,7 @@ from victoria_voice_assistant.config.loader import ConfigError, load_config
 from victoria_voice_assistant.config.schema import AgentsConfig, TimersConfig, ToolsConfig, WeatherConfig
 from victoria_voice_assistant.storage.db import migrate
 from victoria_voice_assistant.tools.duration import parse_duration, speak_duration
-from victoria_voice_assistant.tools.outcome import PendingQuestion
+from victoria_voice_assistant.tools.outcome import PendingQuestion, ToolOutcome
 from victoria_voice_assistant.tools.registry import Services, ToolContext, build_registry, format_template
 from victoria_voice_assistant.tools.testing import (
     CaseResult,
@@ -94,6 +95,21 @@ def test_speak_duration() -> None:
 
 
 # Timers ------------------------------------------------------------------------
+
+
+def test_unnamed_timer_reply_does_not_repeat_its_length(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        timers = TimerService(TimersConfig(), migrate(tmp_path / "db.sqlite3"))
+        first = await timers.handle("web", {"action": "start", "duration": "1 minute"})
+        assert first.speak == "Timer set for 1 minute."
+        # Named after its own length by the model: still unnamed.
+        second = await timers.handle("web", {"action": "start", "name": "1-minute timer", "duration": "1 minute"})
+        assert second.speak == "Second timer set for 1 minute."
+        third = await timers.handle("web", {"action": "start", "name": "one minute", "duration": "60 seconds"})
+        assert third.speak == "Third timer set for 1 minute."
+        assert sorted(t.name for t in timers.timers("web")) == ["1-minute", "1-minute 2", "1-minute 3"]
+
+    asyncio.run(scenario())
 
 
 def test_timers_named_start_duplicate_cancel_add_and_status(tmp_path: Path) -> None:
@@ -312,6 +328,103 @@ def test_python_tool_runs_handler() -> None:
     )
     outcome = run(registry.get("clock").handler({}, ToolContext()))  # type: ignore[union-attr]
     assert outcome.speak is not None and outcome.speak.startswith("It's ")
+
+
+def test_upgrade_tool_delegates_to_hermes_on_an_isolated_branch() -> None:
+    class FakeAgents:
+        def __init__(self) -> None:
+            self.call: tuple[str, str, str] | None = None
+
+        def find(self, name: str):
+            return SimpleNamespace(kind="harness") if name == "hermes" else None
+
+        async def ask(self, agent: str, request: str, device: str) -> ToolOutcome:
+            self.call = (agent, request, device)
+            return ToolOutcome(result={"task_id": "task-1"}, speak="Hermes is working on that for you.")
+
+    tools = ToolsConfig.model_validate(
+        {
+            "tools": [
+                {
+                    "name": "upgrade",
+                    "description": "Add a feature to Victoria.",
+                    "kind": "builtin",
+                    "service": "upgrade",
+                    "params": {"request": {"type": "string", "required": True}},
+                }
+            ]
+        }
+    )
+    agents = AgentsConfig.model_validate({"agents": [{"name": "hermes", "kind": "harness", "model": "hermes"}]})
+    services = _services()
+    fake_agents = FakeAgents()
+    services.agents = fake_agents  # type: ignore[assignment]
+    registry = build_registry(tools, agents, services)
+    entry = registry.get("upgrade")
+    assert entry is not None and entry.status == "ready"
+
+    outcome = run(entry.handler({"request": "add a theme picker"}, ToolContext(device="office")))
+
+    assert outcome.speak == "Hermes is working on that for you."
+    assert fake_agents.call is not None
+    agent, request, device = fake_agents.call
+    assert agent == "hermes" and device == "office"
+    assert "add a theme picker" in request
+    assert "/work/victoria-voice-assistant" in request
+    assert "feature-<short-slug>" in request
+    assert "Never push, merge, or approve" in request
+    assert "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>" in request
+    assert "clean `main` branch" in request
+    assert "`config/.env`" in request
+    assert "`config/examples/` are allowed" in request
+
+    empty = run(entry.handler({"request": "  "}, ToolContext(device="office")))
+    assert empty.error and empty.speak == "Tell me what feature to add."
+
+
+def test_upgrade_tool_is_a_stub_without_a_hermes_harness() -> None:
+    tools = ToolsConfig.model_validate(
+        {
+            "tools": [
+                {
+                    "name": "upgrade",
+                    "description": "Add a feature to Victoria.",
+                    "kind": "builtin",
+                    "service": "upgrade",
+                    "params": {"request": {"type": "string", "required": True}},
+                    "setup": "Configure Hermes.",
+                }
+            ]
+        }
+    )
+    registry = build_registry(tools, AGENTS, _services())
+    entry = registry.get("upgrade")
+    assert entry is not None and entry.status == "auto_stub"
+    assert entry.reason == "configure `hermes` as a `harness` agent in agents.yaml"
+
+
+def test_upgrade_tool_reports_missing_agent_runner() -> None:
+    tools = ToolsConfig.model_validate(
+        {
+            "tools": [
+                {
+                    "name": "upgrade",
+                    "description": "Add a feature to Victoria.",
+                    "kind": "builtin",
+                    "service": "upgrade",
+                }
+            ]
+        }
+    )
+    agents = AgentsConfig.model_validate({"agents": [{"name": "hermes", "kind": "harness", "model": "hermes"}]})
+    registry = build_registry(tools, agents, _services())
+    entry = registry.get("upgrade")
+    assert entry is not None and entry.status == "ready"
+
+    outcome = run(entry.handler({"request": "add a theme picker"}, ToolContext()))
+
+    assert outcome.error and outcome.speak == "The upgrade agent isn't set up yet."
+    assert "/work/victoria-voice-assistant" in (outcome.chat or "")
 
 
 def test_http_tool_fills_arguments_and_returns_json() -> None:
@@ -652,17 +765,17 @@ def test_format_report_summary() -> None:
 def test_tools_status_lists_stubs_and_reasons(example_config_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = example_config_dir / "tools.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    data["tools"].append({"name": "groceries", "description": "list", "kind": "python", "service": "nope:add"})
+    data["tools"].append({"name": "pantry", "description": "list", "kind": "python", "service": "nope:add"})
     data["tools"].append({"name": "garage", "description": "open the garage", "kind": "stub"})
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
     assert main(["tools", "status", "--config-dir", str(example_config_dir)]) == 0
     status = capsys.readouterr().out
     assert "garage" in status and "planned (kind: stub)" in status
-    assert "groceries" in status and "auto_stub" in status and "handler `nope:add` not found" in status
+    assert "pantry" in status and "auto_stub" in status and "handler `nope:add` not found" in status
 
     assert main(["config", "check", "--config-dir", str(example_config_dir)]) == 0
-    assert "Warning: tool 'groceries' is an automatic stub" in capsys.readouterr().out
+    assert "Warning: tool 'pantry' is an automatic stub" in capsys.readouterr().out
 
 
 def test_status_output_counts() -> None:

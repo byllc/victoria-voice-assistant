@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 import json
@@ -73,6 +74,12 @@ class Services:
     announcer: Any = None  # says a message on satellites in several rooms (the satellite manager)
     screens: Any = None  # the open chat and voice sessions (the ChatHub), for `show_page`
     history: Any = None  # the command history (HistoryStore), for the `history` tool and saving requests
+    projects: Any = None  # the dashboard's projects and chat contexts (ProjectStore)
+    recipes: Any = None  # the recipes folder and what was last looked up (RecipesService); set by the app
+    calendar: Any = None  # the Mac's calendars (CalendarService), for the `calendar` tool; set by the app
+    reminders: Any = None  # Apple Reminders (RemindersService), for the `reminders` tool; set by the app
+    cellar: Any = None  # the CellarTracker export and its saved copy (CellarTrackerExport), for the `wine` tool
+    wine_words: Any = None  # the cellar's words for Whisper's prompt (tools.wine.PromptWords); set by the app
 
 
 @dataclass
@@ -287,8 +294,9 @@ def builtin_entries(agents: AgentsConfig, services: Services | None = None) -> l
             ToolEntry(
                 name="tasks",
                 description=(
-                    "The agents' tasks: list what's running, check whether one is done, or cancel one "
-                    "(for example 'what's helper working on', 'is the meal plan done', 'cancel the research task')."
+                    "The agents' background tasks: list what's running, check whether one is done, or cancel one "
+                    "(for example 'what's helper working on', 'is the meal plan done', 'cancel the research task'). "
+                    "Only work an agent is doing; not calendar events or timers."
                 ),
                 kind="builtin",
                 status="ready",
@@ -373,7 +381,7 @@ def _stub_handler(tool: ToolConfig, reason: str | None, builtins: list[ToolEntry
     return handler
 
 
-def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -> ToolHandler:
+def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, agents: AgentsConfig, services: Services) -> ToolHandler:
     service = tool.service
     if service == "timers":
 
@@ -446,6 +454,135 @@ def _builtin_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -
             return await services.history.handle(arguments, exclude=ctx.history_id)
 
         return history_handler
+    if service == "spend":
+
+        async def spend_handler(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            from victoria_voice_assistant.agents.spend import spend_answer
+
+            runner = services.agents
+            if runner is None:
+                return ToolOutcome(result={"error": "spend log unavailable"}, speak="I can't look that up right now.", error=True)
+            said = str(arguments.get("agent") or "").strip()
+            agent = runner.find(said) if said else None
+            if said and agent is None:
+                return ToolOutcome(result={"error": "unknown agent"}, speak=f"I don't have an agent called {said}.")
+            pool = runner.config.models.pools.get(agent.pool) if agent is not None and agent.pool else None
+            budget = pool.budget.monthly_usd if pool is not None and pool.budget is not None else None
+            last_month = str(arguments.get("month") or "this").strip().lower().startswith("last")
+            result, speak = await asyncio.to_thread(spend_answer, runner.spend, agent.name if agent else None, budget, last_month)
+            return ToolOutcome(result=result, speak=speak)
+
+        return spend_handler
+    if service == "calendar":
+        if services.calendar is None:
+            raise Unresolved("Calendar isn't available in this process")
+        services.calendar.update(tools.calendar, tool.name)
+        access = services.calendar.access()
+        if access != "granted":
+            services.calendar.ask_for_access()  # a prompt at the Mac; the tools are rebuilt once it's allowed
+            from victoria_voice_assistant.tools.calendars import SETUP_STEPS as CALENDAR_STEPS
+
+            raise Unresolved(f"{CALENDAR_STEPS} (access: {access})")
+
+        async def calendar_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            # "Number 2" and a waiting yes belong to the browser (or satellite) that was asked.
+            return await services.calendar.handle(arguments, device=ctx.client_id or ctx.device)
+
+        return calendar_handler
+    if service == "reminders":
+        if tools.reminders is None:
+            raise Unresolved("the `reminders:` section (the lists it may use) is missing from tools.yaml")
+        if services.reminders is None:
+            raise Unresolved("Reminders isn't available in this process")
+        services.reminders.update_settings(tools.reminders)
+        access = services.reminders.access()
+        if access != "granted":
+            services.reminders.ask_for_access()  # a prompt at the Mac; the tools are rebuilt once it's allowed
+            from victoria_voice_assistant.tools.reminders import SETUP_STEPS
+
+            raise Unresolved(f"{SETUP_STEPS} (access: {access})")
+        services.reminders.ensure_lists()
+
+        async def reminders_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            # Numbered lists are remembered per browser (every dashboard chat is the device "web"), else per device.
+            return await services.reminders.handle(arguments, device=ctx.client_id or ctx.device)
+
+        return reminders_handler
+    if service == "reminders.list":
+        # A tool tied to one Reminders list, read whole (groceries; feature 20261112-024118).
+        if not tool.list_name:
+            raise Unresolved("a `reminders.list` tool needs `list:` (the Reminders list it works on)")
+        if services.reminders is None:
+            raise Unresolved("Reminders isn't available in this process")
+        access = services.reminders.access()
+        if access != "granted":
+            services.reminders.ask_for_access()
+            from victoria_voice_assistant.tools.reminders import SETUP_STEPS
+
+            raise Unresolved(f"{SETUP_STEPS} (access: {access})")
+        from victoria_voice_assistant.tools.reminders import ListTool
+
+        list_tool = ListTool(services.reminders, tool.list_name)
+        list_tool.ensure_list()
+
+        async def list_handler(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            return await list_tool.handle(arguments)
+
+        return list_handler
+    if service == "cellartracker":
+        # Our CellarTracker cellar, read from its export (feature 20261114-162903). The login is read at each
+        # fetch, so setting CT_USERNAME and CT_PASSWORD needs no restart; until then the tool says how.
+        if services.cellar is None:
+            from victoria_voice_assistant.cellartracker.server import default_export
+
+            services.cellar = default_export()
+        from victoria_voice_assistant.tools.wine import WineTool
+
+        wine_tool = WineTool(services.cellar)
+
+        async def wine_handler(arguments: dict[str, Any], _ctx: ToolContext) -> ToolOutcome:
+            return await wine_tool.handle(arguments)
+
+        return wine_handler
+    if service == "recipes":
+        # A folder of recipes against the grocery list, with web search behind it (feature 20261112-025716).
+        if services.recipes is None:
+            raise Unresolved("Recipes aren't available in this process")
+        grocery = next((entry for entry in tools.tools if entry.name == tools.recipes.groceries_tool), None)
+        if grocery is None or grocery.service != "reminders.list" or not grocery.list_name:
+            raise Unresolved(f"recipes needs the `{tools.recipes.groceries_tool}` tool (a `reminders.list` tool with `list:`)")
+        if services.reminders is None:
+            raise Unresolved("Reminders isn't available in this process")
+        access = services.reminders.access()
+        if access != "granted":
+            services.reminders.ask_for_access()
+            from victoria_voice_assistant.tools.reminders import SETUP_STEPS
+
+            raise Unresolved(f"{SETUP_STEPS} (access: {access})")
+        from victoria_voice_assistant.tools.reminders import ListTool
+
+        services.recipes.search, services.recipes.reader = services.search, services.reader
+        services.recipes.update(tools.recipes, ListTool(services.reminders, grocery.list_name), tool.name)
+
+        async def recipes_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            # "That recipe" is the one this browser (or satellite) was last told about.
+            return await services.recipes.handle(arguments, device=ctx.client_id or ctx.device)
+
+        return recipes_handler
+    if service == "upgrade":
+        hermes = next((agent for agent in agents.agents if agent.name == "hermes"), None)
+        if hermes is None or hermes.kind != "harness":
+            raise Unresolved("configure `hermes` as a `harness` agent in agents.yaml")
+
+        from victoria_voice_assistant.tools.upgrade import upgrade_feature
+
+        async def upgrade_handler(arguments: dict[str, Any], ctx: ToolContext) -> ToolOutcome:
+            request = arguments.get("request")
+            if not isinstance(request, str):
+                request = ""
+            return await upgrade_feature(request, ctx.device, services.agents)
+
+        return upgrade_handler
     if service == "show_page":
         from victoria_voice_assistant.tools.pages import show_page
 
@@ -566,7 +703,7 @@ def _home_handler(tool: ToolConfig, tools: ToolsConfig, services: Services) -> T
     return ha_service
 
 
-def _resolve(tool: ToolConfig, tools: ToolsConfig, services: Services) -> ToolHandler:
+def _resolve(tool: ToolConfig, tools: ToolsConfig, agents: AgentsConfig, services: Services) -> ToolHandler:
     if tool.broken:
         raise Unresolved(tool.broken)
     if tool.kind in LATER_KINDS:
@@ -574,7 +711,7 @@ def _resolve(tool: ToolConfig, tools: ToolsConfig, services: Services) -> ToolHa
     if tool.kind in ("mcp", "ha_service"):
         return _home_handler(tool, tools, services)
     if tool.kind == "builtin":
-        return _builtin_handler(tool, tools, services)
+        return _builtin_handler(tool, tools, agents, services)
     if tool.kind == "python":
         return _python_handler(tool)
     if tool.kind == "http":
@@ -611,7 +748,7 @@ def build_registry(
             handler = _stub_handler(tool, None, builtins, agents.default)
         else:
             try:
-                handler = _resolve(tool, tools, services)
+                handler = _resolve(tool, tools, agents, services)
                 status = "ready"
             except Unresolved as exc:
                 reason = str(exc)

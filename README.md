@@ -44,6 +44,7 @@ Optional, each set up in its own document:
 - **The decider** ([services/mlx-lm](services/mlx-lm/README.md)): a small local decision model on `127.0.0.1:8090`, served by mlx-lm.
 - **Agents:** Hermes ([docs/hermes.md](docs/hermes.md)) and Claude ([docs/claude-setup.md](docs/claude-setup.md)) take bigger requests; results come back as notifications ([docs/push.md](docs/push.md)).
 - **Home Assistant** for home control ([docs/home-assistant.md](docs/home-assistant.md)) and **Music Assistant** for music ([docs/music.md](docs/music.md)).
+- **Calendar**: the Mac's calendars, Google's included, read and written by voice ([docs/calendar.md](docs/calendar.md)).
 - **Voice satellites** (Stage 12, in progress): a FutureProofHomes Satellite1 that the assistant connects to over ESPHome ([docs/satellites.md](docs/satellites.md)).
 
 ### What happens when you speak
@@ -189,6 +190,7 @@ With gemma models, keep `reasoning_effort: none` in each model's `params`. Witho
 | `assistant daily` | A backup, then log rotation (what the backup LaunchAgent runs) |
 | `assistant voice bench` | Speak 20 commands over WebRTC and report latency by stage (for the target machine) |
 | `assistant searxng install` / `run` | Check out the pinned SearXNG and build its environment / run it |
+| `assistant calendar grant` / `calendars` / `new NAME` | Ask macOS for Calendar access / list the calendars the tool reaches / create a calendar on this Mac ([docs/calendar.md](docs/calendar.md)) |
 | `assistant satellites status` / `update` | Each satellite's firmware version / build once and update every satellite over Wi-Fi ([docs/satellites.md](docs/satellites.md)) |
 | `assistant decider install` / `run` | Build the decider's mlx-lm environment / run it |
 | `assistant launchd install` / `install-web` / `install-searxng` / `install-decider` / `install-backup` | Write (and with `--load`, start) the LaunchAgents |
@@ -217,6 +219,7 @@ Rules for contributors, including coding agents, are in [AGENTS.md](AGENTS.md).
 - [docs/home-assistant.md](docs/home-assistant.md): home control through Home Assistant: setup, the `voice` label, what you can say.
 - [docs/secrets.md](docs/secrets.md): secrets (API keys and tokens): kept in the macOS Keychain, run from `config/.env`, which is never committed.
 - [docs/push.md](docs/push.md): phone alerts (Web Push) for results and agent questions when the page is closed.
+- [docs/runbook.md](docs/runbook.md): day-to-day operation: start, stop, restart, update, restore, adding a tool, adding an agent.
 - [docs/satellites.md](docs/satellites.md): voice satellites (the Satellite1): setup, moving to the Mac mini, using one, the LED ring, troubleshooting.
 - [docs/claude-setup.md](docs/claude-setup.md): turning on the optional Claude agent (an API key; it's a stub until then).
 - [docs/hermes.md](docs/hermes.md): connecting the assistant to a Hermes Agent installation (any; `services/hermes/` is only a test setup).

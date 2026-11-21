@@ -9,77 +9,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
-from collections.abc import AsyncGenerator
-from functools import lru_cache
+from typing import Any
+from collections.abc import AsyncGenerator, Callable, Iterable
 
-import pipecat.services.kokoro.tts as kokoro_tts
-from pipecat.frames.frames import ErrorFrame, Frame, TranscriptionFrame
-from pipecat.services.kokoro.tts import KOKORO_CACHE_DIR, KokoroTTSService, _ensure_model_files
+from pipecat.frames.frames import Frame
+from pipecat.services.kokoro.tts import KokoroTTSService
 from pipecat.services.whisper.stt import WhisperSTTServiceMLX
 from pipecat.transcriptions.language import Language
 
-from victoria_voice_assistant.config.schema import AgentsConfig, SpeechConfig
+from victoria_voice_assistant.config.schema import AgentsConfig, AppConfig, SpeechConfig
+
+from victoria_voice_assistant.voice.pipecat_internals import (
+    KOKORO_MODEL,
+    KOKORO_VOICES,
+    PromptedWhisperSTT,
+    ensure_kokoro_files,
+    shared_kokoro,
+)
 
 logger = logging.getLogger(__name__)
 
-KOKORO_MODEL = KOKORO_CACHE_DIR / "kokoro-v1.0.onnx"
-KOKORO_VOICES = KOKORO_CACHE_DIR / "voices-v1.0.bin"
 # Log a lock wait longer than this: it means two rooms wanted the same model at once.
 LOCK_WAIT_LOG_MS = 50
-
-_kokoro_factory = kokoro_tts.Kokoro
-
-
-@lru_cache(maxsize=2)
-def _shared_kokoro(model_path: str, voices_path: str):
-    return _kokoro_factory(model_path, voices_path)
-
-
-# KokoroTTSService builds its own ONNX session per instance (~300 MB each). Route that
-# construction through a cache so every voice session shares one.
-kokoro_tts.Kokoro = _shared_kokoro  # type: ignore[assignment]
-
-
-class _SharedOnnxRuntime:
-    """onnxruntime as seen by Pipecat's Silero VAD and Smart Turn: one InferenceSession per model file.
-
-    Each voice session (every satellite, every browser) builds its own VAD and Smart Turn
-    analyzer, and each loaded its own ONNX session, about 19 MB a pair. Neither keeps stream
-    state in the session: Silero's recurrent state lives on its wrapper, per analyzer, and Smart
-    Turn runs each segment on its own. ONNX Runtime allows concurrent `run` calls on one session,
-    so the sessions are shared (architecture §4.2) and everything else passes through.
-    """
-
-    def __init__(self, module) -> None:
-        self._module = module
-        self._sessions: dict[tuple, object] = {}
-
-    def __getattr__(self, name: str):
-        return getattr(self._module, name)
-
-    def InferenceSession(self, path, sess_options=None, providers=None, **kwargs):  # noqa: N802 - mirrors onnxruntime
-        key = (str(path), tuple(providers or ()))
-        session = self._sessions.get(key)
-        if session is None:
-            session = self._module.InferenceSession(path, sess_options=sess_options, providers=providers, **kwargs)
-            self._sessions[key] = session
-        return session
-
-
-def _share_turn_models() -> _SharedOnnxRuntime:
-    import onnxruntime
-    import pipecat.audio.turn.smart_turn.local_smart_turn_v3 as smart_turn
-    import pipecat.audio.vad.silero as silero
-
-    shared = _SharedOnnxRuntime(onnxruntime)
-    smart_turn.ort = shared  # type: ignore[assignment]
-    silero.onnxruntime = shared  # type: ignore[assignment]
-    return shared
-
-
-shared_onnx = _share_turn_models()
-
 
 class SpeechModels:
     """Loads the speech models once, before any voice session is accepted."""
@@ -123,8 +76,8 @@ class SpeechModels:
         transcribe(np.zeros(16000, dtype=np.float32), path_or_hf_repo=self.config.stt.model, language="en")
 
     def _load_kokoro(self) -> None:
-        _ensure_model_files(KOKORO_MODEL, KOKORO_VOICES)
-        kokoro = _shared_kokoro(str(KOKORO_MODEL), str(KOKORO_VOICES))
+        ensure_kokoro_files()
+        kokoro = shared_kokoro(str(KOKORO_MODEL), str(KOKORO_VOICES))
         if self.config.tts.voice not in kokoro.voices:
             raise ValueError(f"Kokoro voice {self.config.tts.voice!r} is not in {KOKORO_VOICES}")
         kokoro.create(".", voice=self.config.tts.voice, lang="en-us")
@@ -134,7 +87,7 @@ class SpeechModels:
         once): 16-bit mono audio and its sample rate, under the same lock the sessions use."""
         import numpy as np
 
-        kokoro = _shared_kokoro(str(KOKORO_MODEL), str(KOKORO_VOICES))
+        kokoro = shared_kokoro(str(KOKORO_MODEL), str(KOKORO_VOICES))
         await _acquire(self.kokoro_lock, "kokoro")
         try:
             samples, rate = await asyncio.to_thread(
@@ -144,7 +97,7 @@ class SpeechModels:
             self.kokoro_lock.release()
         return (np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes(), rate
 
-    def stt(self, prompt: str | None = None) -> LockedWhisperSTT:
+    def stt(self, prompt: Prompt = None) -> LockedWhisperSTT:
         return LockedWhisperSTT(
             self.whisper_lock,
             prompt=prompt,
@@ -171,65 +124,87 @@ async def _acquire(lock: asyncio.Lock, model: str) -> None:
         logger.info("Waited for a speech model", extra={"event": "model_lock_wait", "model": model, "duration_ms": round(waited, 1)})
 
 
-def whisper_prompt(agents: AgentsConfig) -> str | None:
-    """Agent names for Whisper's initial prompt, so "ask Hermes" isn't heard as "ask Herman" (architecture §5).
+def whisper_prompt(agents: AgentsConfig, words: Iterable[str] = ()) -> str | None:
+    """Whisper's initial prompt: the agent names, so "ask Hermes" isn't heard as "ask Herman"
+    (architecture §5), then `words` it should know, such as the cellar's grapes and producers.
 
-    Only the names: aliases are the mis-hearings, not what we want written.
+    Only the agents' names: aliases are the mis-hearings, not what we want written.
     """
     names = [agent.name[:1].upper() + agent.name[1:] for agent in agents.agents]
-    return f"Victoria. Ask {', ask '.join(names)}." if names else None
+    parts = [f"Victoria. Ask {', ask '.join(names)}."] if names else []
+    words = [word for word in words if word]
+    if words:
+        parts.append(", ".join(words) + ".")
+    return " ".join(parts) or None
 
 
-class LockedWhisperSTT(WhisperSTTServiceMLX):
-    def __init__(self, lock: asyncio.Lock, prompt: str | None = None, **kwargs) -> None:
-        super().__init__(**kwargs)
+def session_prompt(config: AppConfig, registry: Any, services: Any) -> Prompt:
+    """Whisper's prompt for a voice session: the agents' names, plus the cellar's words while the
+    CellarTracker tool is on (feature 20261114-162903), asked again before each transcription."""
+    words = getattr(services, "wine_words", None)
+    tool = next((tool for tool in config.tools.tools if tool.kind == "builtin" and tool.service == "cellartracker"), None)
+    entry = registry.get(tool.name) if tool is not None else None
+    if words is None or entry is None or entry.status != "ready":
+        return whisper_prompt(config.agents)
+    return lambda: whisper_prompt(config.agents, words())
+
+
+def is_prompt_echo(text: str, prompt: str | None) -> bool:
+    """Whether a transcript is only Whisper's own prompt said back.
+
+    On near-silence Whisper can return the initial prompt, often repeated ("Ask Claude, ask Claude, …").
+    That's the case when the text is nothing but the prompt's phrases, with one of them repeated or
+    three or more in all. "Ask Claude" or "Victoria, ask Claude" alone is left: someone may have said it.
+    """
+    if not prompt:
+        return False
+
+    def phrases(value: str) -> list[tuple[str, ...]]:
+        return [tuple(part.split()) for part in re.split(r"[^\w\s'-]+", value.lower()) if part.split()]
+
+    known = sorted(set(phrases(prompt)), key=len, reverse=True)
+    words = [word for phrase in phrases(text) for word in phrase]
+    found: list[tuple[str, ...]] = []
+    at = 0
+    while at < len(words):
+        match = next((phrase for phrase in known if tuple(words[at : at + len(phrase)]) == phrase), None)
+        if match is None:
+            return False
+        at += len(match)
+        found.append(match)
+    return len(found) >= 3 or len(set(found)) < len(found)
+
+
+Prompt = str | Callable[[], str | None] | None
+
+
+class LockedWhisperSTT(PromptedWhisperSTT):
+    """`prompt` may be a function, asked before each transcription, so a long-lived session (a
+    satellite's) picks up new words, such as a refreshed wine list, without reconnecting."""
+
+    def __init__(self, lock: asyncio.Lock, prompt: Prompt = None, **kwargs) -> None:
+        self._prompt_source = prompt if callable(prompt) else None
+        super().__init__(prompt=None if callable(prompt) else prompt, drop=is_prompt_echo, **kwargs)
         self._model_lock = lock
-        self.prompt = prompt
+
+    def _refresh_prompt(self) -> None:
+        if self._prompt_source is None:
+            return
+        try:
+            self.prompt = self._prompt_source()
+        except Exception:  # noqa: BLE001 - a broken word list mustn't stop speech recognition
+            logger.warning("Couldn't build Whisper's prompt", exc_info=True, extra={"event": "stt_prompt_failed"})
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
         await _acquire(self._model_lock, "whisper")
         try:
-            stt = self._run_stt_with_prompt(audio) if self.prompt else super().run_stt(audio)
+            self._refresh_prompt()
+            stt = self.run_stt_with_prompt(audio) if self.prompt else WhisperSTTServiceMLX.run_stt(self, audio)
             frames = [frame async for frame in stt]
         finally:
             self._model_lock.release()
         for frame in frames:
             yield frame
-
-    async def _run_stt_with_prompt(self, audio: bytes) -> AsyncGenerator[Frame, None]:
-        """Pipecat's `WhisperSTTServiceMLX.run_stt` plus `initial_prompt`, which that service doesn't expose.
-
-        mlx_whisper.transcribe takes it; the steps and filters are otherwise Pipecat 1.15's.
-        """
-        try:
-            import mlx_whisper
-            import numpy as np
-            from pipecat.utils.time import time_now_iso8601
-
-            await self.start_processing_metrics()
-            audio_float = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
-            language = self._settings.language
-            chunk = await asyncio.to_thread(
-                mlx_whisper.transcribe,
-                audio_float,
-                path_or_hf_repo=self._settings.model,
-                temperature=self._settings.temperature,
-                language=language,
-                initial_prompt=self.prompt,
-            )
-            text = ""
-            threshold = self._settings.no_speech_prob
-            for segment in chunk.get("segments", []):
-                if segment.get("compression_ratio", None) == 0.5555555555555556:
-                    continue  # Pipecat's hallucination filter
-                if threshold is not None and segment.get("no_speech_prob", 0.0) < threshold:
-                    text += f"{segment.get('text', '')} "
-            await self.stop_processing_metrics()
-            if text.strip():
-                await self._handle_transcription(text, True, language)
-                yield TranscriptionFrame(text, self._user_id, time_now_iso8601(), language)
-        except Exception as exc:  # noqa: BLE001 - as Pipecat: report, don't crash the session
-            yield ErrorFrame(error=f"Unknown error occurred: {exc}")
 
 
 class LockedKokoroTTS(KokoroTTSService):

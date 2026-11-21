@@ -43,8 +43,8 @@ from pipecat.frames.frames import (
 )
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from victoria_voice_assistant.chat.worker import run_worker
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -62,7 +62,7 @@ from victoria_voice_assistant.satellite.status import SatelliteBoard
 from victoria_voice_assistant.tools.outcome import VOICE_PENDING_S
 from victoria_voice_assistant.tools.registry import Services
 from victoria_voice_assistant.tools.timers import TimerEvent
-from victoria_voice_assistant.voice.models import SpeechModels, whisper_prompt
+from victoria_voice_assistant.voice.models import SpeechModels, session_prompt
 from victoria_voice_assistant.chat.turns import HistoryTap
 from victoria_voice_assistant.voice.session import VoiceTurnPreprocessor, VoiceTurnTracker, user_params
 
@@ -92,6 +92,7 @@ class AudioServer:
         self.port = port
         self._clock = clock
         self._files: dict[str, tuple[bytes, float]] = {}
+        self._streams: dict[str, tuple[ReplyStream, float]] = {}
         self._runner: Any = None
 
     async def start(self) -> None:
@@ -108,14 +109,27 @@ class AudioServer:
         if self._runner is not None:
             await self._runner.cleanup()
 
+    def _forget_old(self, now: float) -> None:
+        for kept in (self._files, self._streams):
+            for name, (_, added) in list(kept.items()):
+                if now - added > AUDIO_KEEP_S:
+                    del kept[name]
+
     def add(self, data: bytes) -> str:
         now = self._clock()
-        for name, (_, added) in list(self._files.items()):
-            if now - added > AUDIO_KEEP_S:
-                del self._files[name]
+        self._forget_old(now)
         name = f"{secrets.token_urlsafe(16)}.flac"
         self._files[name] = (data, now)
         return name
+
+    def open_stream(self) -> tuple[str, ReplyStream]:
+        """A reply that is served while it is still being spoken: its name and the stream to write to."""
+        now = self._clock()
+        self._forget_old(now)
+        name = f"{secrets.token_urlsafe(16)}.flac"
+        stream = ReplyStream()
+        self._streams[name] = (stream, now)
+        return name, stream
 
     def get(self, name: str) -> bytes | None:
         entry = self._files.get(name)
@@ -124,24 +138,115 @@ class AudioServer:
     async def _get(self, request: Any) -> Any:
         from aiohttp import web
 
-        data = self.get(request.match_info["name"])
+        name = request.match_info["name"]
+        streamed = self._streams.get(name)
+        if streamed is not None:
+            response = web.StreamResponse(headers={"Content-Type": "audio/x-flac"})
+            await response.prepare(request)
+            try:
+                async for part in streamed[0].parts():
+                    await response.write(part)
+                await response.write_eof()
+            except (ConnectionError, asyncio.CancelledError):  # the device stopped playing (a new wake word)
+                pass
+            return response
+        data = self.get(name)
         if data is None:
             raise web.HTTPNotFound()
         return web.Response(body=data, content_type="audio/x-flac")
 
 
+def at_output_rate(audio: bytes, rate: int) -> Any:
+    """16-bit mono audio as float samples at the rate the satellite plays."""
+    from scipy.signal import resample_poly
+
+    samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+    if rate != SAMPLE_RATE_OUT and samples.size:
+        divisor = gcd(rate, SAMPLE_RATE_OUT)
+        samples = resample_poly(samples, SAMPLE_RATE_OUT // divisor, rate // divisor)
+    return samples
+
+
+class ReplyStream:
+    """A reply as 48 kHz mono FLAC that grows while it is spoken, so the device can start playing the first
+    sentence while the rest is synthesized. Written and read on the event loop.
+
+    The encoder writes the header first, with the length unknown, and goes back to fill it in when the
+    stream is closed. A device already reading never sees that: players accept a FLAC of unknown length.
+    """
+
+    def __init__(self) -> None:
+        import soundfile
+
+        self.data = bytearray()
+        self.closed = False
+        self.cut = False  # closed early: the wake word was said again while it played
+        self.samples = 0
+        self.started = time.monotonic()
+        self._at = 0
+        self._more = asyncio.Event()
+        self._file = soundfile.SoundFile(self, "w", samplerate=SAMPLE_RATE_OUT, channels=1, format="FLAC", subtype="PCM_16")
+
+    @property
+    def seconds(self) -> float:
+        return self.samples / SAMPLE_RATE_OUT
+
+    # The file the encoder writes to
+
+    def write(self, data: Any) -> int:
+        data = bytes(data)
+        end = self._at + len(data)
+        self.data[self._at : end] = data
+        self._at = end
+        return len(data)
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        self._at = offset if whence == 0 else (self._at + offset if whence == 1 else len(self.data) + offset)
+        return self._at
+
+    def tell(self) -> int:
+        return self._at
+
+    def flush(self) -> None:
+        return None
+
+    # Speech in, FLAC out
+
+    def add(self, audio: bytes, rate: int) -> None:
+        if self.closed:
+            return
+        samples = np.clip(at_output_rate(audio, rate), -32768, 32767).astype(np.int16)
+        self._file.write(samples)
+        self._file.flush()
+        self.samples += samples.size
+        self._more.set()
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            self._file.close()
+            self._more.set()
+
+    async def parts(self):
+        """The stream from its start: what there is now, then each new piece until it is closed."""
+        sent = 0
+        while True:
+            if sent < len(self.data):
+                part = bytes(self.data[sent:])
+                sent += len(part)
+                yield part
+            elif self.closed:
+                return
+            else:
+                self._more.clear()
+                await self._more.wait()
+
+
 def to_flac(chunks: list[tuple[bytes, int]], gain: float = 1.0) -> tuple[bytes, float]:
     """Speech audio (16-bit mono chunks at their sample rates) as 48 kHz mono FLAC. Returns (data, seconds)."""
     import soundfile
-    from scipy.signal import resample_poly
 
-    parts = []
-    for audio, rate in chunks:
-        samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
-        if rate != SAMPLE_RATE_OUT and samples.size:
-            divisor = gcd(rate, SAMPLE_RATE_OUT)
-            samples = resample_poly(samples, SAMPLE_RATE_OUT // divisor, rate // divisor)
-        parts.append(samples)
+    parts = [at_output_rate(audio, rate) for audio, rate in chunks]
     samples = np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
     samples = np.clip(samples * gain, -32768, 32767).astype(np.int16)
     buffer = io.BytesIO()
@@ -226,6 +331,7 @@ class SatelliteOutput(FrameProcessor):
         super().__init__(**kwargs)
         self.session = session
         self._chunks: list[tuple[bytes, int]] = []
+        self._stream: ReplyStream | None = None  # the reply being streamed to the device, if it is
         self._text: list[str] = []
         self._settle: asyncio.TimerHandle | None = None
         self._waiting_since: float | None = None
@@ -233,17 +339,28 @@ class SatelliteOutput(FrameProcessor):
 
     @property
     def collecting(self) -> bool:
-        return bool(self._chunks)
+        return bool(self._chunks) or self._stream is not None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, TTSAudioRawFrame):
-            self._chunks.append((frame.audio, frame.sample_rate))
+            if self._stream is None and not self._chunks:
+                self._stream = self.session.start_reply_stream()  # None: collect it and send it whole
+            if self._stream is not None:
+                self._stream.add(frame.audio, frame.sample_rate)
+            else:
+                self._chunks.append((frame.audio, frame.sample_rate))
             self._arm()
             return  # the audio goes to the device as a file, not on down the pipeline
         if isinstance(frame, TTSTextFrame) and frame.text.strip():
             self._text.append(frame.text.strip())
         await self.push_frame(frame, direction)
+
+    def cut(self) -> None:
+        """The wake word again while a streamed reply plays: end the stream; the rest of it is dropped."""
+        if self._stream is not None and not self._stream.closed:
+            self._stream.cut = True
+            self._stream.close()
 
     def _arm(self) -> None:
         if self._settle is not None:
@@ -262,6 +379,10 @@ class SatelliteOutput(FrameProcessor):
         self._waiting_since = None
         chunks, text = self._chunks, " ".join(self._text)
         self._chunks, self._text = [], []
+        if self._stream is not None:
+            stream, self._stream = self._stream, None
+            self.session.finish_reply_stream(stream, text)
+            return
         task = asyncio.get_running_loop().create_task(self.session.deliver(chunks, text))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -360,7 +481,7 @@ class SatelliteSession:
         self.output = SatelliteOutput(self)
         pipeline = Pipeline(
             [
-                speech.stt(whisper_prompt(config.agents)),
+                speech.stt(session_prompt(config, runtime.registry, services)),
                 pair.user(),
                 preprocessor,
                 TimingStartProcessor(timer),
@@ -373,7 +494,7 @@ class SatelliteSession:
                 pair.assistant(),
             ]
         )
-        self.task = PipelineTask(
+        self.task = PipelineWorker(
             pipeline,
             params=PipelineParams(audio_in_sample_rate=SAMPLE_RATE_IN),
             observers=[SatelliteTurnObserver(self)],
@@ -479,6 +600,7 @@ class SatelliteSession:
         from aioesphomeapi.model import VoiceAssistantEventType as E
 
         self._end_run()
+        self.output.cut()
         self.run = Run(started=time.monotonic(), wake_word=wake_word_phrase)
         logger.info("Satellite turn", extra={"event": "satellite_turn", "device": self.name, "text": wake_word_phrase})
         self.send(E.VOICE_ASSISTANT_RUN_START)
@@ -645,6 +767,48 @@ class SatelliteSession:
         self.context.add_message({"role": "assistant", "content": text})
         await self.task.queue_frame(TTSSpeakFrame(text, append_to_context=False))
 
+    def start_reply_stream(self) -> ReplyStream | None:
+        """With `stream_replies` on and a turn open: give the device the reply's address at its first
+        audio, so it plays the first sentence while the rest is synthesized. The turn ends here, as it
+        does when a whole reply is sent; the reply counts as being delivered until the stream closes.
+
+        Whether a question is open (so the device listens again with no wake word) is read now. A question
+        that a tool raises after the model's first words have been spoken is missed; the wake word is
+        needed for its answer.
+        """
+        from aioesphomeapi.model import VoiceAssistantEventType as E
+
+        if self.run is None or not self.settings.stream_replies:
+            return None
+        try:
+            name, stream = self.audio.open_stream()
+        except Exception as exc:  # noqa: BLE001 - fall back to sending the reply whole
+            logger.warning("Satellite reply stream not opened", extra={"event": "satellite_reply_failed", "device": self.name, "reason": str(exc) or type(exc).__name__})
+            return None
+        url = f"http://{self.audio_host}:{self.audio.port}/satellite-audio/{name}"
+        follow_up = self.state.pending is not None
+        self.delivering = True
+        self.send(E.VOICE_ASSISTANT_INTENT_END, {"continue_conversation": "1" if follow_up else "0"})
+        self.send(E.VOICE_ASSISTANT_TTS_START, {"text": ""})
+        self.send(E.VOICE_ASSISTANT_TTS_END, {"url": url})
+        self._status(state="replying")
+        self._end_run()
+        logger.info("Satellite reply stream started", extra={"event": "satellite_reply_stream", "device": self.name})
+        return stream
+
+    def finish_reply_stream(self, stream: ReplyStream, text: str) -> None:
+        """The reply has all been spoken: close the stream and allow for what is left to play."""
+        stream.close()
+        if stream.cut:  # a new turn has the device now
+            self.delivering = False
+            return
+        left = max(0.0, stream.seconds - (time.monotonic() - stream.started))
+        self._reply_until = time.monotonic() + left + REPLY_GAP_S
+        self.delivering = False
+        self._status(state="replying", reply=text)
+        self._idle_after(left)
+        logger.info("Satellite reply", extra={"event": "satellite_reply", "device": self.name, "duration_s": round(stream.seconds, 1), "text": text, "kind": "streamed"})
+
     async def deliver(self, chunks: list[tuple[bytes, int]], text: str) -> None:
         from aioesphomeapi.model import VoiceAssistantEventType as E
 
@@ -734,7 +898,7 @@ class SatelliteSession:
         if services.notifications is not None:
             services.notifications.attach(self.outlet)
         await self.on_timer_event(TimerEvent("changed", self.name))  # timers set before it connected
-        runner = asyncio.create_task(PipelineRunner(handle_sigint=False).run(self.task))
+        runner = asyncio.create_task(run_worker(self.task))
         waiter = asyncio.create_task(disconnected.wait())
         try:
             await asyncio.wait({runner, waiter}, return_when=asyncio.FIRST_COMPLETED)

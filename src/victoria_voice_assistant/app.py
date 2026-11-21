@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -24,6 +25,7 @@ from victoria_voice_assistant.config.manager import ConfigManager
 from victoria_voice_assistant.logging_config import configure_logging
 from victoria_voice_assistant.config.schema import AppConfig
 from victoria_voice_assistant.history import HistoryStore
+from victoria_voice_assistant.projects import ProjectStore
 from victoria_voice_assistant.storage.db import default_database_path, migrate
 from victoria_voice_assistant.tools.registry import Services, build_registry
 from victoria_voice_assistant.tools.timers import TimerService
@@ -107,7 +109,25 @@ def create_app(
             search=SearchService(search_settings, browser_search=reader.search_page if browser_enabled else None),
             reader=reader,
             history=HistoryStore(database, search_days=manager.current.tools.history.search_days),
+            projects=ProjectStore(database),
         )
+        if sys.platform == "darwin":
+            from victoria_voice_assistant.tools.reminders import RemindersService
+
+            services.reminders = RemindersService(manager.current.tools.reminders)
+            from victoria_voice_assistant.tools.calendars import CalendarService
+
+            services.calendar = CalendarService(manager.current.tools.calendar)
+        from victoria_voice_assistant.tools.recipes import RecipesService
+
+        services.recipes = RecipesService(database.parent / "recipes", manager.current.tools.recipes)
+        from victoria_voice_assistant.cellartracker.export import CellarTrackerExport
+        from victoria_voice_assistant.cellartracker.server import credentials_from_secrets
+
+        services.cellar = CellarTrackerExport(database.parent / "cellartracker", credentials_from_secrets)
+        from victoria_voice_assistant.tools.wine import PromptWords
+
+        services.wine_words = PromptWords(services.cellar)
         await services.timers.start()
         settings = manager.current.tools.notifications
         services.notifications = NotificationService(settings, database, push=PushService(settings, database))
@@ -150,6 +170,13 @@ def create_app(
             hub.reload(config, services)
 
         manager.add_listener(on_reload)
+        if services.reminders is not None:
+            loop = asyncio.get_running_loop()
+            # Access is answered at the Mac, on another thread; then the tools stop being stubs.
+            # Every listener, not just this one: satellites rebuild their tools through their own.
+            services.reminders.on_granted = lambda: loop.call_soon_threadsafe(manager.notify)
+            if services.calendar is not None:
+                services.calendar.on_granted = services.reminders.on_granted
         _log_tool_status(manager.current, services)
 
         background = [asyncio.create_task(monitor_loop_lag(), name="loop-lag")]

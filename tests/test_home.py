@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 from typing import Any
@@ -47,13 +48,24 @@ HOUSE = [
 class FakeHome(HomeAssistant):
     """A stand-in Home Assistant: fixed entities, recorded intent and service calls, states from the entity list."""
 
-    def __init__(self, entities=HOUSE, intent_reply: str | None = None) -> None:
+    def __init__(self, entities=HOUSE, intent_reply: str | None = None, follows: bool = True) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.services: list[tuple[str, str, dict]] = []
         self.house = {e.entity_id: e for e in entities}
 
         async def intent(name: str, arguments: dict[str, Any]) -> str:
             self.calls.append((name, arguments))
+            if follows and intent_reply is None:  # the device acts, and its state shows it
+                for entity_id, found in list(self.house.items()):
+                    if found.name != arguments["name"]:
+                        continue
+                    if name in ("HassTurnOn", "HassTurnOff") and found.domain != "scene":
+                        self.house[entity_id] = replace(found, state="on" if name == "HassTurnOn" else "off")
+                    elif name == "HassLightSet":
+                        level = arguments["brightness"]
+                        self.house[entity_id] = replace(found, state="on" if level else "off", attributes={**found.attributes, "brightness": round(level * 255 / 100)})
+                    elif name == "HassClimateSetTemperature":
+                        self.house[entity_id] = replace(found, attributes={**found.attributes, "temperature": arguments["temperature"]})
             return intent_reply or json.dumps({"response_type": "action_done", "data": {"success": [{"name": arguments["name"]}], "failed": []}})
 
         def respond(request: httpx.Request) -> httpx.Response:
@@ -144,6 +156,38 @@ def test_query_reads_the_state() -> None:
     assert run(control.handle({"action": "query", "target": "bedroom light"})).speak == "The bedroom light is off."
     assert run(control.handle({"action": "query", "target": "hall thermostat"})).speak == "The hall thermostat is heat, set to 70. It's 68 degrees now."
     assert home.calls == []  # state reads go to the REST API, not the intents
+
+
+def test_a_device_that_does_not_follow_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Home Assistant says done, but the state never changes (seen live, 2026-11-12)."""
+    monkeypatch.setattr(HomeControl, "follow_wait_s", 0.05)
+    monkeypatch.setattr("victoria_voice_assistant.tools.home.FOLLOW_EVERY_S", 0.01)
+    control = HomeControl(FakeHome(follows=False))
+    on = run(control.handle({"action": "turn_on", "target": "the bedroom light"}))
+    assert on.speak == "The bedroom light didn't respond." and on.error and on.result["failed"] == ["switch.bedroom_light"]
+    dim = run(control.handle({"action": "set", "target": "piano light", "value": "40%"}))
+    assert dim.speak == "The piano light didn't respond." and dim.error
+    # Already in the asked-for state: nothing to see change, so it counts as done.
+    assert run(control.handle({"action": "turn_off", "target": "the bedroom light"})).speak == "Turned off the bedroom light."
+    # A scene has no on or off to read back.
+    assert run(control.handle({"action": "turn_on", "target": "bright kitchen"})).speak == "Done: Bright kitchen."
+
+
+def test_one_silent_device_among_several_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(HomeControl, "follow_wait_s", 0.05)
+    monkeypatch.setattr("victoria_voice_assistant.tools.home.FOLLOW_EVERY_S", 0.01)
+    home = FakeHome()
+    stuck = home.house["light.kitchen_cabinets"]
+    original = home._intent_caller
+
+    async def intent(name: str, arguments: dict[str, Any]) -> str:
+        reply = await original(name, arguments)
+        home.house["light.kitchen_cabinets"] = stuck  # this one never changes
+        return reply
+
+    home._intent_caller = intent
+    outcome = run(HomeControl(home).handle({"action": "turn_on", "target": "kitchen lights"}))
+    assert outcome.speak == "Turned on the kitchen island light. The Kitchen cabinets didn't respond."
 
 
 def test_a_refused_intent_is_reported() -> None:

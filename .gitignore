@@ -9,6 +9,7 @@ config/.env
 config/models.yaml
 config/tools.yaml
 config/agents.yaml
+config/corrections.yaml
 config/tls/
 config/searxng/
 

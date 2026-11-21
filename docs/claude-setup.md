@@ -35,6 +35,8 @@ Then try, by text or voice: "Ask Claude how many ounces are in a cup" (expect Ha
 
 ## Checking spend
 
+By voice or chat: "How much have we spent on Claude this month?" or "What did Claude cost last month?" (the `spend` tool).
+
 Every Claude call is logged with its model, tokens, cost and how the model was chosen: the `spend` event in the service log and the `spend` table in the assistant's SQLite database (`~/Library/Application Support/Victoria Voice Assistant/assistant.sqlite3`). For this month's total:
 
 ```sh

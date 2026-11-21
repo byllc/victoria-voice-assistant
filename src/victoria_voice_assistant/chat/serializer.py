@@ -101,6 +101,10 @@ class ChatJsonSerializer(FrameSerializer):
             task_id, text = message.get("task_id"), message.get("text")
             if isinstance(task_id, str) and isinstance(text, str) and text.strip():
                 return InputTransportMessageFrame(message={"type": "agent_answer", "task_id": task_id, "text": text.strip()})
+        if isinstance(message, dict) and message.get("type") in PROJECT_SHAPES:
+            checked = _project_message(message)
+            if checked is not None:
+                return InputTransportMessageFrame(message=checked)
         if not isinstance(message, dict) or message.get("type") != "user_message":
             logger.warning("Ignoring unknown chat message", extra={"event": "chat_message_invalid"})
             return None
@@ -111,3 +115,35 @@ class ChatJsonSerializer(FrameSerializer):
             messages=[{"role": "user", "content": text.strip()}],
             run_llm=True,
         )
+
+
+# Projects and chat contexts (chat/contexts.py): each type and the fields it needs.
+PROJECT_SHAPES: dict[str, tuple[str, ...]] = {
+    "open_context": ("id",),
+    "new_chat": (),
+    "rename_context": ("id", "name"),
+    "archive_context": ("id",),
+    "new_project": ("name",),
+    "rename_project": ("id", "name"),
+    "archive_project": ("id",),
+}
+
+
+def _project_message(message: dict) -> dict | None:
+    kind = message["type"]
+    checked: dict = {"type": kind}
+    for field in PROJECT_SHAPES[kind]:
+        value = message.get(field)
+        if field == "id":
+            if not isinstance(value, int) or isinstance(value, bool):
+                return None
+        elif not isinstance(value, str) or not value.strip():
+            return None
+        else:
+            value = value.strip()[:80]
+        checked[field] = value
+    if kind == "new_chat" and isinstance(message.get("project_id"), int) and not isinstance(message.get("project_id"), bool):
+        checked["project_id"] = message["project_id"]
+    if kind in ("archive_context", "archive_project"):
+        checked["archived"] = message.get("archived", True) is not False
+    return checked

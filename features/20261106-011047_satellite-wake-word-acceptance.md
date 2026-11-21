@@ -1,7 +1,7 @@
 # Satellite wake-word acceptance
 
 - Status: open
-- Phase: current
+- Phase: staging
 - Origin: Stage 14
 - Created: 2026-11-06 (UTC)
 
@@ -9,7 +9,7 @@
 
 - [ ] The satellite's own wake-word check stops rejecting "Victoria" (log: "model predicts 'victoria', but VAD model doesn't").
 
-- [ ] The wake word stops waking the satellite when nobody said it (Bill, 2026-11-11: "the wake word is way too sensitive, it wakes up all the time"; to be done before staging). False wakes are counted over a set time, before and after.
+- [ ] The wake word stops waking the satellite when nobody said it (Bill, 2026-11-11: "the wake word is way too sensitive, it wakes up all the time"). False wakes are counted over a set time, before and after.
 
 ## Blocking decisions
 
@@ -39,3 +39,5 @@ Done 2026-11-11 with Bill's go-ahead ("Yes, flash it"):
 - `docs/satellites.md` and the Satellite1 README say the new settings, and that a short pause follows the wake word.
 - Not yet measured: false wakes with speech in the room, and whether a real "Victoria" still wakes it reliably. Retraining the model is the fallback, in a later phase, if settings can't give both.
 - 2026-11-11, Bill after the update: "it woke to victoria". He is leaving it running to see whether it still wakes to ordinary speech; false wakes to be counted from the log next session (wakes since 16:01 UTC that end in `satellite_no_speech`).
+
+Bill, 2026-11-11: moved to `staging` because this feature covers both Satellite1 and the Waveshare board.

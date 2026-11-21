@@ -33,6 +33,9 @@ BUSY_LIMIT_S = 60.0
 Notify = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+SPOKEN_WORDS_PER_S = 2.5  # about how fast replies are spoken, for how long a question stays open
+
+
 @dataclass
 class SessionState:
     """Per-connection state: the pending question and per-request counters."""
@@ -154,6 +157,7 @@ class ToolRuntime:
         self.forget: dict[str, float] = {}
         # Saves each request, its tool calls and its reply to the command history (None: not saved).
         self.history: HistoryRecorder | None = None
+        self.transcript: Any = None  # the open chat context (projects.Transcript), typed chat only
 
     def tools_schema(self) -> ToolsSchema:
         return ToolsSchema(standard_tools=[entry.schema(self._handler(entry)) for entry in self.registry.active])
@@ -184,12 +188,17 @@ class ToolRuntime:
             outcome = await entry.handler(arguments, self._context())
 
         if outcome.pending is not None:
+            if outcome.speak:
+                # The window opens when the question is asked, but the answer can only come once it has been
+                # said: a long reply ending in a question ("... Add those to groceries?") gets that much longer.
+                base = outcome.pending.window_s or self.state.pending_window_s
+                outcome.pending.window_s = base + len(outcome.speak.split()) / SPOKEN_WORDS_PER_S
             self.state.set_pending(outcome.pending)
             if outcome.pending.kind == "clarify":
                 self.state.clarified = True
 
         direct: str | None = None
-        must_speak = guarded or entry.speaks_directly or outcome.pending is not None or outcome.error
+        must_speak = guarded or entry.speaks_directly or outcome.pending is not None or outcome.error or outcome.direct
         if outcome.speak and must_speak:
             direct = outcome.speak
         elif entry.reply == "template":
@@ -205,6 +214,8 @@ class ToolRuntime:
                 self.forget[params.tool_call_id] = time.monotonic() + entry.forget_after_s
             if self.history is not None:
                 self.history.tool(entry.name, arguments)
+            if self.transcript is not None:
+                self.transcript.tool(entry.name)
             outcome, direct = await self.run(entry, arguments)
             if outcome.chat:
                 await self.notify({"type": "notice", "title": outcome.chat_title or entry.name, "text": outcome.chat})

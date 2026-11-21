@@ -9,7 +9,7 @@
 # default is the model phrasing the result (a second model call).
 tools:
   - name: timer
-    description: Start, cancel, change, stop, or check named countdown timers. Call it even when no timer name was given; it asks which one if that matters.
+    description: Start, cancel, change, stop, or check countdown timers the user set on Victoria. Call it even when no timer name was given; it asks which one if that matters. Not for calendar events, appointments or meetings (cancelling, moving or lengthening those is the calendar tool).
     kind: builtin
     service: timers
     forget_after_s: 0                # the timer service holds the state; time left is always asked for again
@@ -60,6 +60,24 @@ tools:
     examples:
       - what time is it
 
+  - name: spend
+    description: How much money has been spent on paid agents such as Claude, this month or last month. Not for prices of things or shopping.
+    kind: builtin
+    service: spend                   # the spend log (docs/claude-setup.md); works before any paid agent is set up
+    forget_after_s: 0                # the total changes with every paid call: never repeated from the conversation
+    params:
+      agent:
+        type: string
+        description: "the agent asked about, e.g. claude; leave out for all agents"
+      month:
+        type: string
+        enum: [this, last]
+        description: "this month (the default) or last month"
+    reply: { template: true }
+    examples:
+      - how much have we spent on Claude this month
+      - what did Claude cost last month
+
   - name: history
     description: Look up what was asked or said to the assistant in the last week, e.g. what did I ask this morning, when did I last turn on the bedroom light.
     kind: builtin
@@ -79,6 +97,186 @@ tools:
       - what did I ask you this morning
       - when did I last turn on the bedroom light
       - what did I ask the kitchen yesterday
+
+  - name: reminders
+    description: Apple Reminders. Add a reminder, say what's on a list or due, or mark one done when the user says they did it.
+    kind: builtin
+    service: reminders               # only the lists named under `reminders:` (below)
+    forget_after_s: 120              # kept 2 min so "show me 4" follows a listing; the tool holds the numbers and rereads Reminders
+    reply: { template: true }        # the tool's own text, numbered lists included (no second model call)
+    params:
+      action:
+        type: string
+        enum: [add, list, complete, lists]
+        description: "add: a new reminder. list: what's on a list or due. complete: the user says they did it (I bought the milk, I called the plumber, cross off eggs). lists: which lists there are"
+        required: true
+      title:
+        type: string
+        description: "what the reminder says, e.g. call the plumber, milk (for add and complete); or its number from the last numbered list, e.g. 2"
+      due:
+        type: string
+        description: "when it's due, as the user said it, e.g. tomorrow at 9, Friday, in 2 hours (add only)"
+      list:
+        type: string
+        description: "the list as the user said it, e.g. groceries; or its number from the last numbered list, e.g. 4"
+      when:
+        type: string
+        enum: [today, overdue, this_week]
+        description: "for list: only reminders due today, overdue, or this week"
+    examples:
+      - remind me to call the plumber tomorrow at 9
+      - add milk to the shopping list
+      - what's on the shopping list
+      - what are my reminders today
+      - I bought the milk
+      - what lists do you have
+      - show me groceries
+      - show me number 4
+      - number 2 is done
+
+  - name: calendar
+    description: The user's calendar. Anything the user names that has a day and a time and isn't a timer is an event here, whatever it is called. Say what's on it, when an event is, tell them about one, say when they're free, add one, or move, lengthen, rename, cancel or delete one. Not for reminders or to-dos.
+    kind: builtin
+    service: calendar                # the Mac's calendars, minus `calendar.skip` (below); docs/calendar.md
+    forget_after_s: 120              # kept 2 min so "move number 2" follows a listing; the tool holds the numbers and rereads the calendar
+    reply: { template: true }        # the tool's own text (no second model call)
+    params:
+      action:
+        type: string
+        enum: [list, next, find, details, free, calendars, add, change, delete]
+        description: "list: what's on a day or a stretch of days. next: the next event. find: when a named event is (never for cancelling or changing one). details: tell me about it, where it is, its notes, who's invited. free: am I free, when am I free. calendars: which calendars there are. add: a new event. change: move, push, lengthen, shorten, rename or edit one (asks before it's done). delete: cancel or delete one (asks before it's done)"
+        required: true
+      title:
+        type: string
+        description: "the event's name, e.g. dentist, lunch with Sam; or its number from the last numbered list, e.g. 2. Needed for find, details, add, change and delete"
+      when:
+        type: string
+        description: "as the user said it. For add: when it starts, e.g. Friday at noon, tomorrow at 9, November 20 (no time means all day). For list and free: the day or stretch, e.g. today, tomorrow, Friday afternoon, this week, next week, this weekend. For find, change and delete: the day the event is on, when said"
+      end:
+        type: string
+        description: "when it ends, as said, e.g. at 3, 5:30 pm, Sunday (add and change)"
+      duration:
+        type: string
+        description: "how long it is, as said, e.g. 2 hours, 90 minutes (add and change)"
+      all_day:
+        type: boolean
+        description: "true for an all-day event (add)"
+      calendar:
+        type: string
+        description: "the calendar's name whenever the user names one, e.g. family, work, Victoria Test (\"on the work calendar\", \"to the family calendar\")"
+      location:
+        type: string
+        description: "where it is (add and change)"
+      notes:
+        type: string
+        description: "notes for the event (add and change)"
+      alert:
+        type: string
+        description: "how long before to alert, e.g. 15 minutes, 1 hour (add and change)"
+      repeat:
+        type: string
+        enum: [daily, weekdays, weekly, monthly, yearly]
+        description: "how the new event repeats (add)"
+      new_title:
+        type: string
+        description: "the event's new name when renaming, e.g. orthodontist in 'rename the dentist to orthodontist' (change)"
+      new_when:
+        type: string
+        description: "where to move it, as said, e.g. 3, 3:30 pm, Friday, tomorrow at 10 (change)"
+      scope:
+        type: string
+        enum: [this, future]
+        description: "for a repeating event, after the user answers: this one only, or this and all after it (change and delete)"
+    examples:
+      - what's on my calendar today
+      - what do I have this week
+      - when is the dentist
+      - am I free Friday afternoon
+      - add lunch with Sam Friday at noon
+      - tell me about the dentist appointment
+      - move the dentist to 3
+      - cancel my haircut appointment
+      - cancel book club
+      - make the board meeting two hours long
+      - rename the dentist to orthodontist
+
+  - name: groceries
+    description: The grocery list. Read it to answer questions (do we need carrots?), add what we need or are out of, check off what we got, or take an item off.
+    kind: builtin
+    service: reminders.list          # one Reminders list, read whole (feature 20261112-024118)
+    list: Groceries                  # the Reminders list this tool reads and changes
+    forget_after_s: 0                # Reminders holds the state; the list is read fresh every time
+    params:
+      action:
+        type: string
+        enum: [read, need, got, remove]
+        description: "read: the whole list (for any question about it). need: add it, or we're out of it. got: we bought it or have it. remove: take it off the list"
+        required: true
+      item:
+        type: string
+        description: "the item as the user said it, e.g. ice cream; several separated by commas, e.g. carrots, milk, pizza (not for read)"
+    examples:
+      - do we need carrots
+      - what's on the grocery list
+      - add ice cream to groceries
+      - we're out of pizza
+      - we got the milk
+      - take carrots off the grocery list
+
+  - name: wine
+    description: "Our wine cellar (CellarTracker): what wines we have, the best rated, what's from a region or grape, how many bottles, and which location and bin a wine is in. Also updates the wine list from CellarTracker on request, and keeps corrections for wine words that are misheard."
+    kind: builtin
+    service: cellartracker           # CellarTracker's export, saved for 24 hours (feature 20261114-162903; login: CT_USERNAME, CT_PASSWORD)
+    forget_after_s: 0                # the saved list is read each time, so answers never go out of date
+    params:
+      action:
+        type: string
+        enum: [read, update, correct, corrections, forget]
+        description: "read: the cellar's wines, best rated first, each with its bottles and where they are (for any question about our wine). update: fetch the wine list from CellarTracker now (only when asked to update or refresh it). correct: remember that a heard wine word means another (\"when I say tempra nioh I mean Tempranillo\"). corrections: list them. forget: drop one"
+        required: true
+      color:
+        type: string
+        enum: [red, white, rose]
+        description: only wines of this colour (whites, reds, rosé)
+      search:
+        type: string
+        description: "words to narrow by, as the user said them, all of them, even when they look misheard: wine or producer name, grape, region, vintage, location or bin, e.g. Ridge, Tempranillo, Barolo, 2019. Not words like best or highest rated (the list is already best first)"
+      heard:
+        type: string
+        description: "the misheard words. For correct and forget. For read only when searching again after no_match: the words searched before, e.g. Nioh"
+      meant:
+        type: string
+        description: "for correct: what the heard words mean, e.g. Tempranillo"
+    examples:
+      - what are our highest rated whites
+      - what bin is the 2019 Lytton Springs in
+      - do we have any Barolo
+      - do we have any Tempranillo
+      - how many bottles of wine do we have
+      - update the wine list
+      - when I say tempra nioh I mean Tempranillo
+      - what wine corrections do you have
+
+  - name: recipes
+    description: Recipes. What a dish needs compared with the groceries we have, what we can make with what we have, or show a recipe. From the household's recipes folder, or the web when it isn't there.
+    kind: builtin
+    service: recipes                 # the recipes folder against the grocery list (settings under `recipes:`)
+    forget_after_s: 0                # the grocery list changes; always worked out again
+    params:
+      action:
+        type: string
+        enum: [need, suggest, show, save]
+        description: "need: what we have and lack for a dish. suggest: what we can make with what we have. show: the whole recipe. save: keep the web recipe just found"
+        required: true
+      recipe:
+        type: string
+        description: "the dish as the user said it, e.g. paella (for need and show)"
+    examples:
+      - what do I need to make paella
+      - with the groceries I have what can I make
+      - what can we make for dinner
+      - show me the paella recipe
+      - save that recipe
 
   - name: web_search
     description: Search the web for current facts, news, scores, hours, prices. Returns short snippets.
@@ -209,6 +407,22 @@ tools:
       - play some Miles Davis
       - skip this
 
+  - name: upgrade
+    description: Ask Hermes to add a feature to Victoria on an isolated branch for Bill to review.
+    kind: builtin
+    service: upgrade
+    reply: { template: true }
+    params:
+      request:
+        type: string
+        description: the feature to add to Victoria
+        required: true
+    notice: "The upgrade agent isn't set up yet."
+    setup: "Configure Hermes with the isolated checkout described in docs/hermes.md."
+    examples:
+      - add a feature to Victoria that lets me see recent searches
+      - ask Hermes to add a dark theme setting
+
   # An http tool: GET a URL with arguments filled in, then speak a template.
   # - name: sunrise
   #   description: Sunrise and sunset times at home today.
@@ -249,6 +463,23 @@ timers:
 history:                          # every request is kept in the database (no archive, nothing deleted)
   search_days: 7                  # how far back the history tool looks; `assistant history search` reads it all
 
+reminders:                        # Apple Reminders on this Mac (macOS asks once for access: assistant reminders grant)
+  lists: [Shopping, Household]    # only these lists are reached; `all` reaches every list in the signed-in account
+  default_list: Household         # where "remind me to ..." goes (the first list when not set)
+
+calendar:                         # the calendar tool: every calendar on this Mac (macOS asks once: assistant calendar grant)
+  skip: []                        # calendars never read or written, e.g. [US Holidays, Birthdays]
+  # default_calendar: Family      # where new events go; the Mac's default calendar when not set
+  default_minutes: 60             # how long a new event is when no length is said
+  free_from: 8                    # "am I free?" looks between these hours
+  free_until: 22
+
+recipes:                          # the recipes tool (docs/recipes.md)
+  # folder: ~/Documents/Recipes   # where the recipe files are; `recipes/` next to the database when not set
+  groceries_tool: groceries       # the list tool that says what we have
+  have_days: 14                   # checked off the grocery list this recently counts as on hand
+  staples: [salt, pepper, water, oil, olive oil, butter, sugar, flour]   # always counted as on hand
+
 notifications:                    # architecture §10.3
   quiet_hours: { start: "00:00", end: "08:00" }   # no sound: screen and badge only (timers still ring)
   default_style: ask_first        # ask_first | speak_summary | chime_only (agents can override with `notify`)
@@ -284,6 +515,7 @@ satellites: {}
 #    arbitration_offset_db: 0   # added to its score when several satellites hear the same words
 #    gain: 120         # its microphone is raised by this before speech detection
 #    pending_color: "#FFA000"   # its LED ring while notifications are unread (null: leave it alone)
+#    stream_replies: false      # true: it starts playing a reply after the first sentence (docs/satellites.md)
 # satellite_audio_port: 8767   # where every satellite fetches replies (plain HTTP on the LAN)
 # satellite_arbitration_s: 0.5 # how long to wait for other satellites waking on the same words
 
@@ -291,6 +523,11 @@ mcp_servers:
   homeassistant: { url: http://homeassistant.local/api/mcp, token: "${HA_TOKEN:-}" }   # Home Assistant's MCP Server integration
 
 tests:
+  - { say: "cancel the Zebra review", expect: "tool:calendar" }          # a name that doesn't sound like an appointment
+  - { say: "make the Zebra checkpoint two hours long", expect: "tool:calendar" }
+  - { say: "push lunch with Sam to 1:30", expect: "tool:calendar" }
+  - { say: "what's on my calendar tomorrow", expect: "tool:calendar" }
+  - { say: "make the laundry timer 20 minutes", expect: "tool:timer" }
   - { say: "set a timer", expect: clarify }               # no duration given
   - { say: "cancel the timer", expect: clarify, given: { timers: [pasta, laundry] } }
   - { say: "cancel the timer", expect: "tool:timer", given: { timers: [pasta] } }
@@ -299,9 +536,12 @@ tests:
   - { say: "is the bedroom light on", expect: "tool:home_control" }
   - { say: "set the piano light to 40 percent", expect: "tool:home_control" }
   - { say: "lock the front door", expect: "tool:lock_door" }
+  - { say: "what's on my calendar tomorrow", expect: "tool:calendar" }
+  - { say: "add a dentist appointment Friday at 2", expect: "tool:calendar" }
   - { say: "play Footprints from Plex in the exercise room", expect: "tool:music" }
   - { say: "turn the music down", expect: "tool:music" }
   - { say: "what song is this", expect: "tool:music" }
+  - { say: "add a feature to Victoria that lets me see recent searches", expect: "tool:upgrade" }
   - { say: "ask alexa to play some jazz", expect: "agent:alexa" }
   - { say: "ask helper what to make with leeks", expect: "agent:helper" }
   - { say: "book me a flight to Denver", expect: offer_agent }

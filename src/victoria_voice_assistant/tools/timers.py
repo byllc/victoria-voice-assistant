@@ -223,7 +223,11 @@ class TimerService:
                 speak=f"You already have {self.settings.max_per_device} timers. Cancel one first.",
                 error=True,
             )
-        base = normalize_name(name) or duration_label(seconds)
+        named = normalize_name(name)
+        # The model sometimes names a timer after its length ("1 minute timer"): that's an unnamed timer.
+        if named and parse_duration(named.replace("-", " ")) == seconds:
+            named = None
+        base = named or duration_label(seconds)
         # "another pasta timer" may arrive as "pasta 2"; number it ourselves.
         base = re.sub(r"\s+\d+$", "", base) or base
         taken = {timer.name for timer in self.timers(device)}
@@ -249,8 +253,12 @@ class TimerService:
             "Timer started",
             extra={"event": "timer_started", "timer": timer.name, "duration_s": seconds},
         )
-        spoken_name = f"{ORDINALS.get(ordinal, f'number {ordinal}')} {base}" if ordinal > 1 else base
-        speak = f"{_title(spoken_name)} timer set for {speak_duration(seconds)}."
+        # An unnamed timer is stored under its length ("1-minute"); saying that too would repeat it
+        # ("1-minute timer set for 1 minute.").
+        said = base if named else ""
+        number = ORDINALS.get(ordinal, f"number {ordinal}") if ordinal > 1 else ""
+        spoken_name = " ".join(part for part in (number, said, "timer") if part)
+        speak = f"{_title(spoken_name)} set for {speak_duration(seconds)}."
         return ToolOutcome(result={"started": timer.name, "duration": speak_duration(seconds)}, speak=speak)
 
     async def cancel(self, device: str, name: str | None) -> ToolOutcome:

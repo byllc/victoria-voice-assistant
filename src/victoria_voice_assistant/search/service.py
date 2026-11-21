@@ -260,6 +260,27 @@ class PageReader:
     def update_settings(self, settings: SearchReadConfig | None) -> None:
         self.settings = settings or SearchReadConfig()
 
+    async def html(self, url: str) -> str | None:
+        """A public page's HTML over plain HTTP, for reading its structured data (recipes). None when it can't be had."""
+        parsed = urlparse(str(url or "").strip())
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return None
+        if not await asyncio.to_thread(self._host_check, parsed.hostname):
+            logger.warning("Refused to read a non-public address", extra={"event": "web_read_refused", "text": url})
+            return None
+        client = self._client or httpx.AsyncClient(timeout=READ_HTTP_TIMEOUT_S, follow_redirects=True)
+        try:
+            response = await client.get(url, headers={"User-Agent": USER_AGENT})
+            response.raise_for_status()
+            if not await asyncio.to_thread(self._host_check, urlparse(str(response.url)).hostname or ""):
+                return None  # redirected somewhere private
+            return response.content[:MAX_PAGE_BYTES].decode(response.encoding or "utf-8", errors="replace")
+        except httpx.HTTPError:
+            return None
+        finally:
+            if self._client is None:
+                await client.aclose()
+
     async def read(self, url: str) -> ToolOutcome:
         started = time.perf_counter()
         url = str(url or "").strip()
@@ -350,18 +371,9 @@ class PageReader:
     async def _read_http(self, url: str) -> str | None:
         import trafilatura
 
-        client = self._client or httpx.AsyncClient(timeout=READ_HTTP_TIMEOUT_S, follow_redirects=True)
-        try:
-            response = await client.get(url, headers={"User-Agent": USER_AGENT})
-            response.raise_for_status()
-            if not await asyncio.to_thread(self._host_check, urlparse(str(response.url)).hostname or ""):
-                return None  # redirected somewhere private
-            html = response.content[:MAX_PAGE_BYTES].decode(response.encoding or "utf-8", errors="replace")
-        except httpx.HTTPError:
+        html = await self.html(url)
+        if html is None:
             return None
-        finally:
-            if self._client is None:
-                await client.aclose()
         return await asyncio.to_thread(trafilatura.extract, html, url=url, include_comments=False)
 
     async def _page(self):

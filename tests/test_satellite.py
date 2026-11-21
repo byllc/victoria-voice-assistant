@@ -421,3 +421,124 @@ def test_fleet_status_reads_each_version_and_reports_the_unreachable() -> None:
         "office (o.local): firmware v0.2.1, ESPHome 2026.7.3, built 2026-11-02 10:54",
         "kitchen (k.local): unreachable (Host is down)",
     ]
+
+
+# Streamed replies -----------------------------------------------------------------------------------
+
+
+def test_a_reply_stream_can_be_read_while_it_is_written() -> None:
+    import soundfile
+
+    from victoria_voice_assistant.satellite.esphome import ReplyStream
+
+    async def scenario() -> tuple[list[int], bytes, float]:
+        stream = ReplyStream()
+        got: list[bytes] = []
+
+        async def read() -> None:
+            async for part in stream.parts():
+                got.append(part)
+
+        reader = asyncio.create_task(read())
+        sizes = []
+        for _ in range(3):
+            stream.add(_speech(0.5, 24000), 24000)
+            await asyncio.sleep(0.01)
+            sizes.append(sum(len(part) for part in got))
+        stream.close()
+        stream.add(_speech(0.5, 24000), 24000)  # after the end: ignored
+        await reader
+        return sizes, b"".join(got), bytes(stream.data), stream.seconds
+
+    sizes, received, final, seconds = asyncio.run(scenario())
+    assert 0 < sizes[0] < sizes[1] < sizes[2]  # the reader had audio before the reply was finished
+    assert seconds == pytest.approx(1.5, abs=0.01)
+    # The device received the header with the length unknown, then the same audio frames as the finished
+    # file: they differ only inside the 42-byte header, which the encoder fills in when the stream closes.
+    assert received[:4] == b"fLaC" and len(received) == len(final)
+    assert received != final and received[42:] == final[42:]
+    samples, rate = soundfile.read(io.BytesIO(final), dtype="int16")
+    assert rate == 48000 and len(samples) == int(48000 * 1.5)
+
+
+def test_the_audio_server_serves_a_stream_as_it_grows() -> None:
+    from aiohttp import ClientSession, web
+
+    async def scenario() -> tuple[bytes, bytes]:
+        server = AudioServer(0)
+        app = web.Application()
+        app.router.add_get("/satellite-audio/{name}", server._get)
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        name, stream = server.open_stream()
+        stream.add(_speech(0.5, 24000), 24000)
+        try:
+            async with ClientSession() as http, http.get(f"http://127.0.0.1:{port}/satellite-audio/{name}") as response:
+                assert response.status == 200 and response.headers["Content-Type"] == "audio/x-flac"
+                first = await response.content.readany()  # arrives while the stream is still open
+                assert not stream.closed
+                stream.add(_speech(0.5, 24000), 24000)
+                stream.close()
+                rest = await response.content.read()
+        finally:
+            await runner.cleanup()
+        return first, rest
+
+    first, rest = asyncio.run(scenario())
+    assert first[:4] == b"fLaC" and rest
+
+
+def test_a_streamed_reply_ends_the_turn_at_its_first_audio(example_config_dir: Path) -> None:
+    from aioesphomeapi.model import VoiceAssistantEventType as E
+    from pipecat.frames.frames import TTSAudioRawFrame
+
+    async def scenario():
+        session, client = _session(example_config_dir)
+        session.settings = session.settings.model_copy(update={"stream_replies": True})
+        await session.handle_start("c1", 0, None, "Victoria")
+        frame = TTSAudioRawFrame(audio=_speech(0.2, 24000), sample_rate=24000, num_channels=1)
+        output = session.output
+        output._stream = session.start_reply_stream()
+        assert output._stream is not None
+        output._stream.add(frame.audio, frame.sample_rate)
+        mid = (session.run, session.delivering, session.busy(), [event for event, _ in client.events])
+        stream = output._stream
+        output._stream = None
+        session.finish_reply_stream(stream, "It's noon.")
+        return session, client, mid, stream
+
+    session, client, (run, delivering, busy, events), stream = asyncio.run(scenario())
+    assert run is None and delivering and busy  # the turn is over for the device; the reply is still coming
+    assert events[-4:] == [E.VOICE_ASSISTANT_INTENT_END, E.VOICE_ASSISTANT_TTS_START, E.VOICE_ASSISTANT_TTS_END, E.VOICE_ASSISTANT_RUN_END]
+    url = dict(client.events)[E.VOICE_ASSISTANT_TTS_END]["url"]
+    assert url.startswith("http://10.0.0.5:8767/satellite-audio/") and url.endswith(".flac")
+    assert stream.closed and not session.delivering
+
+
+def test_replies_are_not_streamed_unless_the_satellite_asks(example_config_dir: Path) -> None:
+    async def scenario():
+        session, _client = _session(example_config_dir)
+        await session.handle_start("c1", 0, None, "Victoria")
+        whole = session.start_reply_stream()  # off by default
+        session.settings = session.settings.model_copy(update={"stream_replies": True})
+        session._end_run()
+        return whole, session.start_reply_stream()  # no turn open: an announcement is sent whole
+
+    assert asyncio.run(scenario()) == (None, None)
+
+
+def test_the_wake_word_cuts_a_streamed_reply(example_config_dir: Path) -> None:
+    async def scenario():
+        session, _client = _session(example_config_dir)
+        session.settings = session.settings.model_copy(update={"stream_replies": True})
+        await session.handle_start("c1", 0, None, "Victoria")
+        session.output._stream = stream = session.start_reply_stream()
+        await session.handle_start("c2", 0, None, "Victoria")
+        session.finish_reply_stream(stream, "cut short")
+        return stream, session
+
+    stream, session = asyncio.run(scenario())
+    assert stream.closed and stream.cut and session.run is not None and not session.delivering

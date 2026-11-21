@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
-from typing import Literal
+from typing import Any, Awaitable, Callable, Literal
 
 from collections import deque
 
@@ -22,6 +22,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from victoria_voice_assistant.chat.contexts import PROJECT_MESSAGES
 from victoria_voice_assistant.chat.tools import SessionState, SpokenReplyEndFrame, ToolRuntime, forget_stale
 from victoria_voice_assistant.agents.runner import AgentRunner, match_agent_address
 from victoria_voice_assistant.notifications.service import NotificationService
@@ -30,7 +31,7 @@ from victoria_voice_assistant.tools.timers import TimerService
 
 logger = logging.getLogger(__name__)
 
-EMPTY_REPLY = "Sorry, I didn't get that. Could you say it another way?"
+EMPTY_REPLY = "Sorry, I came up empty on that one. Try asking another way."  # not "I didn't get that": it heard fine
 # Control tokens the local model sometimes leaks into its text, like "<|channel>::" (gemma-4-12b).
 CONTROL_TOKENS = re.compile(r"<\|?/?[a-z_\"]+\|?>:*")  # also its quote token, <|"|>
 ROLE_NOISE = re.compile(r"[\s:]*(?:(?:user|model|assistant)[\s:]*)*")
@@ -100,6 +101,8 @@ class TurnPreprocessor(FrameProcessor):
         self.notifications = notifications
         self.music = music
         self._waiting: deque[LLMMessagesAppendFrame] = deque()
+        # The dashboard's projects and chats (chat/contexts.py); typed chat only.
+        self.on_projects: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -114,6 +117,10 @@ class TurnPreprocessor(FrameProcessor):
                 self.notifications.acknowledge(unread if wanted == "all" else [i for i in unread if i.id in (wanted or [])])
             elif message.get("type") == "hello":
                 self.state.client_id = message["client_id"]
+                if self.on_projects is not None:
+                    await self.on_projects(message)  # reopen the chat this browser had open
+            elif message.get("type") in PROJECT_MESSAGES and self.on_projects is not None:
+                await self.on_projects(message)
             elif message.get("type") == "music_speaker" and self.music is not None and self.state.client_id:
                 # A page with the music player can be asked to turn its speaker on ("music_start").
                 send = self._send_message if message.get("can_play") else None
@@ -159,6 +166,8 @@ class TurnPreprocessor(FrameProcessor):
 
     async def _handled(self, text: str) -> bool:
         started = time.perf_counter()
+        if self.runtime is not None and self.runtime.transcript is not None:
+            self.runtime.transcript.begin(text)  # first: a new chat's context is made here, and the history notes it
         if self.runtime is not None and self.runtime.history is not None:
             self.runtime.history.begin(text)
         open_question = self.state.pending is not None and not self.state.pending.expired()
@@ -274,6 +283,8 @@ class TurnPreprocessor(FrameProcessor):
         """Answer with no model call."""
         if self.runtime is not None and self.runtime.history is not None:
             self.runtime.history.reply(reply)
+        if self.runtime is not None and self.runtime.transcript is not None:
+            self.runtime.transcript.reply(reply)
         await self._deliver(user_text, reply)
         logger.info(
             "Turn handled without a model",
@@ -413,4 +424,6 @@ class HistoryTap(FrameProcessor):
                 text, self._text = "".join(self._text).strip(), []
                 if text and self.runtime.history is not None:
                     self.runtime.history.reply(text)
+                if text and self.runtime.transcript is not None:
+                    self.runtime.transcript.reply(text)
         await self.push_frame(frame, direction)

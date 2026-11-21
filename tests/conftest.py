@@ -18,6 +18,16 @@ def disable_model_pinning(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def corrections_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Tests never write the real config/corrections.yaml (the wine tool learns corrections as it searches)."""
+    from victoria_voice_assistant import corrections
+
+    path = tmp_path / "corrections.yaml"
+    monkeypatch.setattr(corrections, "default_path", lambda: path)
+    return path
+
+
+@pytest.fixture(autouse=True)
 def no_service_restarts(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cancelled or timed-out agent task restarts its LaunchAgent (`restart_on_cancel`, set for Hermes
     in the example config); tests must never kickstart the real service."""

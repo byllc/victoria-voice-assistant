@@ -109,11 +109,11 @@ class HistoryStore:
 
     # Saving -------------------------------------------------------------------
 
-    def start(self, device: str, room: str | None, request: str, at: float | None = None) -> int:
+    def start(self, device: str, room: str | None, request: str, at: float | None = None, context_id: int | None = None) -> int:
         with self._connect() as connection:
             cursor = connection.execute(
-                "INSERT INTO history (at, device, room, request) VALUES (?, ?, ?, ?)",
-                (time.time() if at is None else at, device, room, request),
+                "INSERT INTO history (at, device, room, request, context_id) VALUES (?, ?, ?, ?, ?)",
+                (time.time() if at is None else at, device, room, request, context_id),
             )
             return int(cursor.lastrowid or 0)
 
@@ -215,8 +215,15 @@ class HistoryRecorder:
     Saving never gets in the way of a request: a failure is logged and the request goes on.
     """
 
-    def __init__(self, store: HistoryStore, device: Callable[[], str], room: Callable[[str], str | None]) -> None:
+    def __init__(
+        self,
+        store: HistoryStore,
+        device: Callable[[], str],
+        room: Callable[[str], str | None],
+        context: Callable[[], int | None] | None = None,
+    ) -> None:
         self.store = store
+        self._context = context  # the chat context the request is in (projects), when there is one
         self._device = device
         self._room = room
         self.current: int | None = None
@@ -227,7 +234,8 @@ class HistoryRecorder:
             return
         device = self._device()
         try:
-            self.current = self.store.start(device, self._room(device), text.strip())
+            context_id = self._context() if self._context is not None else None
+            self.current = self.store.start(device, self._room(device), text.strip(), context_id=context_id)
             self._began = time.monotonic()
         except sqlite3.Error:
             self.current = None
