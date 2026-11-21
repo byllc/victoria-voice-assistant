@@ -20,6 +20,15 @@ def source_dir() -> Path:
     return Path(os.environ.get("ASSISTANT_SEARXNG_DIR", Path.home() / "Services" / "searxng")).expanduser()
 
 
+def _has_commit(source: Path, commit: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "-C", str(source), "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True
+        ).returncode
+        == 0
+    )
+
+
 def install() -> Path:
     """Check out the pinned SearXNG commit and build its uv environment."""
     source = source_dir()
@@ -31,6 +40,9 @@ def install() -> Path:
     ).stdout.strip()
     if current != SEARXNG_COMMIT:
         subprocess.run(["git", "-C", str(source), "fetch", "--depth", "50", "origin"], check=True)
+        if not _has_commit(source, SEARXNG_COMMIT):
+            # The pin has fallen out of the last 50 commits (a fresh install, months later): fetch it all.
+            subprocess.run(["git", "-C", str(source), "fetch", "--unshallow", "origin"], check=True)
         subprocess.run(["git", "-C", str(source), "checkout", "--detach", SEARXNG_COMMIT], check=True)
     subprocess.run(["uv", "sync", "--locked"], cwd=RUNTIME_DIR, check=True)
     return source
