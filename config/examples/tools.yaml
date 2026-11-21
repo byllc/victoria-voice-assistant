@@ -99,7 +99,7 @@ tools:
       - what did I ask the kitchen yesterday
 
   - name: reminders
-    description: Apple Reminders. Add a reminder, say what's on a list or due, or mark one done when the user says they did it.
+    description: Apple Reminders. Add a reminder, say what's on a list or due, or mark one done when the user says they did it. Not for groceries or the shopping list.
     kind: builtin
     service: reminders               # only the lists named under `reminders:` (below)
     forget_after_s: 120              # kept 2 min so "show me 4" follows a listing; the tool holds the numbers and rereads Reminders
@@ -108,7 +108,7 @@ tools:
       action:
         type: string
         enum: [add, list, complete, lists]
-        description: "add: a new reminder. list: what's on a list or due. complete: the user says they did it (I bought the milk, I called the plumber, cross off eggs). lists: which lists there are"
+        description: "add: a new reminder. list: what's on a list or due. complete: the user says they did it (I called the plumber, I paid the water bill). Groceries and the shopping list are the groceries tool. lists: which lists there are"
         required: true
       title:
         type: string
@@ -125,12 +125,12 @@ tools:
         description: "for list: only reminders due today, overdue, or this week"
     examples:
       - remind me to call the plumber tomorrow at 9
-      - add milk to the shopping list
-      - what's on the shopping list
+      - add renew the car registration to the household list
+      - what's on the household list
       - what are my reminders today
-      - I bought the milk
+      - I paid the water bill
       - what lists do you have
-      - show me groceries
+      - show me the household list
       - show me number 4
       - number 2 is done
 
@@ -201,7 +201,7 @@ tools:
       - rename the dentist to orthodontist
 
   - name: groceries
-    description: The grocery list. Read it to answer questions (do we need carrots?), add what we need or are out of, check off what we got, or take an item off.
+    description: The grocery list (also called the shopping list). Read it to answer questions (do we need carrots?), add what we need or are out of, check off what we got, or take an item off.
     kind: builtin
     service: reminders.list          # one Reminders list, read whole (feature 20261112-024118)
     list: Groceries                  # the Reminders list this tool reads and changes
@@ -218,6 +218,10 @@ tools:
     examples:
       - do we need carrots
       - what's on the grocery list
+      - what's on the shopping list
+      - show me groceries
+      - add milk to the shopping list
+      - I bought the milk
       - add ice cream to groceries
       - we're out of pizza
       - we got the milk
